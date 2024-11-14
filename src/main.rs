@@ -4,8 +4,8 @@ use bevy::{
 use bevy_flycam::prelude::*;
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
 
-const CHUNK_WEIGHT: i32 = 16;
-const CHUNK_HEIGHT: i32 = 1;
+const CHUNK_WEIGHT: i32 = 8;
+const CHUNK_HEIGHT: i32 = 8;
 
 
 fn main() {
@@ -34,13 +34,19 @@ fn main() {
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut _materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    asset_server: Res<AssetServer>,
 ) {
     let cube_mesh = meshes.add(create_cube_mesh());
+    let custom_texture_handle: Handle<Image> = asset_server.load("array_texture.png");
     println!("顶点数量: {:?}",&create_cube_mesh().count_vertices());
 
     commands.spawn(PbrBundle {
         mesh: cube_mesh,
+        material: materials.add(StandardMaterial {
+            base_color_texture: Some(custom_texture_handle.clone()),
+            ..default()
+        }),
         transform: Transform::from_translation(Vec3::new(0.0, 1.5, -2.0)),
         ..Default::default()
     });
@@ -53,8 +59,8 @@ fn create_cube_mesh() -> Mesh {
     let mut indices = Vec::new();
 
     for x in 0..CHUNK_WEIGHT {
-        for z in 0..CHUNK_WEIGHT {
-            for y in 0..CHUNK_HEIGHT {
+        for z in 0..CHUNK_HEIGHT {
+            for y in 0..CHUNK_WEIGHT {
                 let pos = [x as f32, y as f32, z as f32];
                 add_cube_to_mesh(&mut positions, &mut normals, &mut uvs, &mut indices, pos);
             }
@@ -111,7 +117,13 @@ fn add_cube_to_mesh(
     ]);
 
     // 索引
-    if pos[0] == 0.0 || pos[0] == CHUNK_WEIGHT as f32 || pos[1] == 0.0 || pos[1] == CHUNK_WEIGHT as f32 || pos[2] == 0.0 || pos[2] == CHUNK_HEIGHT as f32 {
+    /*
+        这个条件判断检查当前方块是否位于立方体的边缘或角落。
+        pos[0] == 0.0 或 pos[0] == CHUNK_WEIGHT as f32：检查方块是否位于 x 轴的最小或最大位置。
+        pos[1] == 0.0 或 pos[1] == CHUNK_HEIGHT as f32：检查方块是否位于 y 轴的最小或最大位置。
+        pos[2] == 0.0 或 pos[2] == CHUNK_WEIGHT as f32：检查方块是否位于 z 轴的最小或最大位置。
+     */
+    if pos[0] >= 0.0 || pos[0] <= CHUNK_WEIGHT as f32 || pos[1] >= 0.0 || pos[1] <= CHUNK_HEIGHT as f32 || pos[2] >= 0.0 || pos[2] <= CHUNK_WEIGHT as f32 {
         indices.extend_from_slice(&[
             start_index + 0, start_index + 3, start_index + 1, start_index + 1, start_index + 3, start_index + 2, // 顶面
             start_index + 4, start_index + 5, start_index + 7, start_index + 5, start_index + 6, start_index + 7, // 底面
