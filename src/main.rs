@@ -63,6 +63,7 @@ fn create_cube_mesh() -> Mesh {
     for x in 0..CHUNK_WEIGHT {
         for y in 0..CHUNK_HEIGHT {
             for z in 0..CHUNK_WEIGHT {
+                // 可以从这里判断当前坐标的方块是否需要绘制
                 let pos = [x as f32, y as f32, z as f32];
                 add_cube_to_mesh(&mut positions, &mut normals, &mut uvs, &mut indices, pos);
             }
