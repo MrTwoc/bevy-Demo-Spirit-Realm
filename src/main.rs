@@ -5,7 +5,7 @@ use bevy_flycam::prelude::*;
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
 
 const CHUNK_WEIGHT: i32 = 8;
-const CHUNK_HEIGHT: i32 = 8;
+const CHUNK_HEIGHT: i32 = 2;
 
 
 fn main() {
@@ -39,6 +39,8 @@ fn setup(
 ) {
     let cube_mesh = meshes.add(create_cube_mesh());
     let custom_texture_handle: Handle<Image> = asset_server.load("array_texture.png");
+
+    // 顶点数量：Chunk_Weight * Chunk_Height * 8
     println!("顶点数量: {:?}",&create_cube_mesh().count_vertices());
 
     commands.spawn(PbrBundle {
@@ -59,8 +61,8 @@ fn create_cube_mesh() -> Mesh {
     let mut indices = Vec::new();
 
     for x in 0..CHUNK_WEIGHT {
-        for z in 0..CHUNK_HEIGHT {
-            for y in 0..CHUNK_WEIGHT {
+        for y in 0..CHUNK_HEIGHT {
+            for z in 0..CHUNK_WEIGHT {
                 let pos = [x as f32, y as f32, z as f32];
                 add_cube_to_mesh(&mut positions, &mut normals, &mut uvs, &mut indices, pos);
             }
@@ -84,6 +86,19 @@ fn add_cube_to_mesh(
 ) {
     let start_index = positions.len() as u32;
 
+    /*
+        TODO:
+        各种优化剔除：
+        遮挡剔除、视锥剔除、LOD技术、八叉树等
+        一、遮挡剔除：
+        判断坐标的方块周围是否被其他方块遮挡，如果被遮挡从pos中删除顶点
+        fn is_cube_occluded(pos: [f32; 3]) -> bool {}
+        二、视锥剔除：
+        判断坐标的方块是否在视锥内，如果不在视锥内从pos中删除顶点(没有方块遮挡与空气接触，但不在视锥内的方块)
+        fn is_cube_in_view(pos: [f32; 3]) -> bool {}
+        三、LOD技术：
+        借鉴我的世界中《遥远的地平线》模组
+     */
     // 顶点位置
     positions.extend_from_slice(&[
         [pos[0], pos[1] + 1.0, pos[2]], // 0
