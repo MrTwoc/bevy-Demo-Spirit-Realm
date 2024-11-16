@@ -2,10 +2,10 @@
 使用Bevy引擎+Rust编程语言，实现的一个简单的3D体素沙盒类游戏。
 
 ## 技术栈
-| 1. Bevy  [游戏引擎](https://bevyengine.org/) <br>
-| 2. Rust [编程语言](https://www.rust-lang.org/zh-CN/) <br>
-| 3. Quic 通信协议 <br>
-| 4. 噪声 用于生成地形，例如：<br>
+| Bevy  [游戏引擎](https://bevyengine.org/) <br>
+| Rust [编程语言](https://www.rust-lang.org/zh-CN/) <br>
+| Quic 通信协议 <br>
+| 噪声 用于生成地形，例如：<br>
 OpenSimplex2 与 FBM 噪声：程序化生成地形 <br>
 参考地址：
 1. https://lib.rs/crates/noise
