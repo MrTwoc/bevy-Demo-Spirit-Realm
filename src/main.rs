@@ -65,7 +65,6 @@ fn setup(
     let custom_texture_handle: Handle<Image> = asset_server.load("array_texture.png");
 
     // 顶点总数量：Chunk_Weight * Chunk_Height * 8
-    // println!("顶点数量: {:?}",&create_cube_mesh().count_vertices());
     let vertices_count = format!("vertices_counts: {}", &create_cube_mesh().count_vertices());
 
     // 绘制立方体 
@@ -73,18 +72,17 @@ fn setup(
         mesh: cube_mesh,
         material: materials.add(StandardMaterial {
             base_color_texture: Some(custom_texture_handle.clone()),
-            base_color: Color::hsla(0.1, 0.1, 0.1, 0.1),        // 将立方体透明，只绘制线框
+            base_color: Color::hsla(0.1, 0.1, 0.1, 0.1),        // 将立方体透明，只绘制线框，关掉会使透明失效
             alpha_mode: AlphaMode::Blend,                      // 开启透明模式
             ..default()
         }),
-        transform: Transform::from_translation(Vec3::new(0.0, 1.5, -2.0)),
         ..Default::default()
     });
 
     //在窗口中打印当前顶点总数
     commands.spawn(
         TextBundle::from_section(
-            vertices_count,                        // 顶点总数
+            vertices_count,                        // 显示顶点总数
             TextStyle::default(),
         )
         .with_style(Style {
