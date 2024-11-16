@@ -1,11 +1,23 @@
 use bevy::{
-    dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin}, prelude::*, render::{mesh::{Indices, PrimitiveTopology}, render_asset::RenderAssetUsages}
+    color::palettes::css::WHITE, dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin}, pbr, prelude::*, render::{mesh::{Indices, PrimitiveTopology}, render_asset::RenderAssetUsages}
 };
 use bevy_flycam::prelude::*;
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
 
-const CHUNK_WEIGHT: i32 = 8;
-const CHUNK_HEIGHT: i32 = 2;
+// 绘制线框的插件
+use pbr::wireframe::{WireframeConfig, WireframePlugin};
+/*
+    参考：
+    https://github.com/bevyengine/bevy/blob/main/examples/3d/wireframe.rs
+    https://github.com/Adamkob12/Meshem/blob/main/examples/simple_example.rs
+    关于开启透明立方体的模式  AlphaMode::Blend
+    https://bevyengine.org/examples/3d-rendering/blend-modes/
+    关于在屏幕中打印文字：
+    https://bevyengine.org/examples/ui-user-interface/text/
+*/
+
+const CHUNK_WEIGHT: i32 = 3;
+const CHUNK_HEIGHT: i32 = 3;
 
 
 fn main() {
@@ -25,9 +37,21 @@ fn main() {
                 },
             },
             PlayerPlugin,
+            WireframePlugin,
         ))
         .add_plugins(WorldInspectorPlugin::new())
         .add_systems(Startup, setup)
+
+        // 绘制线框需要的资源
+        .insert_resource(WireframeConfig {
+            // The global wireframe config enables drawing of wireframes on every mesh,
+            // except those with `NoWireframe`. Meshes with `Wireframe` will always have a wireframe,
+            // regardless of the global configuration.
+            global: true,
+            // Controls the default color of all wireframes. Used as the default color for global wireframes.
+            // Can be changed per mesh using the `WireframeColor` component.
+            default_color: WHITE.into(),
+        })
         .run();
 }
 
@@ -40,18 +64,37 @@ fn setup(
     let cube_mesh = meshes.add(create_cube_mesh());
     let custom_texture_handle: Handle<Image> = asset_server.load("array_texture.png");
 
-    // 顶点数量：Chunk_Weight * Chunk_Height * 8
-    println!("顶点数量: {:?}",&create_cube_mesh().count_vertices());
+    // 顶点总数量：Chunk_Weight * Chunk_Height * 8
+    // println!("顶点数量: {:?}",&create_cube_mesh().count_vertices());
+    let vertices_count = format!("vertices_counts: {}", &create_cube_mesh().count_vertices());
 
+    // 绘制立方体 
     commands.spawn(PbrBundle {
         mesh: cube_mesh,
         material: materials.add(StandardMaterial {
             base_color_texture: Some(custom_texture_handle.clone()),
+            base_color: Color::hsla(0.1, 0.1, 0.1, 0.1),        // 将立方体透明，只绘制线框
+            alpha_mode: AlphaMode::Blend,                      // 开启透明模式
             ..default()
         }),
         transform: Transform::from_translation(Vec3::new(0.0, 1.5, -2.0)),
         ..Default::default()
     });
+
+    //在窗口中打印当前顶点总数
+    commands.spawn(
+        TextBundle::from_section(
+            vertices_count,                        // 顶点总数
+            TextStyle::default(),
+        )
+        .with_style(Style {
+            position_type: PositionType::Absolute,
+            top: Val::Px(52.0),
+            left: Val::Px(2.0),
+            ..default()
+        }),
+    );
+
 }
 
 fn create_cube_mesh() -> Mesh {
