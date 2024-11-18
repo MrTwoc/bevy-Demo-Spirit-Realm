@@ -100,11 +100,18 @@ fn create_cube_mesh() -> Mesh {
     let mut normals = Vec::new();
     let mut uvs = Vec::new();
     let mut indices = Vec::new();
+/*
+    遮挡剔除逻辑：
+    检测坐标的方块周围是否被其他方块遮挡，如果被遮挡从pos中删除顶点
+    根据噪声值判断，若该点噪声值低于设定阈值，则为空气，高于阈值就是实体方块
+    再根据方块块与空气接触，判断是否绘制该方块
 
+*/
     for x in 0..CHUNK_WEIGHT {
         for y in 0..CHUNK_HEIGHT {
             for z in 0..CHUNK_WEIGHT {
                 // 可以从这里判断当前坐标的方块是否需要绘制
+                // get 方块坐标的噪声值
                 let pos = [x as f32, y as f32, z as f32];
                 add_cube_to_mesh(&mut positions, &mut normals, &mut uvs, &mut indices, pos);
             }
