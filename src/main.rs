@@ -19,7 +19,6 @@ use pbr::wireframe::{WireframeConfig, WireframePlugin};
 const CHUNK_WEIGHT: i32 = 3;
 const CHUNK_HEIGHT: i32 = 3;
 
-
 fn main() {
     App::new()
         .add_plugins((
@@ -111,7 +110,7 @@ fn create_cube_mesh() -> Mesh {
         for y in 0..CHUNK_HEIGHT {
             for z in 0..CHUNK_WEIGHT {
                 // 可以从这里判断当前坐标的方块是否需要绘制
-                // get 方块坐标的噪声值
+                // get 方块坐标，判断是否四周是空气还是实体方块，如果是实体方块则删掉该顶点：坐标的  噪声值 < 阈值 = 空气
                 let pos = [x as f32, y as f32, z as f32];
                 add_cube_to_mesh(&mut positions, &mut normals, &mut uvs, &mut indices, pos);
             }
