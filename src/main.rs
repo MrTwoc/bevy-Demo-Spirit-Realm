@@ -1,5 +1,5 @@
 use bevy::{
-    color::palettes::css::WHITE, dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin}, pbr, prelude::*, render::{mesh::{Indices, PrimitiveTopology}, render_asset::RenderAssetUsages}
+    color::palettes::css::WHITE, dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin}, pbr, prelude::*, render::{mesh::{Indices, PrimitiveTopology}, render_asset::RenderAssetUsages}, utils::HashMap
 };
 use bevy_flycam::prelude::*;
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
@@ -16,8 +16,12 @@ use pbr::wireframe::{WireframeConfig, WireframePlugin};
     https://bevyengine.org/examples/ui-user-interface/text/
 */
 
-const CHUNK_WEIGHT: i32 = 3;
-const CHUNK_HEIGHT: i32 = 3;
+const CHUNK_WEIGHT: i32 = 10;
+const CHUNK_HEIGHT: i32 = 10;
+
+type pos = [i32;3];
+type block_id = u8;
+
 
 fn main() {
     App::new()
@@ -60,17 +64,18 @@ fn setup(
     mut materials: ResMut<Assets<StandardMaterial>>,
     asset_server: Res<AssetServer>,
 ) {
-    let cube_mesh = meshes.add(create_cube_mesh());
-    let custom_texture_handle: Handle<Image> = asset_server.load("array_texture.png");
-
+    let cube_mesh = create_cube_mesh();
     // 顶点总数量：Chunk_Weight * Chunk_Height * 8
-    let vertices_count = format!("vertices_counts: {}", &create_cube_mesh().count_vertices());
+    let vertices_count = format!("vertices_counts: {}", &cube_mesh.count_vertices());
+
+    let cube_mesh = meshes.add(cube_mesh);
+    let custom_texture_handle: Handle<Image> = asset_server.load("array_texture.png");
 
     // 绘制立方体 
     commands.spawn(PbrBundle {
         mesh: cube_mesh,
         material: materials.add(StandardMaterial {
-            base_color_texture: Some(custom_texture_handle.clone()),
+            base_color_texture: Some(custom_texture_handle),
             base_color: Color::hsla(0.1, 0.1, 0.1, 0.1),        // 将立方体透明，只绘制线框，关掉会使透明失效
             alpha_mode: AlphaMode::Blend,                      // 开启透明模式
             ..default()
@@ -94,16 +99,32 @@ fn setup(
 
 }
 
+// 在这里判断方块是否被遮挡，返回bool值
+fn is_culing_cube(pos: [i32; 3]){
+    
+}
+
 fn create_cube_mesh() -> Mesh {
     let mut positions = Vec::new();
     let mut normals = Vec::new();
     let mut uvs = Vec::new();
     let mut indices = Vec::new();
+
+    // 将方块坐标存在hashmap中，k:pos, v:block_id
+    let mut chunk_blocks:HashMap<pos, block_id> = HashMap::new();
+
 /*
     遮挡剔除逻辑：
     检测坐标的方块周围是否被其他方块遮挡，如果被遮挡从pos中删除顶点
     根据噪声值判断，若该点噪声值低于设定阈值，则为空气，高于阈值就是实体方块
     再根据方块块与空气接触，判断是否绘制该方块
+
+    方法一：
+    先添加方块坐标，再在添加mesh的时候，判断方块六个面是否有方块，如果被遮挡则不添加顶点
+    添加一个is_block方法，再将左右坐标存储在一个数据结构中，is_block方法判断六个面是否贴着方块
+    若是上面有方块：不渲染顶面的顶点
+    下面有方块：不渲染底面的顶点
+    左面有方块：不渲染左面的顶点
 
 */
     for x in 0..CHUNK_WEIGHT {
@@ -112,9 +133,16 @@ fn create_cube_mesh() -> Mesh {
                 // 可以从这里判断当前坐标的方块是否需要绘制
                 // get 方块坐标，判断是否四周是空气还是实体方块，如果是实体方块则删掉该顶点：坐标的  噪声值 < 阈值 = 空气
                 let pos = [x as f32, y as f32, z as f32];
+                if !chunk_blocks.contains_key(&[x, y, z]){
+                    chunk_blocks.insert([x,y,z], 1);
+                }
                 add_cube_to_mesh(&mut positions, &mut normals, &mut uvs, &mut indices, pos);
             }
         }
+    }
+    println!("方块数量：{}", chunk_blocks.len());
+    for (pos, block_id) in chunk_blocks.iter(){
+        println!("方块坐标：{:?}, 方块id:{}", pos, block_id);
     }
 
     Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD)
@@ -196,4 +224,5 @@ fn add_cube_to_mesh(
             start_index + 0, start_index + 1, start_index + 4, start_index + 4, start_index + 1, start_index + 5, // 前面
         ]);
     }
+    
 }
