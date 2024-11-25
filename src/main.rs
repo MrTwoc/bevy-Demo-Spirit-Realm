@@ -132,6 +132,9 @@ fn create_cube_mesh() -> Mesh {
             for z in 0..CHUNK_WEIGHT {
                 // 可以从这里判断当前坐标的方块是否需要绘制
                 // get 方块坐标，判断是否四周是空气还是实体方块，如果是实体方块则删掉该顶点：坐标的  噪声值 < 阈值 = 空气
+                if y % 2 == 0{
+                    continue;
+                }
                 let pos = [x as f32, y as f32, z as f32];
                 if !chunk_blocks.contains_key(&[x, y, z]){
                     chunk_blocks.insert([x,y,z], 1);
