@@ -1,5 +1,5 @@
 use bevy::{
-    color::palettes::css::WHITE, dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin}, pbr, prelude::*, render::{mesh::{Indices, PrimitiveTopology}, render_asset::RenderAssetUsages}, utils::HashMap
+    color::palettes::css::WHITE, dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin}, pbr, prelude::*, render::{mesh::{Indices, PrimitiveTopology}, render_asset::RenderAssetUsages, render_resource::RenderPipelineDescriptor}, utils::HashMap
 };
 use bevy_flycam::prelude::*;
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
@@ -16,11 +16,12 @@ use pbr::wireframe::{WireframeConfig, WireframePlugin};
     https://bevyengine.org/examples/ui-user-interface/text/
 */
 
-const CHUNK_WEIGHT: i32 = 10;
-const CHUNK_HEIGHT: i32 = 10;
+const CHUNK_WEIGHT: i32 = 3;
+const CHUNK_HEIGHT: i32 = 3;
 
-type pos = [i32;3];
+// 1:实体方块 0:空气
 type block_id = u8;
+type pos = [i32;3];
 
 
 fn main() {
@@ -73,13 +74,14 @@ fn setup(
 
     // 绘制立方体 
     commands.spawn(PbrBundle {
-        mesh: cube_mesh,
+        mesh: cube_mesh.clone(),
         material: materials.add(StandardMaterial {
-            base_color_texture: Some(custom_texture_handle),
+            base_color_texture: Some(custom_texture_handle.clone()),
             base_color: Color::hsla(0.1, 0.1, 0.1, 0.1),        // 将立方体透明，只绘制线框，关掉会使透明失效
             alpha_mode: AlphaMode::Blend,                      // 开启透明模式
             ..default()
         }),
+        transform: Transform::from_translation(Vec3::new(-5.0, 1.0, -5.0)),
         ..Default::default()
     });
 
@@ -97,11 +99,6 @@ fn setup(
         }),
     );
 
-}
-
-// 在这里判断方块是否被遮挡，返回bool值
-fn is_culing_cube(pos: [i32; 3]){
-    
 }
 
 fn create_cube_mesh() -> Mesh {
@@ -132,9 +129,6 @@ fn create_cube_mesh() -> Mesh {
             for z in 0..CHUNK_WEIGHT {
                 // 可以从这里判断当前坐标的方块是否需要绘制
                 // get 方块坐标，判断是否四周是空气还是实体方块，如果是实体方块则删掉该顶点：坐标的  噪声值 < 阈值 = 空气
-                if y % 2 == 0{
-                    continue;
-                }
                 let pos = [x as f32, y as f32, z as f32];
                 if !chunk_blocks.contains_key(&[x, y, z]){
                     chunk_blocks.insert([x,y,z], 1);

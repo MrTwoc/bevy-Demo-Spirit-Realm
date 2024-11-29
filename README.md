@@ -1,4 +1,5 @@
 ## 介绍
+本项目是个人学习Rust和Bevy引擎的实践项目，将会持续学习&更新，以完成所有计划内功能为目标。<br>
 使用Bevy引擎+Rust编程语言，实现的一个简单的3D体素沙盒类游戏。<br>
 主要实现语言：Rust<br>
 以ECS [(Entity Component System)](https://mp.weixin.qq.com/s/dfEyst39sZ1fRCV6hcqCDA)架构，实现游戏世界中的实体、组件、系统。<br>
@@ -19,8 +20,11 @@ https://lib.rs/crates/noise<br>
 https://iquilezles.org/articles/morenoise/<br>
 八叉树算法：用于管理大量体素<br>
 5. IPV6协议：用于服务器网络通信<br>
+6. Protobuf [数据序列化协议](https://developers.google.com/protocol-buffers/) <br>
 
 ## 核心功能 / 计划实现功能
+- [ ] 超平坦世界生成<br>
+- [ ] 噪声世界生成<br>
 - [ ] 方块放置/破坏<br>
 - [ ] 各种优化剔除：  <br>
 	遮挡剔除、视锥剔除、LOD / HLOD 技术、八叉树等<br>
