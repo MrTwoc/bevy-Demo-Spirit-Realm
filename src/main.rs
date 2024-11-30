@@ -16,9 +16,10 @@ use pbr::wireframe::{WireframeConfig, WireframePlugin};
     https://bevyengine.org/examples/ui-user-interface/text/
 */
 
-const CHUNK_WEIGHT: i32 = 3;
-const CHUNK_HEIGHT: i32 = 3;
+const CHUNK_WEIGHT: i32 = 32;
+const CHUNK_HEIGHT: i32 = 64;
 
+// 方块ID：
 // 1:实体方块 0:空气
 type block_id = u8;
 type pos = [i32;3];
@@ -129,17 +130,31 @@ fn create_cube_mesh() -> Mesh {
             for z in 0..CHUNK_WEIGHT {
                 // 可以从这里判断当前坐标的方块是否需要绘制
                 // get 方块坐标，判断是否四周是空气还是实体方块，如果是实体方块则删掉该顶点：坐标的  噪声值 < 阈值 = 空气
-                let pos = [x as f32, y as f32, z as f32];
+                // let pos = [x as f32, y as f32, z as f32];
                 if !chunk_blocks.contains_key(&[x, y, z]){
                     chunk_blocks.insert([x,y,z], 1);
                 }
-                add_cube_to_mesh(&mut positions, &mut normals, &mut uvs, &mut indices, pos);
+                // add_cube_to_mesh(&mut positions, &mut normals, &mut uvs, &mut indices, pos);
             }
         }
     }
-    println!("方块数量：{}", chunk_blocks.len());
+
+    // 遍历chunk_blocks中所有方块，判断是否需要绘制
+    // println!("方块数量：{}", chunk_blocks.len());
     for (pos, block_id) in chunk_blocks.iter(){
-        println!("方块坐标：{:?}, 方块id:{}", pos, block_id);
+        let pos = [pos[0], pos[1], pos[2]];
+        // println!("方块坐标：{:?}, 方块id:{}", pos, block_id);
+        // 判断每个方块的六个面旁边是否有实体方块
+        if !(
+            chunk_blocks.contains_key(&[pos[0], pos[1] + 1, pos[2]]) &&
+            chunk_blocks.contains_key(&[pos[0], pos[1] - 1, pos[2]]) &&
+            chunk_blocks.contains_key(&[pos[0] + 1, pos[1], pos[2]]) &&
+            chunk_blocks.contains_key(&[pos[0] - 1, pos[1], pos[2]]) &&
+            chunk_blocks.contains_key(&[pos[0], pos[1], pos[2] + 1]) &&
+            chunk_blocks.contains_key(&[pos[0], pos[1], pos[2] - 1])
+        ){
+            add_cube_to_mesh(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32]);
+        }
     }
 
     Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD)
