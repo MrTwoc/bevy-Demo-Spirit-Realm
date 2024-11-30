@@ -1,5 +1,5 @@
 use bevy::{
-    color::palettes::css::WHITE, dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin}, pbr, prelude::*, render::{mesh::{Indices, PrimitiveTopology}, render_asset::RenderAssetUsages, render_resource::RenderPipelineDescriptor}, utils::HashMap
+    color::palettes::css::WHITE, dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin}, pbr, prelude::*, render::{mesh::{Indices, PrimitiveTopology}, render_asset::RenderAssetUsages, render_resource::RenderPipelineDescriptor}, transform, utils::HashMap
 };
 use bevy_flycam::prelude::*;
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
