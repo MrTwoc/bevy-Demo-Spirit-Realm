@@ -6,6 +6,10 @@
 游戏世界由方块组成，玩家可以自由地放置、破坏方块。<br>
 游戏内有天然建筑，例如自然生成的村庄、城堡、矿道等，利用波函数坍缩噪声技术，生成可拆分与组合的结构性建筑。
 
+## 项目记录
+同时也是我的个人博客：<br>
+https://mrtowc.xlog.app/ <br>
+
 ## 技术栈
 1. Bevy  [游戏引擎](https://bevyengine.org/) <br>
 2. Rust [编程语言](https://www.rust-lang.org/zh-CN/) <br>
@@ -35,5 +39,9 @@ https://iquilezles.org/articles/morenoise/<br>
 - [ ] AABB 碰撞箱: 实现玩家与物体之间物理碰撞<br>
 - [ ] 玩家模型<br>
 	待选模型文件格式：GLTF、JSON以及其他格式<br>
-
+## 阶段展示：<br>
+一、绘制基础mesh面，无剔除
 ![alt text](image.png)
+二、将六个面都被遮挡的方块整体剔除<br>
+但仍旧保留了与空气接触的方块的不可见的mesh面<br>
+![alt text](image-1.png)

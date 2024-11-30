@@ -1,5 +1,5 @@
 use bevy::{
-    color::palettes::css::WHITE, dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin}, pbr, prelude::*, render::{mesh::{Indices, PrimitiveTopology}, render_asset::RenderAssetUsages, render_resource::RenderPipelineDescriptor}, transform, utils::HashMap
+    color::palettes::css::WHITE, dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin}, pbr, prelude::*, render::{mesh::{Indices, PrimitiveTopology}, render_asset::RenderAssetUsages}, utils::HashMap
 };
 use bevy_flycam::prelude::*;
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
@@ -21,8 +21,8 @@ const CHUNK_HEIGHT: i32 = 64;
 
 // 方块ID：
 // 1:实体方块 0:空气
-type block_id = u8;
-type pos = [i32;3];
+type BlockId = u8;
+type Pos = [i32;3];
 
 
 fn main() {
@@ -82,7 +82,7 @@ fn setup(
             alpha_mode: AlphaMode::Blend,                      // 开启透明模式
             ..default()
         }),
-        transform: Transform::from_translation(Vec3::new(-5.0, 1.0, -5.0)),
+        transform: Transform::from_translation(Vec3::new(0.0, 0.0, 0.0)),
         ..Default::default()
     });
 
@@ -109,7 +109,7 @@ fn create_cube_mesh() -> Mesh {
     let mut indices = Vec::new();
 
     // 将方块坐标存在hashmap中，k:pos, v:block_id
-    let mut chunk_blocks:HashMap<pos, block_id> = HashMap::new();
+    let mut chunk_blocks:HashMap<Pos, BlockId> = HashMap::new();
 
 /*
     遮挡剔除逻辑：
@@ -141,7 +141,7 @@ fn create_cube_mesh() -> Mesh {
 
     // 遍历chunk_blocks中所有方块，判断是否需要绘制
     // println!("方块数量：{}", chunk_blocks.len());
-    for (pos, block_id) in chunk_blocks.iter(){
+    for (pos, _block_id) in chunk_blocks.iter(){
         let pos = [pos[0], pos[1], pos[2]];
         // println!("方块坐标：{:?}, 方块id:{}", pos, block_id);
         // 判断每个方块的六个面旁边是否有实体方块
