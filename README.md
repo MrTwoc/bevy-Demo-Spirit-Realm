@@ -8,7 +8,7 @@
 
 ## 项目记录
 同时也是我的个人博客：<br>
-https://mrtowc.xlog.app/ <br>
+https://mrtowc.xlog.app/Spirit-Realm <br>
 
 ## 技术栈
 1. Bevy  [游戏引擎](https://bevyengine.org/) <br>

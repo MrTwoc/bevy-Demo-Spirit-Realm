@@ -16,8 +16,8 @@ use pbr::wireframe::{WireframeConfig, WireframePlugin};
     https://bevyengine.org/examples/ui-user-interface/text/
 */
 
-const CHUNK_WEIGHT: i32 = 32;
-const CHUNK_HEIGHT: i32 = 64;
+const CHUNK_WEIGHT: i32 = 1;
+const CHUNK_HEIGHT: i32 = 1;
 
 // 方块ID：
 // 1:实体方块 0:空气
@@ -145,6 +145,16 @@ fn create_cube_mesh() -> Mesh {
         let pos = [pos[0], pos[1], pos[2]];
         // println!("方块坐标：{:?}, 方块id:{}", pos, block_id);
         // 判断每个方块的六个面旁边是否有实体方块
+        /*
+            后续阶段优化方案：
+            单独判断每个面是否贴着方块，结果取反，再添加顶点，绘制mesh面
+            例如：判断当前方块的 y+ 面，是否被方块遮挡，为真则取反(接触空气的面)，添加顶点，绘制该面
+            pos[0]:X轴   pos[1]:Y轴   pos[2]:Z轴
+            if chunk_blocks.contains_key(&[pos[0], pos[1] + 1, pos[2]]) {
+                添加 Y+ 面顶点
+                绘制 Y+ 面
+            }
+         */
         if !(
             chunk_blocks.contains_key(&[pos[0], pos[1] + 1, pos[2]]) &&
             chunk_blocks.contains_key(&[pos[0], pos[1] - 1, pos[2]]) &&
