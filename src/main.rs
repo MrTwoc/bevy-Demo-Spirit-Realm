@@ -147,10 +147,10 @@ fn create_cube_mesh() -> Mesh {
         // 判断每个方块的六个面旁边是否有实体方块
         /*
             后续阶段优化方案：
-            单独判断每个面是否贴着方块，结果取反，再添加顶点，绘制mesh面
+            将此判断拆开，单独判断每个面是否贴着方块，结果取反，再添加顶点，绘制mesh面
             例如：判断当前方块的 y+ 面，是否被方块遮挡，为真则取反(接触空气的面)，添加顶点，绘制该面
             pos[0]:X轴   pos[1]:Y轴   pos[2]:Z轴
-            if chunk_blocks.contains_key(&[pos[0], pos[1] + 1, pos[2]]) {
+            if !(chunk_blocks.contains_key(&[pos[0], pos[1] + 1, pos[2]])) {
                 添加 Y+ 面顶点
                 绘制 Y+ 面
             }
@@ -230,21 +230,19 @@ fn add_cube_to_mesh(
     ]);
 
     // 索引
-    /*
-        这个条件判断检查当前方块是否位于立方体的边缘或角落。
-        pos[0] == 0.0 或 pos[0] == CHUNK_WEIGHT as f32：检查方块是否位于 x 轴的最小或最大位置。
-        pos[1] == 0.0 或 pos[1] == CHUNK_HEIGHT as f32：检查方块是否位于 y 轴的最小或最大位置。
-        pos[2] == 0.0 或 pos[2] == CHUNK_WEIGHT as f32：检查方块是否位于 z 轴的最小或最大位置。
-     */
-    if pos[0] >= 0.0 || pos[0] <= CHUNK_WEIGHT as f32 || pos[1] >= 0.0 || pos[1] <= CHUNK_HEIGHT as f32 || pos[2] >= 0.0 || pos[2] <= CHUNK_WEIGHT as f32 {
-        indices.extend_from_slice(&[
-            start_index + 0, start_index + 3, start_index + 1, start_index + 1, start_index + 3, start_index + 2, // 顶面
-            start_index + 4, start_index + 5, start_index + 7, start_index + 5, start_index + 6, start_index + 7, // 底面
-            start_index + 1, start_index + 2, start_index + 5, start_index + 5, start_index + 2, start_index + 6, // 右侧面
-            start_index + 0, start_index + 4, start_index + 3, start_index + 3, start_index + 4, start_index + 7, // 左侧面
-            start_index + 2, start_index + 3, start_index + 6, start_index + 6, start_index + 3, start_index + 7, // 背面
-            start_index + 0, start_index + 1, start_index + 4, start_index + 4, start_index + 1, start_index + 5, // 前面
-        ]);
-    }
+    indices.extend_from_slice(&[
+        start_index + 0, start_index + 3, start_index + 1, start_index + 1, start_index + 3, start_index + 2, // 顶面
+        start_index + 4, start_index + 5, start_index + 7, start_index + 5, start_index + 6, start_index + 7, // 底面
+        start_index + 1, start_index + 2, start_index + 5, start_index + 5, start_index + 2, start_index + 6, // 右侧面
+        start_index + 0, start_index + 4, start_index + 3, start_index + 3, start_index + 4, start_index + 7, // 左侧面
+        start_index + 2, start_index + 3, start_index + 6, start_index + 6, start_index + 3, start_index + 7, // 背面
+        start_index + 0, start_index + 1, start_index + 4, start_index + 4, start_index + 1, start_index + 5, // 前面
+    ]);
     
+    /*
+        目前add_cube_mesh函数绘制了一整个的方块，下阶段的绘制中，
+        可以将此方法，分成六个单独的方法(代表立方体的六个面)，分别绘制立方体的六个面，
+        用以更好的搭配优化代码
+        add_cube_mesh 可以改为 add_cube_mesh_Y+
+     */
 }

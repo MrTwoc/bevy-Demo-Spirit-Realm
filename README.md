@@ -1,4 +1,5 @@
 ## 介绍
+项目创建时间：2024年10月左右
 本项目是个人学习Rust和Bevy引擎的实践项目，将会持续学习&更新，以完成所有计划内功能为目标。<br>
 使用Bevy引擎+Rust编程语言，实现的一个简单的3D体素沙盒类游戏。<br>
 主要实现语言：Rust<br>
@@ -13,6 +14,8 @@ https://mrtowc.xlog.app/Spirit-Realm <br>
 ## 技术栈
 1. Bevy  [游戏引擎](https://bevyengine.org/) <br>
 2. Rust [编程语言](https://www.rust-lang.org/zh-CN/) <br>
+2.1. [tokio](https://tokio.rs/tokio/tutorial/spawning)<br>
+2.2. [rayon](https://crates.io/crates/rayon) <br>
 3. Quic [通信协议](https://tquic.net/zh/docs/intro/) <br>
  https://github.com/genmeta/gm-quic <br>
  https://tquic.net/zh/docs/intro/ <br>
