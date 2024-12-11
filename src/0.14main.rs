@@ -1,25 +1,51 @@
-//! This example demonstrates how to use the `Camera::viewport_to_world` method.
-
-use std::collections::HashMap;
-
-use bevy::{asset::RenderAssetUsages, color::palettes::css::WHITE, pbr::{self, wireframe::WireframeConfig}, prelude::*, render::mesh::{Indices, PrimitiveTopology}};
+use bevy::{
+    color::palettes::css::WHITE, dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin}, pbr, prelude::*, render::{mesh::{Indices, PrimitiveTopology}, render_asset::RenderAssetUsages}, utils::HashMap
+};
 use bevy_flycam::prelude::*;
-// 绘制线框的插件
-use pbr::wireframe::WireframePlugin;
+use bevy_inspector_egui::quick::WorldInspectorPlugin;
 
+// 绘制线框的插件
+use pbr::wireframe::{WireframeConfig, WireframePlugin};
+/*
+    参考：
+    https://github.com/bevyengine/bevy/blob/main/examples/3d/wireframe.rs
+    https://github.com/Adamkob12/Meshem/blob/main/examples/simple_example.rs
+    关于开启透明立方体的模式  AlphaMode::Blend
+    https://bevyengine.org/examples/3d-rendering/blend-modes/
+    关于在屏幕中打印文字：
+    https://bevyengine.org/examples/ui-user-interface/text/
+*/
+
+// const CHUNK_WEIGHT: i32 = 1;
+// const CHUNK_HEIGHT: i32 = 1;
 const CHUNK_XYZ:i32 = 32;
+
 // 方块ID：
 // 1:实体方块 0:空气
 type BlockId = u8;
 type Pos = [i32;3];
 
+
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins)
         .add_plugins((
-            PlayerPlugin, 
+            DefaultPlugins,
+            FpsOverlayPlugin {
+                config: FpsOverlayConfig {
+                    text_config: TextStyle {
+                        // Here we define size of our overlay
+                        font_size: 50.0,
+                        // We can also change color of the overlay
+                        color: Color::srgb(0.0, 1.0, 0.0),
+                        // If we want, we can use a custom font
+                        font: default(),
+                    },
+                },
+            },
+            PlayerPlugin,
             WireframePlugin,
         ))
+        .add_plugins(WorldInspectorPlugin::new())
         .add_systems(Startup, setup)
 
         // 绘制线框需要的资源
@@ -36,28 +62,45 @@ fn main() {
 }
 
 fn setup(
-    mut commands : Commands,
-    mut meshes : ResMut<Assets<Mesh>>,
-    mut materials : ResMut<Assets<StandardMaterial>>,
-){
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    asset_server: Res<AssetServer>,
+) {
+    let cube_mesh = create_cube_mesh();
+    // 顶点总数量：Chunk_Weight * Chunk_Height * 8
+    let vertices_count = format!("vertices_counts: {}", &cube_mesh.count_vertices());
 
-    let block_mesh_handle = create_cube_mesh();
-    let cube_mesh = meshes.add(block_mesh_handle);
-    // println!("Hello World!");
-    commands.spawn((
-        Mesh3d(cube_mesh),
-        MeshMaterial3d(
-            materials.add(
-                // Color::srgb_u8(124, 144, 255),
-                StandardMaterial{
-                    base_color: Color::hsla(0.1, 0.1, 0.1, 0.1),        // 将立方体透明，只绘制线框，关掉会使透明失效
-                    alpha_mode: AlphaMode::Blend,                      // 开启透明模式
-                    ..Default::default()
-                }
-            )
-        ),
-        Transform::from_xyz(0.0, 0., 0.0),
-    ));
+    let cube_mesh = meshes.add(cube_mesh);
+    let custom_texture_handle: Handle<Image> = asset_server.load("array_texture.png");
+
+    // 绘制立方体 
+    commands.spawn(PbrBundle {
+        mesh: cube_mesh.clone(),
+        material: materials.add(StandardMaterial {
+            base_color_texture: Some(custom_texture_handle.clone()),
+            base_color: Color::hsla(0.1, 0.1, 0.1, 0.1),        // 将立方体透明，只绘制线框，关掉会使透明失效
+            alpha_mode: AlphaMode::Blend,                      // 开启透明模式
+            ..default()
+        }),
+        transform: Transform::from_translation(Vec3::new(0.0, 0.0, 0.0)),
+        ..Default::default()
+    });
+
+    //在窗口中打印当前顶点总数
+    commands.spawn(
+        TextBundle::from_section(
+            vertices_count,                        // 显示顶点总数
+            TextStyle::default(),
+        )
+        .with_style(Style {
+            position_type: PositionType::Absolute,
+            top: Val::Px(52.0),
+            left: Val::Px(2.0),
+            ..default()
+        }),
+    );
+
 }
 
 fn create_cube_mesh() -> Mesh {
@@ -132,6 +175,7 @@ fn create_cube_mesh() -> Mesh {
     .with_inserted_indices(Indices::U32(indices))
 }
 
+#[rustfmt::skip]
 fn add_cube_to_mesh(
     positions: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
