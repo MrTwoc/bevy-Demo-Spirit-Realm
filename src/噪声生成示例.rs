@@ -51,6 +51,7 @@ fn setup(
 
     for x in 0..CHUNK_WIDTH {
         for z in 0..CHUNK_HEIGHT {
+            // 生成noise值
             let negative_1_to_1 = noise.get_noise_2d(x as f32, z as f32);
             noise_data[x][z] = (negative_1_to_1 + 1.) / 2.;
             // 根据noise值生成方块高度

@@ -50,3 +50,5 @@ https://iquilezles.org/articles/morenoise/<br>
 二、将六个面都被遮挡的方块整体剔除<br>
 但仍旧保留了与空气接触的方块的不可见的mesh面<br>
 ![alt text](image-1.png)
+三、利用OpenSimplex2噪声多次叠加形成分型布朗运噪声(FBm)生成512x32x512大小的地形
+![!\[alt text\](91c29d57bba658bb8c90ede6be4be8a.png)](simplex-FBm.png)
