@@ -1,5 +1,5 @@
 ## 介绍
-项目创建时间：<br>
+### 项目创建时间：<br>
 2024年10月左右<br>
 $~~~~$本项目是个人学习Rust和Bevy引擎的实践项目，将会持续学习&更新，以完成所有计划内功能为目标。<br>
 使用Bevy引擎+Rust编程语言，实现的一个简单的3D体素沙盒类游戏。<br>
@@ -33,9 +33,9 @@ https://iquilezles.org/articles/morenoise/<br>
 
 ## 核心功能 / 计划实现功能
 - [ ] 超平坦世界生成<br>
-- [ ] 噪声世界生成<br>
+- [√] 噪声世界生成<br>
 - [ ] 方块放置/破坏<br>
-- [ ] 各种优化剔除：  <br>
+- [ ] 各种优化、动态剔除：  <br>
 	遮挡剔除、视锥剔除、LOD / HLOD 技术、八叉树等<br>
 - [ ] 方块材质加载<br>
 - [ ] 区块系统实现<br>
@@ -46,9 +46,9 @@ https://iquilezles.org/articles/morenoise/<br>
 	待选模型文件格式：GLTF、JSON以及其他格式<br>
 ## 阶段展示：<br>
 一、绘制基础mesh面，无剔除
-![alt text](image.png)
+![alt text](image/image.png)
 二、将六个面都被遮挡的方块整体剔除<br>
 但仍旧保留了与空气接触的方块的不可见的mesh面<br>
-![alt text](image-1.png)
-三、利用OpenSimplex2噪声多次叠加形成分型布朗运噪声(FBm)生成512x32x512大小的地形
-![!\[alt text\](91c29d57bba658bb8c90ede6be4be8a.png)](simplex-FBm.png)
+![alt text](image/image-1.png)
+三、利用OpenSimplex2噪声多次叠加形成分型布朗噪声(FBm)生成512x32x512大小单区块的地形
+![alt text](image/simplex-FBm-1.png)

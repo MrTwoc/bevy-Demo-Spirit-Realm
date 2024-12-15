@@ -8,6 +8,8 @@ use bevy_flycam::prelude::*;
 use pbr::wireframe::WireframePlugin;
 // 噪声生成
 use fastnoise_lite::*;
+// 显示世界内参数
+use bevy_inspector_egui::quick::WorldInspectorPlugin;
 
 const CHUNK_XZ:i32 = 512;
 const CHUNK_Y:i32 = 32;
@@ -27,6 +29,7 @@ impl OverlayColor {
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
+        .add_plugins(WorldInspectorPlugin::new())   // 显示世界内参数 
         .add_plugins((
             PlayerPlugin,           //  可移动摄像机插件
             WireframePlugin,        // 绘制线框插件
@@ -81,6 +84,11 @@ fn setup(
         MeshMaterial3d(cube_materials.clone()),
         Transform::from_xyz(0.0, 0., 0.0),
     ));
+    // commands.spawn((
+    //     Mesh3d(cube_mesh.clone()),
+    //     MeshMaterial3d(cube_materials.clone()),
+    //     Transform::from_xyz(CHUNK_XZ as f32, 0., 0.0),
+    // ));
 }
 
 fn create_cube_mesh() -> Mesh {
@@ -95,8 +103,13 @@ fn create_cube_mesh() -> Mesh {
     // 根据噪声生成
     let mut noise = FastNoiseLite::new();
     noise.set_noise_type(Some(NoiseType::OpenSimplex2));
+    // 噪声种子为420
     noise.set_seed(Some(420));
+    // 设置FBm噪声参数
     noise.set_fractal_type(Some(FractalType::FBm));
+    noise.set_fractal_gain(Some(0.5));
+    noise.set_fractal_octaves(Some(4));
+    noise.set_frequency(Some(0.01));
 
 /*
     遮挡剔除逻辑：
@@ -125,8 +138,6 @@ fn create_cube_mesh() -> Mesh {
                     chunk_blocks.insert([x, y, z], 1);
                 }
             }
-
-            
         }
     }
 
@@ -159,7 +170,6 @@ fn create_cube_mesh() -> Mesh {
         }
     }
 
-    // Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD)
     Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD)
     .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)

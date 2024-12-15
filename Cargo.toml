@@ -13,6 +13,8 @@ bevy_flycam = "*"
 fastnoise-lite = "1.1.1"
 bevy-inspector-egui = "0.28.0"
 
+nohash = "0.2.0"
+
 [profile.dev]
 opt-level = 1
 [profile.dev.package."*"]
