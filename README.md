@@ -28,22 +28,28 @@ OpenSimplex2 与 FBM 噪声：程序化生成地表地形 <br>
 https://lib.rs/crates/noise<br>
 https://iquilezles.org/articles/morenoise/<br>
 八叉树算法：用于管理大量体素<br>
+示例：[我是如何把2的60次方的方块画到屏幕上的【算法解析】](https://www.bilibili.com/video/BV1he411q7Zi/?spm_id_from=333.1387.homepage.video_card.click&vd_source=511b084e4bf87d71d725c5db0fb20b7f)
+<br>
 5. IPV6协议：用于服务器网络通信<br>
 6. Protobuf / FlatBuffers [数据序列化协议](https://developers.google.com/protocol-buffers/) <br>
 
 ## 核心功能 / 计划实现功能
 - [ ] 超平坦世界生成<br>
-- [√] 噪声世界生成<br>
+- [完成] 噪声世界生成<br>
 - [ ] 方块放置/破坏<br>
 - [ ] 各种优化、动态剔除：  <br>
-	遮挡剔除、视锥剔除、LOD / HLOD 技术、八叉树等<br>
+	1. 遮挡剔除、视锥剔除、LOD / HLOD 技术、八叉树等<br>
+	2. [完成]基于块的剔除<br>
 - [ ] 方块材质加载<br>
 - [ ] 区块系统实现<br>
 - [ ] QUIC协议的应用<br>
 - [ ] 服务端通信/多人在线<br>
 - [ ] AABB 碰撞箱: 实现玩家与物体之间物理碰撞<br>
 - [ ] 玩家模型<br>
-	待选模型文件格式：GLTF、JSON以及其他格式<br>
+	1. 待选模型文件格式：GLTF、JSON以及其他格式<br>
+- [ ] 时序数据库应用：<br>
+	1. 玩家操作记录、服务器运行日志<br>
+	2. 玩家在某时刻的坐标、状态<br>
 ## 阶段展示：<br>
 一、绘制基础mesh面，无剔除
 ![alt text](image/image.png)

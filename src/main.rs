@@ -1,7 +1,4 @@
-//! This example demonstrates how to use the `Camera::viewport_to_world` method.
-
 use std::collections::HashMap;
-
 use bevy::{asset::RenderAssetUsages, color::palettes::css::WHITE, dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin}, pbr::{self, wireframe::WireframeConfig}, prelude::*, render::mesh::{Indices, PrimitiveTopology}, text::FontSmoothing};
 use bevy_flycam::prelude::*;
 // 绘制线框的插件
@@ -11,13 +8,25 @@ use fastnoise_lite::*;
 // 显示世界内参数
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
 
-const CHUNK_XZ:i32 = 512;
+// 单个区块的直径为32
+const CHUNK_XYZ:i32 = 32;
 const CHUNK_Y:i32 = 32;
+// 玩家可视半径 2 = 前后左右上下各2个区块
+const VIEW_DISTANCE:i32 = 2;
+#[derive(Component)]
+struct CameraPosInfo;
+#[derive(Component)]
+struct ChunkPosInfo;
 
 // 方块ID：
 // 1:实体方块 0:空气
+// 2:Pos 区块内方块的坐标
 type BlockId = u8;
 type Pos = [i32;3];
+
+type WorldPos = [i32;3];
+type ChunkPos = [i32;3];
+type ChunkStartPos = [i32;3];
 
 // 显示实时FPS
 struct OverlayColor;
@@ -50,6 +59,7 @@ fn main() {
             },
         ))
         .add_systems(Startup, setup)
+        .add_systems(Update, (get_camera_pos,show_pos_info,show_chunkpos_info))        //.run_if() ：当满足条件时运行系统
 
         // 绘制线框需要的资源
         .insert_resource(WireframeConfig {
@@ -61,6 +71,12 @@ fn main() {
             // Can be changed per mesh using the `WireframeColor` component.
             default_color: WHITE.into(),
         })
+
+        // 设置摄像机属性
+        .insert_resource(MovementSettings {
+            sensitivity: 0.00015, // default: 0.00012
+            speed: 48.0, // default: 12.0
+        })
         .run();
 }
 
@@ -69,28 +85,160 @@ fn setup(
     mut meshes : ResMut<Assets<Mesh>>,
     mut materials : ResMut<Assets<StandardMaterial>>,
 ){
-
     let block_mesh_handle = create_cube_mesh();
     let cube_mesh = meshes.add(block_mesh_handle);
     let cube_materials = materials.add(
         StandardMaterial{
-            base_color: Color::hsla(0.0, 0.1, 0.5, 0.0),        // 将立方体透明，只绘制线框，关掉会使透明失效
+            // base_color: Color::hsla(0.0, 0.1, 0.5, 1.0),        // 将立方体透明，只绘制线框，关掉会使透明失效
             // alpha_mode: AlphaMode::Blend,                      // 开启透明模式
             ..Default::default()
         }
     );
+    
+    /*
+        区块加载距离   view_distance = 4 ：加载距离为4，即加载9x9x9 = 729个区块
+        每个区块32x32x32
+     */
+    // let view_distance:i32 = 4;
+
     commands.spawn((
         Mesh3d(cube_mesh.clone()),
         MeshMaterial3d(cube_materials.clone()),
-        Transform::from_xyz(0.0, 0., 0.0),
+        // 这里需要一个函数，返回区块的坐标
+        Transform::from_xyz(0.0, 0.0, 0.0),
     ));
-    // commands.spawn((
-    //     Mesh3d(cube_mesh.clone()),
-    //     MeshMaterial3d(cube_materials.clone()),
-    //     Transform::from_xyz(CHUNK_XZ as f32, 0., 0.0),
-    // ));
+    
+    // 绘制屏幕text，显示各种坐标信息
+    commands.spawn(
+        (
+            Text::new("GameInfo: \n"),
+            Node{
+                position_type: PositionType::Absolute,
+                bottom: Val::Px(5.0),
+                left: Val::Px(15.0),
+                ..default()
+            },
+        )
+    )
+    .with_child((
+        TextSpan::new("Unknown"),
+        CameraPosInfo, 
+    ))
+    .with_child((
+        TextSpan::new("Unknown"),
+        ChunkPosInfo, 
+    ));
 }
 
+fn show_pos_info(
+    mut camera_pos: Query<&mut TextSpan, With<CameraPosInfo>>,
+    query: Query<(&FlyCam, &mut Transform)>,
+) {
+    for (_camera, transform) in query.iter() {
+        // 在UI中显示摄像机的世界坐标
+        camera_pos.single_mut().0 = 
+            format!("Camera Pos: {},{},{}\n", &transform.translation[0], &transform.translation[1], &transform.translation[2]);
+    }
+}
+fn show_chunkpos_info(
+    mut chunk_pos: Query<&mut TextSpan, With<ChunkPosInfo>>,
+    query: Query<(&FlyCam, &mut Transform)>,
+) {
+    for (_camera, transform) in query.iter() {
+        let pos = [transform.translation[0], transform.translation[1], transform.translation[2]];
+        // 在UI中显示摄像机的世界坐标
+        chunk_pos.single_mut().0 = 
+            format!("Chunk Pos: {},{},{}\n", pos[0] as i32 / CHUNK_XYZ, pos[1] as i32 / CHUNK_Y, pos[2] as i32 / CHUNK_XYZ);
+    }
+}
+
+// 这里应该实现一个方法检测摄像机移动，移动才会触发区块检测，移动才会触发区块加载
+// 而不是每帧都检测，这样极大浪费性能
+fn get_camera_pos(
+    query: Query<(&FlyCam, &mut Transform)>,
+){
+    for (_camera, transform) in query.iter() {
+        // 待优化：
+        // 当摄像机坐标改变时，才触发区块检测
+        manage_chunks(transform.translation);
+    }
+}
+
+fn manage_chunks(
+    camera_pos: Vec3,
+){
+    // 将玩家坐标由f32转为u32，方便后续计算区块坐标
+    let [x,y,z] = [camera_pos[0] as i32, camera_pos[1] as i32, camera_pos[2] as i32]; 
+
+    // 将世界坐标转为区块坐标，既是中心区块的坐标
+    let [chunk_x,chunk_y,chunk_z] = worldpos_to_chunkpos([x,y,z]);
+
+    // let [chunk_start_x,chunk_start_y,chunk_start_z] = chunkpos_to_worldpos([chunk_x,chunk_y,chunk_z]);
+
+    // 将需要加载的区块坐标存储在hash中
+    let mut chunk_count:HashMap<ChunkPos, u32> = HashMap::new();
+    let mut count = 0;
+    
+    /*
+        循环前if一下，避免重复加载
+        判断原理：维护一个已加载区块的数组或hash存储区块坐标，当加载新的区块时，判断是否包含此坐标，未加载则加载，已加载则跳过
+        for循环需要加载、卸载的区块坐标
+     */
+    for x in (chunk_x - VIEW_DISTANCE)..=(chunk_x + VIEW_DISTANCE){
+        for y in (chunk_y - VIEW_DISTANCE)..=(chunk_y + VIEW_DISTANCE){
+            for z in (chunk_z - VIEW_DISTANCE)..=(chunk_z + VIEW_DISTANCE){
+                // 这里需要if判断是否已经加载过该区块, 将区块坐标存储在hash中
+                if !chunk_count.contains_key(&[x, y, z]){
+                    chunk_count.insert([x, y, z], count+1);
+                }
+            }
+        }
+    }
+
+    for (pos,_num) in chunk_count.iter(){
+        // 加载区块
+        // spawn_chunk([pos[0], pos[1], pos[2]]);
+        // 还可以在这里，检查是否需要卸载区块
+        // unload_chunk(chunk_x, chunk_y, chunk_z);
+    }
+}
+
+
+/*
+    区块起始坐标：0,0,0
+    单纯向上移动，变为：
+    区块起始坐标：0,32,0
+*/
+/// 这个方法返回个区块 mesh给 manage_chunks 方法
+fn load_chunk(chunk_pos: ChunkPos){
+    // 将区块坐标转为世界坐标，再转为区块起始坐标
+    let [chunk_start_x,chunk_start_y,chunk_start_z] = chunkpos_to_worldpos([chunk_pos[0] * CHUNK_XYZ,chunk_pos[1] * CHUNK_XYZ,chunk_pos[2] * CHUNK_XYZ]);
+    // 加载区块
+    // create_cube_mesh([chunk_start_x,chunk_start_y,chunk_start_z])
+}
+fn unload_chunk(chunk_pos: ChunkPos){
+    // 卸载区块
+}
+
+fn worldpos_to_chunkpos(world_pos: WorldPos) -> ChunkPos{
+    // 世界坐标转区块坐标   区块坐标 = 世界坐标 / 单区块大小
+    [
+        world_pos[0] / CHUNK_XYZ,
+        world_pos[1] / CHUNK_XYZ,
+        world_pos[2] / CHUNK_XYZ
+    ]
+}
+fn chunkpos_to_worldpos(chunk_pos: ChunkPos) -> WorldPos{
+    // 区块坐标转世界坐标
+    // 区块坐标 * 单区块大小 = 区块起始坐标，再加偏移量，就是玩家的世界坐标
+    [
+        chunk_pos[0] * CHUNK_XYZ,
+        chunk_pos[1] * CHUNK_XYZ,
+        chunk_pos[2] * CHUNK_XYZ
+    ]
+}
+
+// 实现区块管理的化，这里应该需要传递区块坐标，生成该区块的方块，再生成、返回mesh
 fn create_cube_mesh() -> Mesh {
     let mut positions = Vec::new();
     let mut normals = Vec::new();
@@ -125,8 +273,8 @@ fn create_cube_mesh() -> Mesh {
     左面有方块：不渲染左面的顶点
 
 */
-    for x in 0..CHUNK_XZ {
-        for z in 0..CHUNK_XZ {
+    for x in 0..CHUNK_XYZ {
+        for z in 0..CHUNK_XYZ {
             let negative_1_to_1 = noise.get_noise_2d(x as f32, z as f32);
             let noise_date = (negative_1_to_1 + 1.) / 2.;
             
