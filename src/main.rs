@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use bevy::{asset::RenderAssetUsages, color::palettes::css::WHITE, dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin}, pbr::{self, wireframe::WireframeConfig}, prelude::*, render::mesh::{Indices, PrimitiveTopology}, text::FontSmoothing};
 use bevy_flycam::prelude::*;
@@ -11,13 +11,23 @@ use bevy_inspector_egui::quick::WorldInspectorPlugin;
 // 显示实时FPS
 struct OverlayColor;
 impl OverlayColor {
-    // const RED: Color = Color::srgb(1.0, 0.0, 0.0);
     const GREEN: Color = Color::srgb(0.0, 1.0, 0.0);
 }
 type BlockId = u8;
 type Pos = [i32;3];
 // 单个区块的直径为32
 const CHUNK_XYZ:i32 = 32;
+type ChunkStartPos = [i32;3];
+type ChunkPos = [i32;3];
+
+
+#[derive(Resource)]
+struct CountManager {
+    chunks: HashMap<ChunkPos, i32>,
+    // 玩家可视半径 2 = 前后左右上下各2个区块
+    render_distance: i32,
+}
+
 
 fn main(){
     App::new()
@@ -46,6 +56,12 @@ fn main(){
         .add_systems(Update, (
             manage_chunks,
         ))
+
+        // 将需要加载的区块存入HashMap
+        .insert_resource(CountManager {
+            chunks: HashMap::new(),
+            render_distance: 3,
+        })
 
         // 绘制线框需要的资源
         .insert_resource(WireframeConfig {
@@ -86,15 +102,42 @@ fn setup(
 }
 
 fn manage_chunks(
-    query: Query<(&FlyCam, &mut Transform)>,
+    mut count_manager: ResMut<CountManager>,
+    camera_query: Query<&Transform, With<FlyCam>>,
     mut previous_position: Local<Option<Vec3>>,
 ) {
-    for (_camera, transform) in query.iter() {
+    if let Ok(transform) = camera_query.get_single() {
         // 检查摄像机位置是否发生变化
         if let Some(prev_pos) = *previous_position {
             if prev_pos != transform.translation {
                 // 摄像机位置发生变化，执行区块检测逻辑
-                println!("摄像机位置发生变化，当前位置：{}", transform.translation);
+                let _chunk_start_pos = world_pos_2_chunk_start_pos(&transform.translation);
+                let chunk_pos = world_pos_2_block_pos(&transform.translation);
+                
+                let mut new_chunks = HashSet::new();
+                for x in -count_manager.render_distance ..= count_manager.render_distance {
+                    for y in -count_manager.render_distance ..= count_manager.render_distance {
+                        for z in -count_manager.render_distance ..= count_manager.render_distance {
+                            let chunk_pos = [
+                                chunk_pos[0] + x, 
+                                chunk_pos[1] + y, 
+                                chunk_pos[2] + z
+                            ];
+                            new_chunks.insert(chunk_pos);
+                        }
+                    }
+                }
+                // 移除超出范围的区块
+                count_manager.chunks.retain(|pos, _| new_chunks.contains(pos));
+
+                // 添加新区块
+                for chunk_pos in new_chunks {
+                    if !count_manager.chunks.contains_key(&chunk_pos) {
+                        count_manager.chunks.insert(chunk_pos, 1);
+                    }
+                }
+                println!("当前区块数量：{}", count_manager.chunks.len());   // 可视半径=3 -> 7x7x7 = 输出343
+
                 // TODO: 在这里添加区块检测逻辑
                 *previous_position = Some(transform.translation);
             }
@@ -105,6 +148,24 @@ fn manage_chunks(
     }
 }
 
+fn world_pos_2_chunk_start_pos(pos: &Vec3) -> ChunkStartPos {
+    let chunk_x = (pos.x as i32) / CHUNK_XYZ;
+    let chunk_y = (pos.y as i32) / CHUNK_XYZ;
+    let chunk_z = (pos.z as i32) / CHUNK_XYZ;
+
+    let chunk_start_x = chunk_x * CHUNK_XYZ;
+    let chunk_start_y = chunk_y * CHUNK_XYZ;
+    let chunk_start_z = chunk_z * CHUNK_XYZ;
+
+    [chunk_start_x, chunk_start_y, chunk_start_z]
+}
+
+fn world_pos_2_block_pos(pos: &Vec3) -> ChunkPos {
+    let chunk_x = (pos.x as i32) / CHUNK_XYZ;
+    let chunk_y = (pos.y as i32) / CHUNK_XYZ;
+    let chunk_z = (pos.z as i32) / CHUNK_XYZ;
+    [chunk_x, chunk_y, chunk_z]
+}
 
 // 实现区块管理的化，这里应该需要传递区块坐标，生成该区块的方块，再生成、返回mesh
 fn create_cube_mesh() -> Mesh {
