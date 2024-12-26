@@ -26,7 +26,9 @@ struct CountManager {
     chunks: HashMap<ChunkPos, i32>,
     // 玩家可视半径 2 = 前后左右上下各2个区块
     render_distance: i32,
+    new_chunks: HashSet<ChunkPos>,  // 新增字段,存储新增的区块坐标
 }
+
 
 
 fn main(){
@@ -55,22 +57,19 @@ fn main(){
         .add_systems(Startup, setup)
         .add_systems(Update, (
             manage_chunks,
+            load_chunks,
         ))
 
         // 将需要加载的区块存入HashMap
         .insert_resource(CountManager {
             chunks: HashMap::new(),
-            render_distance: 3,
+            render_distance: 1,
+            new_chunks: HashSet::new(),
         })
 
         // 绘制线框需要的资源
         .insert_resource(WireframeConfig {
-            // The global wireframe config enables drawing of wireframes on every mesh,
-            // except those with `NoWireframe`. Meshes with `Wireframe` will always have a wireframe,
-            // regardless of the global configuration.
             global: true,
-            // Controls the default color of all wireframes. Used as the default color for global wireframes.
-            // Can be changed per mesh using the `WireframeColor` component.
             default_color: WHITE.into(),
         })
 
@@ -81,7 +80,6 @@ fn main(){
         })
         .run();
 }
-
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -94,10 +92,11 @@ fn setup(
             ..Default::default()
         }
     );
+    
     commands.spawn((
         Mesh3d(cube_mesh.clone()),
         MeshMaterial3d(cube_materials.clone()),
-        Transform::from_xyz(0.0, 0.0, 0.0),
+        Transform::from_xyz(0.0,0.0,0.0)
     ));
 }
 
@@ -133,7 +132,9 @@ fn manage_chunks(
                 // 添加新区块
                 for chunk_pos in new_chunks {
                     if !count_manager.chunks.contains_key(&chunk_pos) {
+                        println!("新增区块坐标：{:?}", &chunk_pos);
                         count_manager.chunks.insert(chunk_pos, 1);
+                        count_manager.new_chunks.insert(chunk_pos);  // 记录新增的区块
                     }
                 }
                 println!("当前区块数量：{}", count_manager.chunks.len());   // 可视半径=3 -> 7x7x7 = 输出343
@@ -145,6 +146,45 @@ fn manage_chunks(
             // 第一次运行时，记录初始位置
             *previous_position = Some(transform.translation);
         }
+    }
+}
+
+fn load_chunks(
+    mut count_manager: ResMut<CountManager>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    if count_manager.is_changed() {
+        for chunk_pos in count_manager.new_chunks.iter() {
+            // 将区块坐标转换为世界坐标
+            let world_x = chunk_pos[0] * CHUNK_XYZ;
+            let world_y = chunk_pos[1] * CHUNK_XYZ; 
+            let world_z = chunk_pos[2] * CHUNK_XYZ;
+    
+            // 在指定位置生成区块网格
+            // let chunk_mesh = create_cube_mesh();
+            // let mesh_handle = meshes.add(chunk_mesh);
+            
+            // 生成区块实体
+            let block_mesh_handle = create_cube_mesh();
+            let cube_mesh = meshes.add(block_mesh_handle);
+            let cube_materials = materials.add(
+                StandardMaterial{
+                    ..Default::default()
+                }
+            );
+            commands.spawn(
+                (
+                        Mesh3d(cube_mesh.clone()),
+                        MeshMaterial3d(cube_materials.clone()),
+                        Transform::from_xyz(world_x as f32, world_y as f32, world_z as f32),
+                    ),
+            );
+        }
+        // 清空新增区块集合
+        count_manager.new_chunks.clear();
+        
     }
 }
 
