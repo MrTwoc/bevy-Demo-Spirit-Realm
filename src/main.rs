@@ -20,6 +20,9 @@ const CHUNK_XYZ:i32 = 32;
 type ChunkStartPos = [i32;3];
 type ChunkPos = [i32;3];
 
+// Add this component to mark spawned chunk entities
+#[derive(Component)]
+struct ChunkEntity(ChunkPos);
 
 #[derive(Resource)]
 struct CountManager {
@@ -27,6 +30,7 @@ struct CountManager {
     // 玩家可视半径 2 = 前后左右上下各2个区块
     render_distance: i32,
     new_chunks: HashSet<ChunkPos>,  // 新增字段,存储新增的区块坐标
+    spawned_chunks: HashMap<ChunkPos, Entity>, // 追踪已加载的区块
 }
 
 
@@ -58,6 +62,7 @@ fn main(){
         .add_systems(Update, (
             manage_chunks,
             load_chunks,
+            cleanup_chunks,
         ))
 
         // 将需要加载的区块存入HashMap
@@ -65,6 +70,7 @@ fn main(){
             chunks: HashMap::new(),
             render_distance: 1,
             new_chunks: HashSet::new(),
+            spawned_chunks: HashMap::new(),
         })
 
         // 绘制线框需要的资源
@@ -156,15 +162,12 @@ fn load_chunks(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     if count_manager.is_changed() {
-        for chunk_pos in count_manager.new_chunks.iter() {
+        let new_chunks: Vec<_> = count_manager.new_chunks.iter().cloned().collect();
+        for chunk_pos in new_chunks {
             // 将区块坐标转换为世界坐标
             let world_x = chunk_pos[0] * CHUNK_XYZ;
             let world_y = chunk_pos[1] * CHUNK_XYZ; 
             let world_z = chunk_pos[2] * CHUNK_XYZ;
-    
-            // 在指定位置生成区块网格
-            // let chunk_mesh = create_cube_mesh();
-            // let mesh_handle = meshes.add(chunk_mesh);
             
             // 生成区块实体
             let block_mesh_handle = create_cube_mesh();
@@ -174,19 +177,61 @@ fn load_chunks(
                     ..Default::default()
                 }
             );
-            commands.spawn(
+            let entity = commands.spawn(
                 (
                         Mesh3d(cube_mesh.clone()),
                         MeshMaterial3d(cube_materials.clone()),
                         Transform::from_xyz(world_x as f32, world_y as f32, world_z as f32),
+                        ChunkEntity(chunk_pos),
                     ),
-            );
+            ).id();
+            count_manager.spawned_chunks.insert(chunk_pos, entity);
         }
         // 清空新增区块集合
         count_manager.new_chunks.clear();
-        
     }
 }
+
+fn cleanup_chunks(
+    mut count_manager: ResMut<CountManager>,
+    mut commands: Commands,
+    camera_query: Query<&Transform, With<FlyCam>>,
+) {
+    if let Ok(camera_transform) = camera_query.get_single() {
+        let current_chunk = world_pos_2_block_pos(&camera_transform.translation);
+        
+        // Collect chunks to remove
+        let chunks_to_remove: Vec<ChunkPos> = count_manager.spawned_chunks
+            .keys()
+            .filter(|&&chunk_pos| {
+                let dx = (chunk_pos[0] - current_chunk[0]).abs();
+                let dy = (chunk_pos[1] - current_chunk[1]).abs();
+                let dz = (chunk_pos[2] - current_chunk[2]).abs();
+                
+                dx > count_manager.render_distance || 
+                dy > count_manager.render_distance || 
+                dz > count_manager.render_distance
+            })
+            .copied()
+            .collect();
+
+        // Remove chunks outside render distance
+        for chunk_pos in chunks_to_remove {
+            if let Some(entity) = count_manager.spawned_chunks.remove(&chunk_pos) {
+                commands.entity(entity).despawn();
+                count_manager.chunks.remove(&chunk_pos);
+            }
+        }
+    }
+}
+
+
+
+
+
+
+
+
 
 fn world_pos_2_chunk_start_pos(pos: &Vec3) -> ChunkStartPos {
     let chunk_x = (pos.x as i32) / CHUNK_XYZ;
