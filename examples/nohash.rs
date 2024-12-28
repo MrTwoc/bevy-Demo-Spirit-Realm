@@ -20,7 +20,7 @@ use std::{collections::HashMap, hash::BuildHasherDefault, process::Command};
     test round 99, sum:499999500000, elapsed:1.9633ms
 */
 
-fn main(){
+fn main() {
     // let hash:HashMap<i64, i64> = (0..1_000_000).map(|i|(i,i)).collect();
     let nohash:HashMap<i64, i64, BuildHasherDefault<NoHashHasher<i64>>> = (0..1_000_000).map(|i|(i,i)).collect();
 
@@ -39,4 +39,5 @@ fn main(){
 
     }
     let _ = Command::new("cmd.exe").arg("/c").arg("pause").status();
+    
 }

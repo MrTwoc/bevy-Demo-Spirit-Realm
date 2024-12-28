@@ -99,6 +99,7 @@ fn setup(
         }
     );
     
+    // 初始区块：玩家进入游戏时产生的第一个区块(不会被卸载)
     commands.spawn((
         Mesh3d(cube_mesh.clone()),
         MeshMaterial3d(cube_materials.clone()),
@@ -225,14 +226,6 @@ fn cleanup_chunks(
     }
 }
 
-
-
-
-
-
-
-
-
 fn world_pos_2_chunk_start_pos(pos: &Vec3) -> ChunkStartPos {
     let chunk_x = (pos.x as i32) / CHUNK_XYZ;
     let chunk_y = (pos.y as i32) / CHUNK_XYZ;
@@ -282,9 +275,7 @@ fn create_cube_mesh() -> Mesh {
             for y in 0..block_y {
                 // 可以从这里判断当前坐标的方块是否需要绘制
                 // get 方块坐标，判断是否四周是空气还是实体方块，如果是实体方块则删掉该顶点：坐标的  噪声值 < 阈值 = 空气
-                if !chunk_blocks.contains_key(&[x, y, z]){
-                    chunk_blocks.insert([x, y, z], 1);
-                }
+                chunk_blocks.insert([x, y, z], 1);
             }
         }
     }
