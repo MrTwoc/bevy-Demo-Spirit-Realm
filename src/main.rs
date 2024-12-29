@@ -1,3 +1,6 @@
+mod posinfo_plugin;
+use posinfo_plugin::PosInfoPlugin;
+
 use std::collections::{HashMap, HashSet};
 
 use bevy::{asset::RenderAssetUsages, color::palettes::css::WHITE, dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin}, pbr::{self, wireframe::WireframeConfig}, prelude::*, render::mesh::{Indices, PrimitiveTopology}, text::FontSmoothing};
@@ -40,6 +43,7 @@ fn main(){
         .add_plugins(DefaultPlugins)
         .add_plugins(WorldInspectorPlugin::new())   // 显示世界内参数 
         .add_plugins((
+            PosInfoPlugin,
             PlayerPlugin,           //  可移动摄像机插件
             WireframePlugin,        // 绘制线框插件
             FpsOverlayPlugin {      // 实时显示FPS插件
@@ -139,12 +143,12 @@ fn manage_chunks(
                 // 添加新区块
                 for chunk_pos in new_chunks {
                     if !count_manager.chunks.contains_key(&chunk_pos) {
-                        println!("新增区块坐标：{:?}", &chunk_pos);
+                        // println!("新增区块坐标：{:?}", &chunk_pos);
                         count_manager.chunks.insert(chunk_pos, 1);
                         count_manager.new_chunks.insert(chunk_pos);  // 记录新增的区块
                     }
                 }
-                println!("当前区块数量：{}", count_manager.chunks.len());   // 可视半径=3 -> 7x7x7 = 输出343
+                // println!("当前区块数量：{}", count_manager.chunks.len());   // 可视半径=3 -> 7x7x7 = 输出343
 
                 // TODO: 在这里添加区块检测逻辑
                 *previous_position = Some(transform.translation);
