@@ -18,8 +18,12 @@ impl OverlayColor {
 }
 type BlockId = u8;
 type Pos = [i32;3];
-// 单个区块的直径为32
+// 单个区块的直径为32: 添加了 CHUNK_SIZE 作为单个区块的长宽高。。CHUNK_XYZ暂时不做更改，用于显示负数的区块坐标
+
 const CHUNK_XYZ:i32 = 32;
+// 单个区块的直径限定为32
+const CHUNK_SIZE: usize = 32;
+
 type ChunkStartPos = [i32;3];
 type ChunkPos = [i32;3];
 
@@ -166,13 +170,14 @@ fn load_chunks(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    let chunk_size = CHUNK_SIZE as i32;
     if count_manager.is_changed() {
         let new_chunks: Vec<_> = count_manager.new_chunks.iter().cloned().collect();
         for chunk_pos in new_chunks {
             // 将区块坐标转换为世界坐标
-            let world_x = chunk_pos[0] * CHUNK_XYZ;
-            let world_y = chunk_pos[1] * CHUNK_XYZ; 
-            let world_z = chunk_pos[2] * CHUNK_XYZ;
+            let world_x = chunk_pos[0] * chunk_size;
+            let world_y = chunk_pos[1] * chunk_size; 
+            let world_z = chunk_pos[2] * chunk_size;
             
             // 生成区块实体
             let block_mesh_handle = create_cube_mesh();
@@ -231,21 +236,24 @@ fn cleanup_chunks(
 }
 
 fn world_pos_2_chunk_start_pos(pos: &Vec3) -> ChunkStartPos {
-    let chunk_x = (pos.x as i32) / CHUNK_XYZ;
-    let chunk_y = (pos.y as i32) / CHUNK_XYZ;
-    let chunk_z = (pos.z as i32) / CHUNK_XYZ;
+    let chunk_size = CHUNK_SIZE as i32;
 
-    let chunk_start_x = chunk_x * CHUNK_XYZ;
-    let chunk_start_y = chunk_y * CHUNK_XYZ;
-    let chunk_start_z = chunk_z * CHUNK_XYZ;
+    let chunk_x = (pos.x as i32) / chunk_size;
+    let chunk_y = (pos.y as i32) / chunk_size;
+    let chunk_z = (pos.z as i32) / chunk_size;
+
+    let chunk_start_x = chunk_x * chunk_size;
+    let chunk_start_y = chunk_y * chunk_size;
+    let chunk_start_z = chunk_z * chunk_size;
 
     [chunk_start_x, chunk_start_y, chunk_start_z]
 }
 
 fn world_pos_2_block_pos(pos: &Vec3) -> ChunkPos {
-    let chunk_x = (pos.x as i32) / CHUNK_XYZ;
-    let chunk_y = (pos.y as i32) / CHUNK_XYZ;
-    let chunk_z = (pos.z as i32) / CHUNK_XYZ;
+    let chunk_size = CHUNK_SIZE as i32;
+    let chunk_x = (pos.x as i32) / chunk_size;
+    let chunk_y = (pos.y as i32) / chunk_size;
+    let chunk_z = (pos.z as i32) / chunk_size;
     [chunk_x, chunk_y, chunk_z]
 }
 
@@ -255,9 +263,6 @@ fn create_cube_mesh() -> Mesh {
     let mut normals = Vec::new();
     let mut uvs = Vec::new();
     let mut indices = Vec::new();
-
-    // 将方块坐标存在hashmap中，k:pos, v:block_id
-    let mut chunk_blocks:HashMap<Pos, BlockId> = HashMap::new();
 
     // 根据噪声生成
     let mut noise = FastNoiseLite::new();
@@ -270,6 +275,15 @@ fn create_cube_mesh() -> Mesh {
     noise.set_fractal_octaves(Some(4));
     noise.set_frequency(Some(0.01));
 
+    // 将方块坐标存在hashmap中，k:pos, v:block_id
+    let mut chunk_blocks:HashMap<Pos, BlockId> = HashMap::new();
+
+    /*TODO:
+        优化：使用3D数组存储方块数据
+        注：这里数组的长度数值类型好像必须是usize，否则会报错
+     */
+    // let mut chunk_blocks_array = [[[0u8; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE];
+
     for x in 0..CHUNK_XYZ {
         for z in 0..CHUNK_XYZ {
             let negative_1_to_1 = noise.get_noise_2d(x as f32, z as f32);
@@ -277,9 +291,7 @@ fn create_cube_mesh() -> Mesh {
             
             let block_y = (noise_date * CHUNK_XYZ as f32) as i32;
             for y in 0..block_y {
-                // 可以从这里判断当前坐标的方块是否需要绘制
-                // get 方块坐标，判断是否四周是空气还是实体方块，如果是实体方块则删掉该顶点：坐标的  噪声值 < 阈值 = 空气
-                chunk_blocks.insert([x, y, z], 1);
+                chunk_blocks.insert([x as i32, y, z as i32], 1);
             }
         }
     }

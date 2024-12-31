@@ -47,22 +47,24 @@ fn pos_info(
 
 fn show_pos_info(
     mut camera_pos: Query<&mut TextSpan, With<CameraPosInfo>>,
-    query: Query<(&FlyCam, &mut Transform)>,
+    camera_query: Query<&Transform, With<FlyCam>>,
 ) {
-    for (_camera, transform) in query.iter() {
-        // 在UI中显示摄像机的世界坐标
+    if let Ok(transform) = camera_query.get_single() {
         camera_pos.single_mut().0 = 
             format!("Camera Pos: {},{},{}\n", &transform.translation[0], &transform.translation[1], &transform.translation[2]);
     }
 }
+
 fn show_chunkpos_info(
     mut chunk_pos: Query<&mut TextSpan, With<ChunkPosInfo>>,
-    query: Query<(&FlyCam, &mut Transform)>,
+    camera_query: Query<&Transform, With<FlyCam>>,
 ) {
-    for (_camera, transform) in query.iter() {
-        let pos = [transform.translation[0], transform.translation[1], transform.translation[2]];
-        // 在UI中显示摄像机的世界坐标
-        chunk_pos.single_mut().0 = 
-            format!("Chunk Pos: {},{},{}\n", pos[0] as i32 / CHUNK_XYZ, pos[1] as i32 / CHUNK_XYZ, pos[2] as i32 / CHUNK_XYZ);
+    if let Ok(transform) = camera_query.get_single() {
+        chunk_pos.single_mut().0 =
+            format!("Chunk Pos: {},{},{}\n", 
+                (&transform.translation[0] / CHUNK_XYZ as f32) as i32, 
+                (&transform.translation[1] / CHUNK_XYZ as f32) as i32, 
+                (&transform.translation[2] / CHUNK_XYZ as f32) as i32
+            );
     }
 }
