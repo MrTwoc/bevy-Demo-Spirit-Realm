@@ -76,7 +76,7 @@ fn main(){
         // 将需要加载的区块存入HashMap
         .insert_resource(CountManager {
             chunks: HashMap::new(),
-            render_distance: 3,
+            render_distance: 1,         // 玩家可视半径 1 = 前后左右上下各1个区块
             new_chunks: HashSet::new(),
             spawned_chunks: HashMap::new(),
         })
@@ -90,7 +90,7 @@ fn main(){
         // 设置摄像机属性
         .insert_resource(MovementSettings {
             sensitivity: 0.00015, // default: 0.00012
-            speed: 48.0, // default: 12.0
+            speed: 480.0, // default: 12.0
         })
         .run();
 }
@@ -293,26 +293,41 @@ fn create_cube_mesh(world_pos:[i32;3]) -> Mesh {
             let world_x = chunk_start_x + x;
             let world_z = chunk_start_z + z;
 
-            // let negative_1_to_1 = noise.get_noise_2d(x as f32, z as f32);
             let negative_1_to_1 = noise.get_noise_2d(world_x as f32, world_z as f32);
-            let noise_date = (negative_1_to_1 + 1.) / 2.;
+            let noise_value = (negative_1_to_1 + 1.) / 2.;
+
+            /*
+                TODO:
+                2025年1月1
+                这里的高度值太高会导致生成错误，应该是目前基于块剔除的方法导致的，需要重新实现剔除算法
+             */
+            // 将噪声值从 [-1,1] 映射到 [± 20480]
+            // let height = (noise_value * 20480.) as i32;
             
-            let block_y = (noise_date * CHUNK_XYZ as f32) as i32;
+            let height = (noise_value * 32.) as i32;
+            
+            // let block_y = (noise_value * CHUNK_XYZ as f32) as i32;
             // 使用 world_y 来确定在当前区块高度范围内的方块
             let start_y = chunk_start_y;
             let end_y = chunk_start_y + CHUNK_XYZ;
 
-            // for y in 0..block_y {
-            //     let world_y = chunk_start_y + y;
-            //     chunk_blocks.insert([x as i32, y, z as i32], 1);
+            // // 只在当前区块高度范围内生成方块
+            // if block_y > start_y && block_y < end_y {
+            //     for y in start_y..block_y {
+            //         let local_y = y - chunk_start_y;
+            //         chunk_blocks.insert([x, local_y, z], 1);
+            //     }
             // }
-            // 只在当前区块高度范围内生成方块
-            if block_y > start_y && block_y < end_y {
-                for y in start_y..block_y {
+            
+            if height >= start_y && height < end_y {
+                for y in start_y..height {
                     let local_y = y - chunk_start_y;
-                    chunk_blocks.insert([x, local_y, z], 1);
+                    if local_y >= 0 && local_y < CHUNK_XYZ {
+                        chunk_blocks.insert([x, local_y, z], 1);
+                    }
                 }
             }
+
         }
     }
 
