@@ -76,7 +76,7 @@ fn main(){
         // 将需要加载的区块存入HashMap
         .insert_resource(CountManager {
             chunks: HashMap::new(),
-            render_distance: 1,
+            render_distance: 3,
             new_chunks: HashSet::new(),
             spawned_chunks: HashMap::new(),
         })
@@ -99,7 +99,7 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let block_mesh_handle = create_cube_mesh();
+    let block_mesh_handle = create_cube_mesh([0,0,0]);
     let cube_mesh = meshes.add(block_mesh_handle);
     let cube_materials = materials.add(
         StandardMaterial{
@@ -180,7 +180,7 @@ fn load_chunks(
             let world_z = chunk_pos[2] * chunk_size;
             
             // 生成区块实体
-            let block_mesh_handle = create_cube_mesh();
+            let block_mesh_handle = create_cube_mesh([world_x,world_y,world_z]);
             let cube_mesh = meshes.add(block_mesh_handle);
             let cube_materials = materials.add(
                 StandardMaterial{
@@ -258,7 +258,7 @@ fn world_pos_2_block_pos(pos: &Vec3) -> ChunkPos {
 }
 
 // 实现区块管理的化，这里应该需要传递区块坐标，生成该区块的方块，再生成、返回mesh
-fn create_cube_mesh() -> Mesh {
+fn create_cube_mesh(world_pos:[i32;3]) -> Mesh {
     let mut positions = Vec::new();
     let mut normals = Vec::new();
     let mut uvs = Vec::new();
@@ -278,6 +278,10 @@ fn create_cube_mesh() -> Mesh {
     // 将方块坐标存在hashmap中，k:pos, v:block_id
     let mut chunk_blocks:HashMap<Pos, BlockId> = HashMap::new();
 
+    let chunk_start_x = world_pos[0];
+    let chunk_start_y = world_pos[1];
+    let chunk_start_z = world_pos[2];
+
     /*TODO:
         优化：使用3D数组存储方块数据
         注：这里数组的长度数值类型好像必须是usize，否则会报错
@@ -286,12 +290,28 @@ fn create_cube_mesh() -> Mesh {
 
     for x in 0..CHUNK_XYZ {
         for z in 0..CHUNK_XYZ {
-            let negative_1_to_1 = noise.get_noise_2d(x as f32, z as f32);
+            let world_x = chunk_start_x + x;
+            let world_z = chunk_start_z + z;
+
+            // let negative_1_to_1 = noise.get_noise_2d(x as f32, z as f32);
+            let negative_1_to_1 = noise.get_noise_2d(world_x as f32, world_z as f32);
             let noise_date = (negative_1_to_1 + 1.) / 2.;
             
             let block_y = (noise_date * CHUNK_XYZ as f32) as i32;
-            for y in 0..block_y {
-                chunk_blocks.insert([x as i32, y, z as i32], 1);
+            // 使用 world_y 来确定在当前区块高度范围内的方块
+            let start_y = chunk_start_y;
+            let end_y = chunk_start_y + CHUNK_XYZ;
+
+            // for y in 0..block_y {
+            //     let world_y = chunk_start_y + y;
+            //     chunk_blocks.insert([x as i32, y, z as i32], 1);
+            // }
+            // 只在当前区块高度范围内生成方块
+            if block_y > start_y && block_y < end_y {
+                for y in start_y..block_y {
+                    let local_y = y - chunk_start_y;
+                    chunk_blocks.insert([x, local_y, z], 1);
+                }
             }
         }
     }
