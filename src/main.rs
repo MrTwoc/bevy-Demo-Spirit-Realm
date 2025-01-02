@@ -76,7 +76,7 @@ fn main(){
         // 将需要加载的区块存入HashMap
         .insert_resource(CountManager {
             chunks: HashMap::new(),
-            render_distance: 1,         // 玩家可视半径 1 = 前后左右上下各1个区块
+            render_distance: 10,         // 玩家可视半径 1 = 前后左右上下各1个区块
             new_chunks: HashSet::new(),
             spawned_chunks: HashMap::new(),
         })

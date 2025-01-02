@@ -2,7 +2,7 @@
     一、玩家区块加载逻辑：
         区块加载数量为玩家设置的可视距离，设置为4，则是16个区块，玩家在地图上移动时，会加载16个区块
         需要先把玩家的世界坐标转成区块坐标，然后以玩家所在区块为中心向四周加载区块。
-        1. 计算玩家所在区块的区块坐标   例如：玩家坐标为(320, 320, 320) 
+        1. 计算玩家所在区块的区块坐标   例如：玩家坐标为(320, 320, 320)
             区块坐标为(玩家坐标 ÷ 单个区块大小 = [320,320,320] ÷ 32) => (10, 10, 10)
         2. 获得玩家可视距离，例如：可视距离为4，则 9x9x9 个区块： (10-4, 10-4, 10-4) => (6, 6, 6) 到 (10+4, 10+4, 10+4) => (14, 14, 14)
             注：总数为奇数，确保玩家所在区块为中心，加载9x9x9个区块
@@ -12,7 +12,7 @@
             x,y,z (14, 14, 14) => (14x32, 14x32, 14x32) => (448,448,448)
         4. 将需要加载的区块坐标，分段加载，并拼接
             计算需要加载的区块坐标，例如：
-            玩家所在的区块坐标 
+            玩家所在的区块坐标
             X + 可视半径, Y + 可视半径, Z + 可视半径
             X - 可视半径, Y - 可视半径, Z - 可视半径
 
@@ -25,7 +25,7 @@
                     spawn_chunk(x, y, z);
                     unload_chunk(x, y, z);
                 }
-            }    
+            }
         }
 
     二、玩家区块卸载逻辑：
@@ -34,24 +34,23 @@
 
 */
 
-/* 
+/*
 关于世界方块的偏移量：
     fn world_to_chunk_offset(world_x, world_y, world_z):
     chunk_x = int(world_x // 32)
     chunk_y = int(world_y // 32)
     chunk_z = int(world_z // 32)
-    
+
     chunk_start_x = chunk_x * 32
     chunk_start_y = chunk_y * 32
     chunk_start_z = chunk_z * 32
-    
+
     offset_x = world_x - chunk_start_x
     offset_y = world_y - chunk_start_y
     offset_z = world_z - chunk_start_z
-    
+
     return offset_x, offset_y, offset_z
 */
-
 
 /*
     源坐标：(998.1,456.9,789.4)
@@ -61,13 +60,13 @@
     chunk_start_POS：992,448,768
 */
 // type pos = (u32, u32, u32);
-fn main(){
+fn main() {
     // 区块坐标转世界坐标的偏移量计算
-    world_to_chunk_offset(1998.1, 456.9, 789.4);       // 这里的xyz，是玩家的世界坐标
+    world_to_chunk_offset(1998.1, 456.9, 789.4); // 这里的xyz，是玩家的世界坐标
 }
 
 // 输入参数为玩家的世界坐标
-fn world_to_chunk_offset(world_x:f32, world_y:f32, world_z:f32){
+fn world_to_chunk_offset(world_x: f32, world_y: f32, world_z: f32) {
     // 设 玩家坐标 为 (998,456,789)
     // 求出区块坐标 = (玩家坐标 ÷ 单个区块大小 = (x / 32), (y / 32), (z / 32) ) => (31, 150, 26)
     let (chunk_x, chunk_y, chunk_z) = world_to_chunk(world_x as i32, world_y as i32, world_z as i32);
@@ -97,7 +96,6 @@ fn world_to_chunk_offset(world_x:f32, world_y:f32, world_z:f32){
 }
 
 // 世界坐标转区块坐标
-fn world_to_chunk(x:i32, y:i32, z:i32) -> (i32, i32, i32) {
-    return (x / 32 , y / 32, z / 32);
+fn world_to_chunk(x: i32, y: i32, z: i32) -> (i32, i32, i32) {
+    return (x / 32, y / 32, z / 32);
 }
-

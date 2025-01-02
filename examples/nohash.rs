@@ -22,22 +22,20 @@ use std::{collections::HashMap, hash::BuildHasherDefault, process::Command};
 
 fn main() {
     // let hash:HashMap<i64, i64> = (0..1_000_000).map(|i|(i,i)).collect();
-    let nohash:HashMap<i64, i64, BuildHasherDefault<NoHashHasher<i64>>> = (0..1_000_000).map(|i|(i,i)).collect();
+    let nohash: HashMap<i64, i64, BuildHasherDefault<NoHashHasher<i64>>> = (0..1_000_000).map(|i| (i, i)).collect();
 
-    for t in 0..100{
+    for t in 0..100 {
         let mut total = 0;
         let start = std::time::Instant::now();
-        for k in 0..1_000_000{
+        for k in 0..1_000_000 {
             let value = nohash.get(&k).unwrap();
             total += value;
         }
         let elapsed = std::time::Instant::now().saturating_duration_since(start);
 
         if t >= 95 {
-            println!("test round {}, sum:{}, elapsed:{:?}",t, total, elapsed);
+            println!("test round {}, sum:{}, elapsed:{:?}", t, total, elapsed);
         }
-
     }
     let _ = Command::new("cmd.exe").arg("/c").arg("pause").status();
-    
 }

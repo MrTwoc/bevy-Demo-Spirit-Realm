@@ -21,21 +21,20 @@ use std::collections::HashMap;
     test round 99, sum:499999500000, elapsed:63.894ms
 */
 
-fn main(){
-    let hash:HashMap<i64, i64> = (0..1_000_000).map(|i|(i,i)).collect();
+fn main() {
+    let hash: HashMap<i64, i64> = (0..1_000_000).map(|i| (i, i)).collect();
 
-    for t in 0..100{
+    for t in 0..100 {
         let mut total = 0;
         let start = std::time::Instant::now();
-        for k in 0..1_000_000{
+        for k in 0..1_000_000 {
             let value = hash.get(&k).unwrap();
             total += value;
         }
         let elapsed = std::time::Instant::now().saturating_duration_since(start);
 
         if t >= 95 {
-            println!("test round {}, sum:{}, elapsed:{:?}",t, total, elapsed);
+            println!("test round {}, sum:{}, elapsed:{:?}", t, total, elapsed);
         }
-
     }
 }
