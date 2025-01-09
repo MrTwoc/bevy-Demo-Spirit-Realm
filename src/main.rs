@@ -90,7 +90,7 @@ fn main(){
         // 设置摄像机属性
         .insert_resource(MovementSettings {
             sensitivity: 0.00015, // default: 0.00012
-            speed: 480.0, // default: 12.0
+            speed: 48.0, // default: 12.0
         })
         .run();
 }
@@ -300,6 +300,8 @@ fn create_cube_mesh(world_pos:[i32;3]) -> Mesh {
                 TODO:
                 2025年1月1
                 这里的高度值太高会导致生成错误，应该是目前基于块剔除的方法导致的，需要重新实现剔除算法
+                BUG——2025.1.6
+                每隔一段高度，会有一层高度完全没有方块，可能是拼接出的问题。
              */
             // 将噪声值从 [-1,1] 映射到 [± 20480]
             // let height = (noise_value * 20480.) as i32;
@@ -331,11 +333,14 @@ fn create_cube_mesh(world_pos:[i32;3]) -> Mesh {
         }
     }
 
+    // let start_index = positions.len() as u32;
     // 遍历chunk_blocks中所有方块，判断是否需要绘制
     // println!("方块数量：{}", chunk_blocks.len());
     for (pos, _block_id) in chunk_blocks.iter(){
+        let start_index = positions.len() as u32;
         let pos = [pos[0], pos[1], pos[2]];
         
+        /* 
         if !(
             chunk_blocks.contains_key(&[pos[0], pos[1] + 1, pos[2]]) &&
             chunk_blocks.contains_key(&[pos[0], pos[1] - 1, pos[2]]) &&
@@ -346,6 +351,14 @@ fn create_cube_mesh(world_pos:[i32;3]) -> Mesh {
         ){
             // 由原来的每个方块都绘制6个面，现在只需要按是否遮挡来绘制未遮挡的面
             add_cube_to_mesh(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32]);
+            // add_top_face(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32],start_index);
+        }
+        */
+        
+        // 2025.1.9
+        // 判断是否遮挡
+        if !chunk_blocks.contains_key(&[pos[0], pos[1] + 1, pos[2]]){
+            add_top_face(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32],start_index);
         }
     }
 
@@ -356,6 +369,7 @@ fn create_cube_mesh(world_pos:[i32;3]) -> Mesh {
     .with_inserted_indices(Indices::U32(indices))
 }
 
+/* 
 fn add_cube_to_mesh(
     positions: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
@@ -406,3 +420,202 @@ fn add_cube_to_mesh(
         start_index + 0, start_index + 1, start_index + 4, start_index + 4, start_index + 1, start_index + 5, // 前面       0,1,4,4,1,5
     ]);
 }
+*/
+
+
+
+
+
+
+fn add_top_face(
+    positions: &mut Vec<[f32; 3]>,
+    normals: &mut Vec<[f32; 3]>,
+    uvs: &mut Vec<[f32; 2]>,
+    indices: &mut Vec<u32>,
+    pos: [f32; 3],
+    start_index: u32,
+) {
+    positions.extend_from_slice(&[
+        [pos[0], pos[1] + 1.0, pos[2]], // 0
+        [pos[0] + 1.0, pos[1] + 1.0, pos[2]], // 1
+        [pos[0] + 1.0, pos[1] + 1.0, pos[2] + 1.0], // 2
+        [pos[0], pos[1] + 1.0, pos[2] + 1.0], // 3
+    ]);
+
+    normals.extend_from_slice(&[
+        [0.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 0.0],
+    ]);
+
+    uvs.extend_from_slice(&[
+        [0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0],
+    ]);
+
+    indices.extend_from_slice(&[
+        start_index + 0, start_index + 3, start_index + 1,
+        start_index + 1, start_index + 3, start_index + 2,
+    ]);
+}
+
+fn add_bottom_face(
+    positions: &mut Vec<[f32; 3]>,
+    normals: &mut Vec<[f32; 3]>,
+    uvs: &mut Vec<[f32; 2]>,
+    indices: &mut Vec<u32>,
+    pos: [f32; 3],
+    start_index: u32,
+) {
+    positions.extend_from_slice(&[
+        [pos[0], pos[1], pos[2]], // 4
+        [pos[0] + 1.0, pos[1], pos[2]], // 5
+        [pos[0] + 1.0, pos[1], pos[2] + 1.0], // 6
+        [pos[0], pos[1], pos[2] + 1.0], // 7
+    ]);
+
+    normals.extend_from_slice(&[
+        [0.0, -1.0, 0.0], [0.0, -1.0, 0.0], [0.0, -1.0, 0.0], [0.0, -1.0, 0.0],
+    ]);
+
+    uvs.extend_from_slice(&[
+        [0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0],
+    ]);
+
+    indices.extend_from_slice(&[
+        start_index + 0, start_index + 1, start_index + 3,
+        start_index + 1, start_index + 2, start_index + 3,
+    ]);
+}
+
+fn add_right_face(
+    positions: &mut Vec<[f32; 3]>,
+    normals: &mut Vec<[f32; 3]>,
+    uvs: &mut Vec<[f32; 2]>,
+    indices: &mut Vec<u32>,
+    pos: [f32; 3],
+    start_index: u32,
+) {
+    positions.extend_from_slice(&[
+        [pos[0] + 1.0, pos[1] + 1.0, pos[2]], // 1
+        [pos[0] + 1.0, pos[1] + 1.0, pos[2] + 1.0], // 2
+        [pos[0] + 1.0, pos[1], pos[2]], // 5
+        [pos[0] + 1.0, pos[1], pos[2] + 1.0], // 6
+    ]);
+
+    normals.extend_from_slice(&[
+        [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0],
+    ]);
+
+    uvs.extend_from_slice(&[
+        [0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0],
+    ]);
+
+    indices.extend_from_slice(&[
+        start_index + 0, start_index + 1, start_index + 2,
+        start_index + 2, start_index + 1, start_index + 3,
+    ]);
+}
+
+fn add_left_face(
+    positions: &mut Vec<[f32; 3]>,
+    normals: &mut Vec<[f32; 3]>,
+    uvs: &mut Vec<[f32; 2]>,
+    indices: &mut Vec<u32>,
+    pos: [f32; 3],
+    start_index: u32,
+) {
+    positions.extend_from_slice(&[
+        [pos[0], pos[1] + 1.0, pos[2] + 1.0], // 左上角
+        [pos[0], pos[1] + 1.0, pos[2]], // 左下角
+        [pos[0], pos[1], pos[2] + 1.0], // 右上角
+        [pos[0], pos[1], pos[2]], // 右下角
+    ]);
+
+    normals.extend_from_slice(&[
+        [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0],
+    ]);
+
+    uvs.extend_from_slice(&[
+        [0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0],
+    ]);
+
+    indices.extend_from_slice(&[
+        start_index + 0, start_index + 1, start_index + 2,
+        start_index + 2, start_index + 1, start_index + 3,
+    ]);
+}
+
+fn add_back_face(
+    positions: &mut Vec<[f32; 3]>,
+    normals: &mut Vec<[f32; 3]>,
+    uvs: &mut Vec<[f32; 2]>,
+    indices: &mut Vec<u32>,
+    pos: [f32; 3],
+    start_index: u32,
+) {
+    positions.extend_from_slice(&[
+        [pos[0] + 1.0, pos[1] + 1.0, pos[2] + 1.0], // 2
+        [pos[0], pos[1] + 1.0, pos[2] + 1.0], // 3
+        [pos[0] + 1.0, pos[1], pos[2] + 1.0], // 6
+        [pos[0], pos[1], pos[2] + 1.0], // 7
+    ]);
+
+    normals.extend_from_slice(&[
+        [0.0, 0.0, -1.0], [0.0, 0.0, -1.0], [0.0, 0.0, -1.0], [0.0, 0.0, -1.0],
+    ]);
+
+    uvs.extend_from_slice(&[
+        [0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0],
+    ]);
+
+    indices.extend_from_slice(&[
+        start_index + 0, start_index + 1, start_index + 2,
+        start_index + 2, start_index + 1, start_index + 3,
+    ]);
+}
+
+fn add_front_face(
+    positions: &mut Vec<[f32; 3]>,
+    normals: &mut Vec<[f32; 3]>,
+    uvs: &mut Vec<[f32; 2]>,
+    indices: &mut Vec<u32>,
+    pos: [f32; 3],
+    start_index: u32,
+) {
+    positions.extend_from_slice(&[
+        [pos[0], pos[1] + 1.0, pos[2]], // 0
+        [pos[0] + 1.0, pos[1] + 1.0, pos[2]], // 1
+        [pos[0], pos[1], pos[2]], // 4
+        [pos[0] + 1.0, pos[1], pos[2]], // 5
+    ]);
+
+    normals.extend_from_slice(&[
+        [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0],
+    ]);
+
+    uvs.extend_from_slice(&[
+        [0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0],
+    ]);
+
+    indices.extend_from_slice(&[
+        start_index + 0, start_index + 1, start_index + 2,
+        start_index + 2, start_index + 1, start_index + 3,
+    ]);
+}
+
+/* 
+fn add_cube_to_mesh(
+    positions: &mut Vec<[f32; 3]>,
+    normals: &mut Vec<[f32; 3]>,
+    uvs: &mut Vec<[f32; 2]>,
+    indices: &mut Vec<u32>,
+    pos: [f32; 3],
+) {
+    let start_index = positions.len() as u32;
+
+    // add_top_face(positions, normals, uvs, indices, pos, start_index);
+    // add_bottom_face(positions, normals, uvs, indices, pos, start_index);
+    // add_right_face(positions, normals, uvs, indices, pos, start_index);
+    // add_left_face(positions, normals, uvs, indices, pos, start_index);
+    // add_back_face(positions, normals, uvs, indices, pos, start_index);
+    // add_front_face(positions, normals, uvs, indices, pos, start_index);
+}
+*/
