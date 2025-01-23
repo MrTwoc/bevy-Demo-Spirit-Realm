@@ -19,7 +19,6 @@ impl OverlayColor {
 type BlockId = u8;
 type Pos = [i32;3];
 // 单个区块的直径为32: 添加了 CHUNK_SIZE 作为单个区块的长宽高。。CHUNK_XYZ暂时不做更改，用于显示负数的区块坐标
-
 const CHUNK_XYZ:i32 = 32;
 // 单个区块的直径限定为32
 const CHUNK_SIZE: usize = 32;
