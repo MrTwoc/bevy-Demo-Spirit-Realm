@@ -23,6 +23,7 @@ type Pos = [i32;3];
 const CHUNK_XYZ:i32 = 32;
 // 单个区块的直径限定为32
 const CHUNK_SIZE: usize = 32;
+// 玩家在Y轴的可视距离,超过这个距离被剔除
 const CHUNK_HEIGHT:usize = 128;
 
 type ChunkStartPos = [i32;3];
@@ -77,7 +78,7 @@ fn main(){
         // 将需要加载的区块存入HashMap
         .insert_resource(CountManager {
             chunks: HashMap::new(),
-            render_distance: 1,         // 玩家可视半径 1 = 前后左右上下各1个区块
+            render_distance: 5,         // 玩家可视半径 1 = 前后左右上下各1个区块
             new_chunks: HashSet::new(),
             spawned_chunks: HashMap::new(),
         })
@@ -334,9 +335,7 @@ fn create_cube_mesh(world_pos:[i32;3]) -> Mesh {
         }
     }
 
-    // let start_index = positions.len() as u32;
     // 遍历chunk_blocks中所有方块，判断是否需要绘制
-    // println!("方块数量：{}", chunk_blocks.len());
     for (pos, _block_id) in chunk_blocks.iter(){
         let pos = [pos[0], pos[1], pos[2]];
         // 检查顶面
@@ -367,13 +366,6 @@ fn create_cube_mesh(world_pos:[i32;3]) -> Mesh {
             // 以下是错误:
             // add_front_face(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32]);
         }
-        // add_top_face(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32]);
-        // add_bottom_face(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32]);
-        // add_right_face(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32]);
-        // add_left_face(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32]);
-        // add_back_face(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32]);
-        // add_front_face(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32]);
-
     }
 
     Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD)
