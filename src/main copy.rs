@@ -338,41 +338,44 @@ fn create_cube_mesh(world_pos:[i32;3]) -> Mesh {
     // 遍历chunk_blocks中所有方块，判断是否需要绘制
     // println!("方块数量：{}", chunk_blocks.len());
     for (pos, _block_id) in chunk_blocks.iter(){
+        let start_index = positions.len() as u32;
         let pos = [pos[0], pos[1], pos[2]];
-        // 检查顶面
-        if !chunk_blocks.contains_key(&[pos[0], pos[1] + 1, pos[2]]) {
-            add_top_face(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32]);
+        
+        /* 
+        if !(
+            chunk_blocks.contains_key(&[pos[0], pos[1] + 1, pos[2]]) &&
+            chunk_blocks.contains_key(&[pos[0], pos[1] - 1, pos[2]]) &&
+            chunk_blocks.contains_key(&[pos[0] + 1, pos[1], pos[2]]) &&
+            chunk_blocks.contains_key(&[pos[0] - 1, pos[1], pos[2]]) &&
+            chunk_blocks.contains_key(&[pos[0], pos[1], pos[2] + 1]) &&
+            chunk_blocks.contains_key(&[pos[0], pos[1], pos[2] - 1])
+        ){
+            // 由原来的每个方块都绘制6个面，现在只需要按是否遮挡来绘制未遮挡的面
+            add_cube_to_mesh(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32]);
+            // add_top_face(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32],start_index);
         }
-        // 检查底面 -- 暂时跳过不处理底面
-        // if !chunk_blocks.contains_key(&[pos[0], pos[1] - 1, pos[2]]) {
-        //     add_bottom_face(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32]);
-        // }
-        // 检查右面
-        if !chunk_blocks.contains_key(&[pos[0] + 1, pos[1], pos[2]]) {
-            add_right_face(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32]);
+        */
+        
+        // 2025.1.9
+        // 判断是否遮挡...目前感觉这里只会判断一次，所以每个方块就只有一个面。。需要多判断几次
+        if !chunk_blocks.contains_key(&[pos[0], pos[1] + 1, pos[2]]){       // 上
+            add_top_face(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32],start_index);
         }
-        // 检查左面
-        if !chunk_blocks.contains_key(&[pos[0] - 1, pos[1], pos[2]]) {
-            add_left_face(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32]);
+        if !chunk_blocks.contains_key(&[pos[0], pos[1] - 1, pos[2]]){    // 下
+            add_bottom_face(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32],start_index);
         }
-        // 检查前面
-        if !chunk_blocks.contains_key(&[pos[0], pos[1], pos[2] + 1]) {
-            add_front_face(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32]);
-            // 这里将前后的检测面写反了:
-            // add_back_face(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32]);
+        if !chunk_blocks.contains_key(&[pos[0], pos[1], pos[2] + 1]){       // 前     
+            add_front_face(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32],start_index);
         }
-        // 检查背面
-        if !chunk_blocks.contains_key(&[pos[0], pos[1], pos[2] - 1]) {
-            add_back_face(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32]);
-            // 以下是错误:
-            // add_front_face(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32]);
+        if !chunk_blocks.contains_key(&[pos[0], pos[1], pos[2] - 1]){       // 后  
+            add_back_face(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32],start_index);
         }
-        // add_top_face(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32]);
-        // add_bottom_face(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32]);
-        // add_right_face(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32]);
-        // add_left_face(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32]);
-        // add_back_face(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32]);
-        // add_front_face(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32]);
+        if !chunk_blocks.contains_key(&[pos[0] + 1, pos[1], pos[2]]){       // 右
+            add_right_face(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32],start_index);
+        }
+        if !chunk_blocks.contains_key(&[pos[0] - 1, pos[1], pos[2]]){       // 左
+            add_left_face(&mut positions, &mut normals, &mut uvs, &mut indices, [pos[0] as f32, pos[1] as f32, pos[2] as f32],start_index);
+        }
 
     }
 
@@ -383,7 +386,8 @@ fn create_cube_mesh(world_pos:[i32;3]) -> Mesh {
     .with_inserted_indices(Indices::U32(indices))
 }
 
-fn add_top_face(
+/* 
+fn add_cube_to_mesh(
     positions: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
     uvs: &mut Vec<[f32; 2]>,
@@ -391,18 +395,72 @@ fn add_top_face(
     pos: [f32; 3],
 ) {
     let start_index = positions.len() as u32;
+    // 顶点位置 决定位置
+    positions.extend_from_slice(&[
+        [pos[0], pos[1] + 1.0, pos[2]], // 0
+        [pos[0] + 1.0, pos[1] + 1.0, pos[2]], // 1
+        [pos[0] + 1.0, pos[1] + 1.0, pos[2] + 1.0], // 2
+        [pos[0], pos[1] + 1.0, pos[2] + 1.0], // 3
+        [pos[0], pos[1], pos[2]], // 4
+        [pos[0] + 1.0, pos[1], pos[2]], // 5
+        [pos[0] + 1.0, pos[1], pos[2] + 1.0], // 6
+        [pos[0], pos[1], pos[2] + 1.0], // 7
+    ]);
+
+    // 法线 决定面朝向
+    normals.extend_from_slice(&[
+        [0.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 0.0], // 顶面
+        [0.0, -1.0, 0.0], [0.0, -1.0, 0.0], [0.0, -1.0, 0.0], [0.0, -1.0, 0.0], // 底面
+        [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], // 右侧面
+        [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], // 左侧面
+        [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], // 背面
+        [0.0, 0.0, -1.0], [0.0, 0.0, -1.0], [0.0, 0.0, -1.0], [0.0, 0.0, -1.0], // 前面
+    ]);
+
+    // UV 坐标 决定纹理
+    uvs.extend_from_slice(&[
+        [0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0], // 顶面
+        [0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0], // 底面
+        [0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0], // 右侧面
+        [0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0], // 左侧面
+        [0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0], // 背面
+        [0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0], // 前面
+    ]);
+
+    // 索引 决定绘制顺序
+    indices.extend_from_slice(&[
+        start_index + 0, start_index + 3, start_index + 1, start_index + 1, start_index + 3, start_index + 2, // 顶面       0,3,1,1,3,2
+        start_index + 4, start_index + 5, start_index + 7, start_index + 5, start_index + 6, start_index + 7, // 底面       4,5,7,5,6,7
+        start_index + 1, start_index + 2, start_index + 5, start_index + 5, start_index + 2, start_index + 6, // 右侧面     1,2,5,5,2,6
+        start_index + 0, start_index + 4, start_index + 3, start_index + 3, start_index + 4, start_index + 7, // 左侧面     0,4,3,3,4,7
+        start_index + 2, start_index + 3, start_index + 6, start_index + 6, start_index + 3, start_index + 7, // 背面       2,3,6,6,3,7
+        start_index + 0, start_index + 1, start_index + 4, start_index + 4, start_index + 1, start_index + 5, // 前面       0,1,4,4,1,5
+    ]);
+}
+*/
+
+fn add_top_face(
+    positions: &mut Vec<[f32; 3]>,
+    normals: &mut Vec<[f32; 3]>,
+    uvs: &mut Vec<[f32; 2]>,
+    indices: &mut Vec<u32>,
+    pos: [f32; 3],
+    start_index: u32,
+) {
     positions.extend_from_slice(&[
         [pos[0], pos[1] + 1.0, pos[2]],
         [pos[0] + 1.0, pos[1] + 1.0, pos[2]],
         [pos[0] + 1.0, pos[1] + 1.0, pos[2] + 1.0],
         [pos[0], pos[1] + 1.0, pos[2] + 1.0],
     ]);
-    normals.extend_from_slice(&[[0.0, 1.0, 0.0]; 4]);
+    normals.extend_from_slice(&[
+        [0.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 0.0],
+    ]);
     uvs.extend_from_slice(&[
         [0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0],
     ]);
     indices.extend_from_slice(&[
-        start_index, start_index + 3, start_index + 1,
+        start_index + 0, start_index + 3, start_index + 1,
         start_index + 1, start_index + 3, start_index + 2,
     ]);
 }
@@ -413,20 +471,25 @@ fn add_bottom_face(
     uvs: &mut Vec<[f32; 2]>,
     indices: &mut Vec<u32>,
     pos: [f32; 3],
+    start_index: u32,
 ) {
-    let start_index = positions.len() as u32;
     positions.extend_from_slice(&[
         [pos[0], pos[1], pos[2]],
         [pos[0] + 1.0, pos[1], pos[2]],
         [pos[0] + 1.0, pos[1], pos[2] + 1.0],
         [pos[0], pos[1], pos[2] + 1.0],
     ]);
-    normals.extend_from_slice(&[[0.0, -1.0, 0.0]; 4]);
+
+    normals.extend_from_slice(&[
+        [0.0, -1.0, 0.0], [0.0, -1.0, 0.0], [0.0, -1.0, 0.0], [0.0, -1.0, 0.0],
+    ]);
+
     uvs.extend_from_slice(&[
         [0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0],
     ]);
+
     indices.extend_from_slice(&[
-        start_index, start_index + 1, start_index + 3,
+        start_index + 0, start_index + 1, start_index + 3,
         start_index + 1, start_index + 2, start_index + 3,
     ]);
 }
@@ -437,21 +500,23 @@ fn add_right_face(
     uvs: &mut Vec<[f32; 2]>,
     indices: &mut Vec<u32>,
     pos: [f32; 3],
+    start_index: u32,
 ) {
-    let start_index = positions.len() as u32;
     positions.extend_from_slice(&[
         [pos[0] + 1.0, pos[1] + 1.0, pos[2]],
         [pos[0] + 1.0, pos[1] + 1.0, pos[2] + 1.0],
-        [pos[0] + 1.0, pos[1], pos[2] + 1.0],
         [pos[0] + 1.0, pos[1], pos[2]],
+        [pos[0] + 1.0, pos[1], pos[2] + 1.0],
     ]);
-    normals.extend_from_slice(&[[1.0, 0.0, 0.0]; 4]);
+    normals.extend_from_slice(&[
+        [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0],
+    ]);
     uvs.extend_from_slice(&[
         [0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0],
     ]);
     indices.extend_from_slice(&[
-        start_index, start_index + 1, start_index + 3,
-        start_index + 3, start_index + 1, start_index + 2,
+        start_index + 0, start_index + 1, start_index + 2,
+        start_index + 2, start_index + 1, start_index + 3,
     ]);
 }
 
@@ -461,21 +526,26 @@ fn add_left_face(
     uvs: &mut Vec<[f32; 2]>,
     indices: &mut Vec<u32>,
     pos: [f32; 3],
+    start_index: u32,
 ) {
-    let start_index = positions.len() as u32;
     positions.extend_from_slice(&[
-        [pos[0], pos[1] + 1.0, pos[2]],
         [pos[0], pos[1] + 1.0, pos[2] + 1.0],
+        [pos[0], pos[1] + 1.0, pos[2]],
         [pos[0], pos[1], pos[2] + 1.0],
         [pos[0], pos[1], pos[2]],
     ]);
-    normals.extend_from_slice(&[[-1.0, 0.0, 0.0]; 4]);
+
+    normals.extend_from_slice(&[
+        [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0],
+    ]);
+
     uvs.extend_from_slice(&[
         [0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0],
     ]);
+
     indices.extend_from_slice(&[
-        start_index, start_index + 3, start_index + 1,
-        start_index + 1, start_index + 3, start_index + 2,
+        start_index + 0, start_index + 1, start_index + 2,
+        start_index + 2, start_index + 1, start_index + 3,
     ]);
 }
 
@@ -485,27 +555,26 @@ fn add_back_face(
     uvs: &mut Vec<[f32; 2]>,
     indices: &mut Vec<u32>,
     pos: [f32; 3],
+    start_index: u32,
 ) {
-    let start_index = positions.len() as u32;
-    // 调整顶点顺序为右下→右上→左上→左下（负Z方向逆时针）
     positions.extend_from_slice(&[
-        [pos[0] + 1.0, pos[1], pos[2]],        // 右下 (0)
-        [pos[0] + 1.0, pos[1] + 1.0, pos[2]],  // 右上 (1)
-        [pos[0], pos[1] + 1.0, pos[2]],        // 左上 (2)
-        [pos[0], pos[1], pos[2]],              // 左下 (3)
+        [pos[0] + 1.0, pos[1] + 1.0, pos[2] + 1.0],
+        [pos[0], pos[1] + 1.0, pos[2] + 1.0],
+        [pos[0] + 1.0, pos[1], pos[2] + 1.0],
+        [pos[0], pos[1], pos[2] + 1.0],
     ]);
-    normals.extend_from_slice(&[[0.0, 0.0, 1.0]; 4]);
-    // 调整UV坐标匹配顶点顺序
+
+    normals.extend_from_slice(&[
+        [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0],
+    ]);
+
     uvs.extend_from_slice(&[
-        [1.0, 0.0], // 右下
-        [1.0, 1.0], // 右上
-        [0.0, 1.0], // 左上
-        [0.0, 0.0], // 左下
+        [0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0],
     ]);
-    // 修正索引顺序
+
     indices.extend_from_slice(&[
-        start_index, start_index + 3, start_index + 1, // 三角形1: 左下→左上→右上
-        start_index + 1, start_index + 3, start_index + 2, // 三角形2: 左下→右上→右下
+        start_index + 0, start_index + 1, start_index + 2,
+        start_index + 2, start_index + 1, start_index + 3,
     ]);
 }
 
@@ -515,25 +584,44 @@ fn add_front_face(
     uvs: &mut Vec<[f32; 2]>,
     indices: &mut Vec<u32>,
     pos: [f32; 3],
+    start_index: u32,
 ) {
-    let start_index = positions.len() as u32;
     positions.extend_from_slice(&[
-        [pos[0], pos[1], pos[2] + 1.0],         // 左下 (0)
-        [pos[0], pos[1] + 1.0, pos[2] + 1.0],   // 左上 (1)
-        [pos[0] + 1.0, pos[1] + 1.0, pos[2] + 1.0], // 右上 (2)
-        [pos[0] + 1.0, pos[1], pos[2] + 1.0],   // 右下 (3)
+        [pos[0], pos[1] + 1.0, pos[2]],
+        [pos[0] + 1.0, pos[1] + 1.0, pos[2]],
+        [pos[0], pos[1], pos[2]],
+        [pos[0] + 1.0, pos[1], pos[2]],
     ]);
-    normals.extend_from_slice(&[[0.0, 0.0, -1.0]; 4]);
-    // 修正UV坐标
+
+    normals.extend_from_slice(&[
+        [0.0, 0.0, -1.0], [0.0, 0.0, -1.0], [0.0, 0.0, -1.0], [0.0, 0.0, -1.0],
+    ]);
+
     uvs.extend_from_slice(&[
-        [0.0, 0.0], // 左下
-        [0.0, 1.0], // 左上
-        [1.0, 1.0], // 右上
-        [1.0, 0.0], // 右下
+        [0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0],
     ]);
+
     indices.extend_from_slice(&[
-        start_index, start_index + 3, start_index + 1, // 三角形1: 左下→左上→右上
-        start_index + 1, start_index + 3, start_index + 2, // 三角形2: 左下→右上→右下
+        start_index + 0, start_index + 1, start_index + 2,
+        start_index + 2, start_index + 1, start_index + 3,
     ]);
 }
 
+/* 
+fn add_cube_to_mesh(
+    positions: &mut Vec<[f32; 3]>,
+    normals: &mut Vec<[f32; 3]>,
+    uvs: &mut Vec<[f32; 2]>,
+    indices: &mut Vec<u32>,
+    pos: [f32; 3],
+) {
+    let start_index = positions.len() as u32;
+
+    // add_top_face(positions, normals, uvs, indices, pos, start_index);
+    // add_bottom_face(positions, normals, uvs, indices, pos, start_index);
+    // add_right_face(positions, normals, uvs, indices, pos, start_index);
+    // add_left_face(positions, normals, uvs, indices, pos, start_index);
+    // add_back_face(positions, normals, uvs, indices, pos, start_index);
+    // add_front_face(positions, normals, uvs, indices, pos, start_index);
+}
+*/
