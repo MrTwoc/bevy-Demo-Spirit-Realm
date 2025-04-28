@@ -60,42 +60,42 @@
     chunk_start_POS：992,448,768
 */
 // type pos = (u32, u32, u32);
-fn main() {
-    // 区块坐标转世界坐标的偏移量计算
-    world_to_chunk_offset(1998.1, 456.9, 789.4); // 这里的xyz，是玩家的世界坐标
-}
+// fn main() {
+//     // 区块坐标转世界坐标的偏移量计算
+//     world_to_chunk_offset(1998.1, 456.9, 789.4); // 这里的xyz，是玩家的世界坐标
+// }
 
-// 输入参数为玩家的世界坐标
-fn world_to_chunk_offset(world_x: f32, world_y: f32, world_z: f32) {
-    // 设 玩家坐标 为 (998,456,789)
-    // 求出区块坐标 = (玩家坐标 ÷ 单个区块大小 = (x / 32), (y / 32), (z / 32) ) => (31, 150, 26)
-    let (chunk_x, chunk_y, chunk_z) = world_to_chunk(world_x as i32, world_y as i32, world_z as i32);
+// // 输入参数为玩家的世界坐标
+// fn world_to_chunk_offset(world_x: f32, world_y: f32, world_z: f32) {
+//     // 设 玩家坐标 为 (998,456,789)
+//     // 求出区块坐标 = (玩家坐标 ÷ 单个区块大小 = (x / 32), (y / 32), (z / 32) ) => (31, 150, 26)
+//     let (chunk_x, chunk_y, chunk_z) = world_to_chunk(world_x as i32, world_y as i32, world_z as i32);
 
-    // 计算区块起始坐标 = 区块坐标(小数向下取整) * 32
-    let chunk_start_x = chunk_x * 32;
-    let chunk_start_y = chunk_y * 32;
-    let chunk_start_z = chunk_z * 32;
+//     // 计算区块起始坐标 = 区块坐标(小数向下取整) * 32
+//     let chunk_start_x = chunk_x * 32;
+//     let chunk_start_y = chunk_y * 32;
+//     let chunk_start_z = chunk_z * 32;
 
-    // 算出偏移量 = 玩家真实坐标 % 区块起始坐标
-    let offset_x = (world_x as i32) % chunk_start_x;
-    let offset_y = (world_y as i32) % chunk_start_y;
-    let offset_z = (world_z as i32) % chunk_start_z;
+//     // 算出偏移量 = 玩家真实坐标 % 区块起始坐标
+//     let offset_x = (world_x as i32) % chunk_start_x;
+//     let offset_y = (world_y as i32) % chunk_start_y;
+//     let offset_z = (world_z as i32) % chunk_start_z;
 
-    // 如何再根据偏移量再算出真实坐标 ： 真实坐标 = 区块坐标 * 32 + 偏移量
-    let true_world_x = chunk_x * 32 + offset_x;
-    let true_world_y = chunk_y * 32 + offset_y;
-    let true_world_z = chunk_z * 32 + offset_z;
+//     // 如何再根据偏移量再算出真实坐标 ： 真实坐标 = 区块坐标 * 32 + 偏移量
+//     let true_world_x = chunk_x * 32 + offset_x;
+//     let true_world_y = chunk_y * 32 + offset_y;
+//     let true_world_z = chunk_z * 32 + offset_z;
 
-    println!("源坐标：({},{},{})", world_x, world_y, world_z);
-    println!("区块坐标：chunk_x:{}, chunk_y:{}, chunk_z:{}", chunk_x, chunk_y, chunk_z);
-    println!("区块起始坐标：{},{},{}", chunk_start_x, chunk_start_y, chunk_start_z);
-    println!("偏移量：offset_x:{}, offset_y:{}, offset_z:{}", offset_x, offset_y, offset_z);
-    println!("真实坐标：({},{},{})", true_world_x, true_world_y, true_world_z);
+//     println!("源坐标：({},{},{})", world_x, world_y, world_z);
+//     println!("区块坐标：chunk_x:{}, chunk_y:{}, chunk_z:{}", chunk_x, chunk_y, chunk_z);
+//     println!("区块起始坐标：{},{},{}", chunk_start_x, chunk_start_y, chunk_start_z);
+//     println!("偏移量：offset_x:{}, offset_y:{}, offset_z:{}", offset_x, offset_y, offset_z);
+//     println!("真实坐标：({},{},{})", true_world_x, true_world_y, true_world_z);
 
-    // println!("chunk_start_POS：{},{},{}", chunk_start_x, chunk_start_y, chunk_start_z);
-}
+//     // println!("chunk_start_POS：{},{},{}", chunk_start_x, chunk_start_y, chunk_start_z);
+// }
 
-// 世界坐标转区块坐标
-fn world_to_chunk(x: i32, y: i32, z: i32) -> (i32, i32, i32) {
-    return (x / 32, y / 32, z / 32);
-}
+// // 世界坐标转区块坐标
+// fn world_to_chunk(x: i32, y: i32, z: i32) -> (i32, i32, i32) {
+//     return (x / 32, y / 32, z / 32);
+// }

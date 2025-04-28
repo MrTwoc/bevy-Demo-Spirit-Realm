@@ -4,16 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bevy = { version = "0.15.0", features = [
-  "dynamic_linking",
-  "bevy_dev_tools",
-  "shader_format_spirv",
-]}
-bevy_flycam = "*"
-fastnoise-lite = "1.1.1"
-bevy-inspector-egui = "0.28.0"
+bevy = "0.16"
 
-nohash = "0.2.0"
 
 [profile.dev]
 opt-level = 1
