@@ -25,7 +25,7 @@ OpenSimplex2 与 FBM 噪声：程序化生成地表地形 <br>
 参考地址：<br>
 https://lib.rs/crates/noise<br>
 https://iquilezles.org/articles/morenoise/<br>
-八叉树算法：用于管理大量体素<br>
+八叉树算法：用于高效管理大量体素<br>
 示例：[我是如何把2的60次方的方块画到屏幕上的【算法解析】](https://www.bilibili.com/video/BV1he411q7Zi/?spm_id_from=333.1387.homepage.video_card.click&vd_source=511b084e4bf87d71d725c5db0fb20b7f)
 <br>
 5. IPV6协议：用于服务器网络通信<br>
@@ -33,11 +33,14 @@ https://iquilezles.org/articles/morenoise/<br>
 
 ## 核心功能 / 计划实现功能
 - [ ] 超平坦世界生成<br>
-- [完成] 噪声世界生成<br>
+- [ ] 噪声世界生成<br>
 - [ ] 方块放置/破坏<br>
-- [ ] 各种优化、动态剔除：  <br>
-	1. 遮挡剔除、视锥剔除、LOD / HLOD 技术、八叉树等<br>
-	2. [完成]基于块的剔除<br>
+- [ ] 各种优化、动态剔除<br>
 - [ ] 方块材质加载<br>
 - [ ] 区块系统实现<br>
-- [ ] AABB 碰撞箱: 实现玩家与物体之间物理碰撞<br>
+
+## MVP实现步骤
+1. 画一个方块，生成一个摄像机，将摄像机指向方块
+2. 画一个区块，尺寸为32x32x32，将方块添加到区块中
+3. 实现摄像机移动功能，玩家可以自由地移动摄像机，查看游戏世界
+4. 实现方块放置/破坏功能
