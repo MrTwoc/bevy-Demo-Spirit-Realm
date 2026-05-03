@@ -1,10 +1,10 @@
 [package]
 name = "bevygame1"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
-bevy = "0.18.1"
+bevy = { version = "0.18.1", features = ["dynamic_linking"] }
 
 
 [profile.dev]
