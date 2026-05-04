@@ -1,6 +1,7 @@
 mod camera;
 mod chunk;
 mod cube;
+mod hud;
 mod input;
 
 use bevy::prelude::*;
@@ -15,6 +16,7 @@ fn main() {
                 camera::camera_movement,
                 camera::camera_rotation,
                 input::cursor_grab_system,
+                hud::update_hud,
             ),
         )
         .run();

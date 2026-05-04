@@ -327,9 +327,14 @@ pub fn spawn_initial_chunks(
     // Camera starts above the chunk.
     use crate::camera::CameraController;
     let camera_transform = Transform::from_xyz(16.0, 20.0, 16.0);
-    commands.spawn((
-        Camera3d::default(),
-        camera_transform,
-        CameraController::default(),
-    ));
+    let camera_entity = commands
+        .spawn((
+            Camera3d::default(),
+            camera_transform,
+            CameraController::default(),
+        ))
+        .id();
+
+    // Create HUD tied to this camera entity
+    crate::hud::setup_hud(commands, camera_entity);
 }
