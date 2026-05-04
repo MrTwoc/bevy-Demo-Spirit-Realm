@@ -4,6 +4,7 @@ use bevy::{
     ecs::message::MessageReader,
     input::mouse::MouseMotion,
     prelude::*,
+    window::{CursorGrabMode, CursorOptions},
 };
 
 /// Movement speed for the camera in units per second.
@@ -81,10 +82,17 @@ pub fn camera_movement(
 }
 
 /// Handles mouse look by consuming MouseMotion events.
+/// Only rotates when the cursor is locked (pointer grab active).
 pub fn camera_rotation(
     mut mouse_motion: MessageReader<MouseMotion>,
+    cursor_options: Single<&CursorOptions>,
     mut query: Query<(&mut Transform, &mut CameraController), With<Camera3d>>,
 ) {
+    // Only rotate when cursor is locked.
+    if cursor_options.grab_mode != CursorGrabMode::Locked {
+        return;
+    }
+
     let Ok((mut transform, mut controller)) = query.single_mut() else {
         return;
     };
