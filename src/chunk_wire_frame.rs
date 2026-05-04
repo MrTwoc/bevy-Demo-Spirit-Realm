@@ -1,5 +1,5 @@
-//! Wireframe mode toggle — press V to switch between normal rendering
-//! and wireframe overlay drawn via bevy_gizmos.
+//! Chunk wireframe — 按 V 键切换线框显示/隐藏
+//! 绘制所有 Chunk 区块的外包包围盒（调试用）
 
 use bevy::{gizmos::gizmos::Gizmos, prelude::*};
 

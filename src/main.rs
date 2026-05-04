@@ -1,12 +1,12 @@
 mod camera;
 mod chunk;
+mod chunk_wire_frame;
 mod cube;
 mod hud;
 mod input;
-mod wireframe;
 
 use bevy::prelude::*;
-use crate::wireframe::WireframeMode;
+use crate::chunk_wire_frame::WireframeMode;
 
 fn main() {
     App::new()
@@ -23,8 +23,8 @@ fn main() {
                 camera::camera_movement,
                 camera::camera_rotation,
                 input::cursor_grab_system,
-                wireframe::toggle_wireframe,
-                wireframe::draw_wireframes,
+                chunk_wire_frame::toggle_wireframe,
+                chunk_wire_frame::draw_wireframes,
                 hud::update_hud,
             ),
         )
