@@ -9,7 +9,11 @@ use bevy::prelude::*;
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .add_systems(Startup, (cube::setup_lighting, chunk::spawn_initial_chunks))
+        .add_systems(Startup, (
+            cube::setup_lighting,
+            chunk::spawn_initial_chunks,
+            hud::spawn_crosshair,
+        ))
         .add_systems(
             Update,
             (

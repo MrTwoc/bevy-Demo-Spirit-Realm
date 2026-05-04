@@ -4,6 +4,47 @@ use bevy::{
     ui::{BackgroundColor, Node, PositionType, UiTargetCamera, Val, UiRect},
 };
 
+/// Spawns a white Minecraft-style crosshair centered on screen.
+pub fn spawn_crosshair(mut commands: Commands) {
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Percent(50.0),
+                top: Val::Percent(50.0),
+                ..default()
+            },
+        ))
+        .with_children(|parent| {
+            // Horizontal bar (20×2px), centered via flex on the crosshair point.
+            parent.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    width: Val::Px(20.0),
+                    height: Val::Px(2.0),
+                    // Place center of this bar at parent's top-left (the crosshair center).
+                    left: Val::Px(-10.0),
+                    top: Val::Px(-1.0),
+                    ..default()
+                },
+                BackgroundColor(Color::WHITE.with_alpha(0.9).into()),
+            ));
+            // Vertical bar (2×20px), centered via flex on the crosshair point.
+            parent.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    width: Val::Px(2.0),
+                    height: Val::Px(20.0),
+                    // Place center of this bar at parent's top-left (the crosshair center).
+                    left: Val::Px(-1.0),
+                    top: Val::Px(-10.0),
+                    ..default()
+                },
+                BackgroundColor(Color::WHITE.with_alpha(0.9).into()),
+            ));
+        });
+}
+
 #[derive(Component)]
 pub(crate) struct HudText;
 
