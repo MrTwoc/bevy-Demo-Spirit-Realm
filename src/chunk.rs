@@ -75,13 +75,18 @@ impl Chunk {
     }
 
     /// Returns whether the face of block at (x, y, z) in direction `face`
-    /// should be rendered (i.e., the neighbor is air or out of bounds).
+    /// should be rendered.
+    ///
+    /// When multiple per-type meshes exist (grass / dirt / stone each have
+    /// their own geometry), a face must be rendered whenever the neighbour
+    /// is a *different* block type — not just when it is air — because the
+    /// neighbour's own mesh cannot fill that gap.
     fn is_face_visible(&self, x: usize, y: usize, z: usize, face: &[i32; 3]) -> bool {
         let nx = x as i32 + face[0];
         let ny = y as i32 + face[1];
         let nz = z as i32 + face[2];
 
-        // Out of chunk bounds → exposed, render this face
+        // Out of chunk bounds → always exposed
         if nx < 0
             || ny < 0
             || nz < 0
@@ -92,8 +97,8 @@ impl Chunk {
             return true;
         }
 
-        // Neighbor is air → exposed
-        self.get_block_unchecked(nx as usize, ny as usize, nz as usize) == 0
+        // Neighbor has a different block type (or is air) → this face is exposed
+        self.get_block_unchecked(nx as usize, ny as usize, nz as usize) != self.get_block_unchecked(x, y, z)
     }
 }
 
@@ -105,14 +110,17 @@ impl Default for Chunk {
 
 /// Generates a face-culled mesh for the chunk.
 ///
-/// Only renders faces that are adjacent to air (or chunk boundary).
-/// Returns (positions, uvs, normals, indices) for a `TriangleList` mesh.
+/// Only renders faces adjacent to a different block type (or air / chunk boundary).
+/// Returns (positions, uvs, normals, vertex_colors, indices).
+///
+/// Vertex colors encode the block type: grass=green, dirt=brown, stone=gray.
 pub fn generate_chunk_mesh(
     chunk: &Chunk,
-) -> (Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<[f32; 3]>, Vec<u32>) {
+) -> (Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<[f32; 3]>, Vec<[f32; 4]>, Vec<u32>) {
     let mut positions = Vec::new();
     let mut uvs = Vec::new();
     let mut normals = Vec::new();
+    let mut colors = Vec::new();
     let mut indices = Vec::new();
 
     for z in 0..CHUNK_SIZE {
@@ -122,6 +130,8 @@ pub fn generate_chunk_mesh(
                 if block_id == 0 {
                     continue; // air
                 }
+
+                let block_color = block_color_as_rgba(block_id);
 
                 for (face, offset) in FACES.iter().cloned() {
                     if !chunk.is_face_visible(x, y, z, &offset) {
@@ -133,6 +143,7 @@ pub fn generate_chunk_mesh(
                     positions.extend(face_verts);
                     uvs.extend(face_uvs);
                     normals.extend([face_normal; 4]);
+                    colors.extend([block_color; 4]);
                     indices.extend([
                         base_index,
                         base_index + 1,
@@ -146,7 +157,7 @@ pub fn generate_chunk_mesh(
         }
     }
 
-    (positions, uvs, normals, indices)
+    (positions, uvs, normals, colors, indices)
 }
 
 /// Returns the 4 vertices, UVs, and normal for a single face.
@@ -239,47 +250,37 @@ fn face_uvs(_face: Face) -> [[f32; 2]; 4] {
     [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
 }
 
-/// Assembles a `Mesh` from face-culled chunk data.
-pub fn build_chunk_mesh(chunk: &Chunk) -> Mesh {
-    let (positions, uvs, normals, indices) = generate_chunk_mesh(chunk);
-
-    Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
-    )
-    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
-    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
-    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-    .with_inserted_indices(Indices::U32(indices))
-}
-
-/// Fills a chunk with only the bottom 3 layers.
-/// y=0 → grass (BlockId=1)
-/// y=1 → dirt  (BlockId=3)
-/// y=2 → stone (BlockId=2)
-/// y>=3 → air (BlockId=0)
-pub fn fill_terrain(chunk: &mut Chunk) {
-    for z in 0..CHUNK_SIZE {
-        for x in 0..CHUNK_SIZE {
-            chunk.set_block(x, 0, z, 1); // grass top
-            chunk.set_block(x, 1, z, 3); // dirt
-            chunk.set_block(x, 2, z, 2); // stone
-            // y >= 3: air (implicit, chunk is zero-initialized)
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Material helpers
 // ---------------------------------------------------------------------------
 
-/// Block ID → StandardMaterial color (base_color only, no textures yet).
-fn block_material(block_id: BlockId) -> Color {
+/// Block ID → linear RGBA color for vertex coloring (no gamma correction).
+fn block_color_as_rgba(block_id: BlockId) -> [f32; 4] {
     match block_id {
-        1 => Color::srgb(0.3, 0.65, 0.2),  // grass  — medium green
-        2 => Color::srgb(0.5, 0.5, 0.5),   // stone  — mid gray
-        3 => Color::srgb(0.55, 0.35, 0.2), // dirt   — brown
-        _ => Color::srgb(1.0, 0.0, 1.0),   // unknown — magenta
+        1 => [0.3, 0.65, 0.2, 1.0],   // grass  — medium green
+        2 => [0.5, 0.5, 0.5, 1.0],    // stone  — mid gray
+        3 => [0.75, 0.55, 0.2, 1.0],  // dirt   — brown-yellow
+        _ => [1.0, 0.0, 1.0, 1.0],    // unknown — magenta
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Terrain helpers
+// ---------------------------------------------------------------------------
+
+/// Fills a chunk with only the bottom 3 layers.
+/// y=0 → stone  (BlockId=2, bottom / deepest)
+/// y=1 → dirt   (BlockId=3, middle)
+/// y=2 → grass  (BlockId=1, top / surface)
+/// y>=3 → air   (BlockId=0)
+pub fn fill_terrain(chunk: &mut Chunk) {
+    for z in 0..CHUNK_SIZE {
+        for x in 0..CHUNK_SIZE {
+            chunk.set_block(x, 0, z, 2); // stone  — bottom
+            chunk.set_block(x, 1, z, 3); // dirt   — middle
+            chunk.set_block(x, 2, z, 1); // grass  — top surface
+            // y >= 3: air (implicit, chunk is zero-initialized)
+        }
     }
 }
 
@@ -287,9 +288,9 @@ fn block_material(block_id: BlockId) -> Color {
 // Bevy spawn systems
 // ---------------------------------------------------------------------------
 
-/// Spawns a single chunk entity with its mesh + materials.
-/// Currently uses one material per visible face (block-type-aware),
-/// producing up to 3 draw calls (grass / dirt / stone faces).
+/// Spawns a single chunk entity with ONE combined mesh and ONE draw call.
+/// Faces are colored via per-vertex RGBA attributes (vertex colors), so no
+/// texture atlas is needed.
 pub fn spawn_chunk_entity(
     commands: &mut Commands,
     materials: &mut Assets<StandardMaterial>,
@@ -297,40 +298,33 @@ pub fn spawn_chunk_entity(
     chunk: Chunk,
     position: Vec3,
 ) {
-    // Build face-culled mesh once.
-    let mesh = meshes.add(build_chunk_mesh(&chunk));
+    let (positions, uvs, normals, colors, indices) = generate_chunk_mesh(&chunk);
 
-    // Collect visible block types in this chunk for material creation.
-    // We create one material per block type present.
-    let mut block_types_present = std::collections::HashSet::new();
-    for &b in &chunk.blocks {
-        if b != 0 {
-            block_types_present.insert(b);
-        }
-    }
+    let mesh = meshes
+        .add(
+            Mesh::new(
+                PrimitiveTopology::TriangleList,
+                RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+            )
+            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
+            .with_inserted_indices(Indices::U32(indices)),
+        );
 
-    // Map BlockId → StandardMaterial handle.
-    let _mat_handles: std::collections::HashMap<BlockId, Handle<StandardMaterial>> =
-        block_types_present
-            .into_iter()
-            .map(|id| {
-                let mat = materials.add(StandardMaterial::from_color(block_material(id)));
-                (id, mat)
-            })
-            .collect();
-
-    // For now, spawn as a plain entity with a single combined mesh
-    // and a single representative material (grass green) for the demo.
-    // TODO: multi-material per-face rendering (atlas or per-type meshes).
-    let demo_mat = materials.add(StandardMaterial::from_color(Color::srgb(0.3, 0.65, 0.2)));
+    // base_color: WHITE so vertex colors multiply 1:1 (no tint).
+    let mat = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        ..default()
+    });
 
     commands.spawn((
         chunk,
         Mesh3d(mesh),
-        MeshMaterial3d(demo_mat),
+        MeshMaterial3d(mat),
         Transform::from_translation(position),
         Visibility::default(),
-        Pickable::default(),
     ));
 }
 
