@@ -1,10 +1,7 @@
 //! Voxel chunk: 32x32x32 block storage + face-culled mesh generation.
 
 use bevy::{
-    asset::RenderAssetUsages,
-    mesh::Indices,
-    prelude::*,
-    render::render_resource::PrimitiveTopology,
+    asset::RenderAssetUsages, mesh::Indices, prelude::*, render::render_resource::PrimitiveTopology,
 };
 
 /// Size of one dimension of a chunk (32³ blocks per chunk).
@@ -27,12 +24,12 @@ pub enum Face {
 
 /// All 6 faces of a block in order: +X, -X, +Y, -Y, +Z, -Z
 const FACES: [(Face, [i32; 3]); 6] = [
-    (Face::Right,  [1, 0, 0]),
-    (Face::Left,   [-1, 0, 0]),
-    (Face::Top,    [0, 1, 0]),
+    (Face::Right, [1, 0, 0]),
+    (Face::Left, [-1, 0, 0]),
+    (Face::Top, [0, 1, 0]),
     (Face::Bottom, [0, -1, 0]),
-    (Face::Front,  [0, 0, 1]),
-    (Face::Back,   [0, 0, -1]),
+    (Face::Front, [0, 0, 1]),
+    (Face::Back, [0, 0, -1]),
 ];
 
 /// Chunk component: stores 32x32x32 block IDs.
@@ -85,7 +82,9 @@ impl Chunk {
         let nz = z as i32 + face[2];
 
         // Out of chunk bounds → exposed, render this face
-        if nx < 0 || ny < 0 || nz < 0
+        if nx < 0
+            || ny < 0
+            || nz < 0
             || nx >= CHUNK_SIZE as i32
             || ny >= CHUNK_SIZE as i32
             || nz >= CHUNK_SIZE as i32
@@ -108,11 +107,13 @@ impl Default for Chunk {
 ///
 /// Only renders faces that are adjacent to air (or chunk boundary).
 /// Returns (positions, uvs, normals, indices) for a `TriangleList` mesh.
-pub fn generate_chunk_mesh(chunk: &Chunk) -> (Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<[f32; 3]>, Vec<u32>) {
+pub fn generate_chunk_mesh(
+    chunk: &Chunk,
+) -> (Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<[f32; 3]>, Vec<u32>) {
     let mut positions = Vec::new();
-    let mut uvs       = Vec::new();
-    let mut normals   = Vec::new();
-    let mut indices   = Vec::new();
+    let mut uvs = Vec::new();
+    let mut normals = Vec::new();
+    let mut indices = Vec::new();
 
     for z in 0..CHUNK_SIZE {
         for y in 0..CHUNK_SIZE {
@@ -133,8 +134,12 @@ pub fn generate_chunk_mesh(chunk: &Chunk) -> (Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<
                     uvs.extend(face_uvs);
                     normals.extend([face_normal; 4]);
                     indices.extend([
-                        base_index,     base_index + 1, base_index + 2,
-                        base_index,    base_index + 2,  base_index + 3,
+                        base_index,
+                        base_index + 1,
+                        base_index + 2,
+                        base_index,
+                        base_index + 2,
+                        base_index + 3,
                     ]);
                 }
             }
@@ -150,62 +155,80 @@ fn face_quad(x: usize, y: usize, z: usize, face: Face) -> ([[f32; 3]; 4], [[f32;
         Face::Top => {
             // +Y face (grass top)
             let h = 0.5;
-            ([
-                [x as f32 - 0.5, y as f32 + h, z as f32 - 0.5],
-                [x as f32 + 0.5, y as f32 + h, z as f32 - 0.5],
-                [x as f32 + 0.5, y as f32 + h, z as f32 + 0.5],
-                [x as f32 - 0.5, y as f32 + h, z as f32 + 0.5],
-            ], [0.0, 1.0, 0.0])
+            (
+                [
+                    [x as f32 - 0.5, y as f32 + h, z as f32 - 0.5],
+                    [x as f32 + 0.5, y as f32 + h, z as f32 - 0.5],
+                    [x as f32 + 0.5, y as f32 + h, z as f32 + 0.5],
+                    [x as f32 - 0.5, y as f32 + h, z as f32 + 0.5],
+                ],
+                [0.0, 1.0, 0.0],
+            )
         }
         Face::Bottom => {
             // -Y face (dirt side)
             let h = -0.5;
-            ([
-                [x as f32 - 0.5, y as f32 + h, z as f32 + 0.5],
-                [x as f32 + 0.5, y as f32 + h, z as f32 + 0.5],
-                [x as f32 + 0.5, y as f32 + h, z as f32 - 0.5],
-                [x as f32 - 0.5, y as f32 + h, z as f32 - 0.5],
-            ], [0.0, -1.0, 0.0])
+            (
+                [
+                    [x as f32 - 0.5, y as f32 + h, z as f32 + 0.5],
+                    [x as f32 + 0.5, y as f32 + h, z as f32 + 0.5],
+                    [x as f32 + 0.5, y as f32 + h, z as f32 - 0.5],
+                    [x as f32 - 0.5, y as f32 + h, z as f32 - 0.5],
+                ],
+                [0.0, -1.0, 0.0],
+            )
         }
         Face::Right => {
             // +X face
             let h = 0.5;
-            ([
-                [x as f32 + h, y as f32 - 0.5, z as f32 - 0.5],
-                [x as f32 + h, y as f32 - 0.5, z as f32 + 0.5],
-                [x as f32 + h, y as f32 + 0.5, z as f32 + 0.5],
-                [x as f32 + h, y as f32 + 0.5, z as f32 - 0.5],
-            ], [1.0, 0.0, 0.0])
+            (
+                [
+                    [x as f32 + h, y as f32 - 0.5, z as f32 - 0.5],
+                    [x as f32 + h, y as f32 - 0.5, z as f32 + 0.5],
+                    [x as f32 + h, y as f32 + 0.5, z as f32 + 0.5],
+                    [x as f32 + h, y as f32 + 0.5, z as f32 - 0.5],
+                ],
+                [1.0, 0.0, 0.0],
+            )
         }
         Face::Left => {
             // -X face
             let h = -0.5;
-            ([
-                [x as f32 + h, y as f32 - 0.5, z as f32 + 0.5],
-                [x as f32 + h, y as f32 - 0.5, z as f32 - 0.5],
-                [x as f32 + h, y as f32 + 0.5, z as f32 - 0.5],
-                [x as f32 + h, y as f32 + 0.5, z as f32 + 0.5],
-            ], [-1.0, 0.0, 0.0])
+            (
+                [
+                    [x as f32 + h, y as f32 - 0.5, z as f32 + 0.5],
+                    [x as f32 + h, y as f32 - 0.5, z as f32 - 0.5],
+                    [x as f32 + h, y as f32 + 0.5, z as f32 - 0.5],
+                    [x as f32 + h, y as f32 + 0.5, z as f32 + 0.5],
+                ],
+                [-1.0, 0.0, 0.0],
+            )
         }
         Face::Front => {
             // +Z face
             let h = 0.5;
-            ([
-                [x as f32 + 0.5, y as f32 - 0.5, z as f32 + h],
-                [x as f32 - 0.5, y as f32 - 0.5, z as f32 + h],
-                [x as f32 - 0.5, y as f32 + 0.5, z as f32 + h],
-                [x as f32 + 0.5, y as f32 + 0.5, z as f32 + h],
-            ], [0.0, 0.0, 1.0])
+            (
+                [
+                    [x as f32 + 0.5, y as f32 - 0.5, z as f32 + h],
+                    [x as f32 - 0.5, y as f32 - 0.5, z as f32 + h],
+                    [x as f32 - 0.5, y as f32 + 0.5, z as f32 + h],
+                    [x as f32 + 0.5, y as f32 + 0.5, z as f32 + h],
+                ],
+                [0.0, 0.0, 1.0],
+            )
         }
         Face::Back => {
             // -Z face
             let h = -0.5;
-            ([
-                [x as f32 - 0.5, y as f32 - 0.5, z as f32 + h],
-                [x as f32 + 0.5, y as f32 - 0.5, z as f32 + h],
-                [x as f32 + 0.5, y as f32 + 0.5, z as f32 + h],
-                [x as f32 - 0.5, y as f32 + 0.5, z as f32 + h],
-            ], [0.0, 0.0, -1.0])
+            (
+                [
+                    [x as f32 - 0.5, y as f32 - 0.5, z as f32 + h],
+                    [x as f32 + 0.5, y as f32 - 0.5, z as f32 + h],
+                    [x as f32 + 0.5, y as f32 + 0.5, z as f32 + h],
+                    [x as f32 - 0.5, y as f32 + 0.5, z as f32 + h],
+                ],
+                [0.0, 0.0, -1.0],
+            )
         }
     };
     (verts, face_uvs(face), normal)
@@ -256,7 +279,7 @@ pub fn fill_terrain(chunk: &mut Chunk) {
 /// Block ID → StandardMaterial color (base_color only, no textures yet).
 fn block_material(block_id: BlockId) -> Color {
     match block_id {
-        1 => Color::srgb(0.3, 0.65, 0.2),   // grass  — medium green
+        1 => Color::srgb(0.3, 0.65, 0.2),  // grass  — medium green
         2 => Color::srgb(0.5, 0.5, 0.5),   // stone  — mid gray
         3 => Color::srgb(0.55, 0.35, 0.2), // dirt   — brown
         _ => Color::srgb(1.0, 0.0, 1.0),   // unknown — magenta
@@ -310,6 +333,7 @@ pub fn spawn_chunk_entity(
         MeshMaterial3d(demo_mat),
         Transform::from_translation(position),
         Visibility::default(),
+        Pickable::default(),
     ));
 }
 
@@ -322,7 +346,13 @@ pub fn spawn_initial_chunks(
     let mut chunk = Chunk::filled(0); // start with air
     fill_terrain(&mut chunk);
 
-    spawn_chunk_entity(&mut commands, &mut materials, &mut meshes, chunk, Vec3::ZERO);
+    spawn_chunk_entity(
+        &mut commands,
+        &mut materials,
+        &mut meshes,
+        chunk,
+        Vec3::ZERO,
+    );
 
     // Camera starts above the chunk.
     use crate::camera::CameraController;

@@ -8,7 +8,7 @@ use bevy::{
 };
 
 /// Movement speed for the camera in units per second.
-pub const CAMERA_MOVE_SPEED: f32 = 5.0;
+pub const CAMERA_MOVE_SPEED: f32 = 20.0;
 
 /// Mouse sensitivity for looking around.
 pub const MOUSE_SENSITIVITY: f32 = 0.002;
