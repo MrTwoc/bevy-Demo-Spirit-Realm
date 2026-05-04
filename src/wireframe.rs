@@ -31,9 +31,11 @@ pub fn draw_wireframes(
     let color = Color::WHITE.with_alpha(0.6);
 
     for (_, transform) in &chunks {
-        // Cuboid center = chunk origin + half size; scale = full chunk size
+        // gizmos.cube: Transform.translation is the CENTER of the box.
+        // For a 32x32x32 box, center = chunk_origin + (16, 16, 16).
         let center = transform.translation + Vec3::splat(size / 2.0);
-        let gizmo_transform = Transform::from_translation(center).with_scale(Vec3::splat(size));
+        let gizmo_transform =
+            Transform::from_translation(center).with_scale(Vec3::splat(size));
         gizmos.cube(gizmo_transform, color);
     }
 }
