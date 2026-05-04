@@ -253,21 +253,18 @@ pub fn build_chunk_mesh(chunk: &Chunk) -> Mesh {
     .with_inserted_indices(Indices::U32(indices))
 }
 
-/// Fills a chunk with a flat grass layer at y=0 and dirt below.
-///
-/// y=0       → grass (BlockId=1)
-/// y=1..3    → dirt  (BlockId=3)
-/// y=4..31   → stone (BlockId=2)
+/// Fills a chunk with only the bottom 3 layers.
+/// y=0 → grass (BlockId=1)
+/// y=1 → dirt  (BlockId=3)
+/// y=2 → stone (BlockId=2)
+/// y>=3 → air (BlockId=0)
 pub fn fill_terrain(chunk: &mut Chunk) {
     for z in 0..CHUNK_SIZE {
         for x in 0..CHUNK_SIZE {
             chunk.set_block(x, 0, z, 1); // grass top
-            for y in 1..4 {
-                chunk.set_block(x, y, z, 3); // dirt
-            }
-            for y in 4..CHUNK_SIZE {
-                chunk.set_block(x, y, z, 2); // stone
-            }
+            chunk.set_block(x, 1, z, 3); // dirt
+            chunk.set_block(x, 2, z, 2); // stone
+            // y >= 3: air (implicit, chunk is zero-initialized)
         }
     }
 }
