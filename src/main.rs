@@ -5,13 +5,16 @@ mod cube;
 mod hud;
 mod input;
 
-use bevy::prelude::*;
+use bevy::{pbr::wireframe::WireframePlugin, prelude::*};
 use crate::chunk_wire_frame::WireframeMode;
 
 fn main() {
     App::new()
         .init_resource::<WireframeMode>()
-        .add_plugins(DefaultPlugins)
+        .add_plugins((
+            DefaultPlugins,
+            WireframePlugin::default(),
+        ))
         .add_systems(Startup, (
             cube::setup_lighting,
             chunk::spawn_initial_chunks,
@@ -24,6 +27,7 @@ fn main() {
                 camera::camera_rotation,
                 input::cursor_grab_system,
                 chunk_wire_frame::toggle_wireframe,
+                chunk_wire_frame::sync_chunk_wireframe,
                 chunk_wire_frame::draw_wireframes,
                 hud::update_hud,
             ),
