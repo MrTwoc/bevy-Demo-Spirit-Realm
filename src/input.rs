@@ -1,24 +1,28 @@
 //! Input handling: cursor grab (pointer lock).
 
 use bevy::{
-    input::mouse::MouseButton,
     prelude::*,
     window::{CursorGrabMode, CursorOptions},
 };
 
-/// Grabs the cursor when left mouse button is pressed, releases it on Escape.
+/// Toggles cursor lock on ESC (Minecraft-style: ESC toggles locked↔free).
+/// Left-click is no longer used for grabbing — only ESC controls the lock state.
 pub fn cursor_grab_system(
     mut cursor_options: Single<&mut CursorOptions>,
-    mouse: Res<ButtonInput<MouseButton>>,
     key: Res<ButtonInput<KeyCode>>,
 ) {
-    if mouse.just_pressed(MouseButton::Left) {
-        cursor_options.visible = false;
-        cursor_options.grab_mode = CursorGrabMode::Locked;
-    }
-
     if key.just_pressed(KeyCode::Escape) {
-        cursor_options.visible = true;
-        cursor_options.grab_mode = CursorGrabMode::None;
+        match cursor_options.grab_mode {
+            CursorGrabMode::Locked => {
+                // Unlock: show cursor, stop capturing
+                cursor_options.visible = true;
+                cursor_options.grab_mode = CursorGrabMode::None;
+            }
+            CursorGrabMode::None | CursorGrabMode::Confined => {
+                // Lock: hide cursor, capture it
+                cursor_options.visible = false;
+                cursor_options.grab_mode = CursorGrabMode::Locked;
+            }
+        }
     }
 }
