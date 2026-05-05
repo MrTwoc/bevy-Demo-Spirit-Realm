@@ -1,20 +1,18 @@
 use bevy::{
     prelude::*,
     text::TextFont,
-    ui::{BackgroundColor, Node, PositionType, UiTargetCamera, Val, UiRect},
+    ui::{BackgroundColor, Node, PositionType, UiRect, UiTargetCamera, Val},
 };
 
 /// Spawns a white Minecraft-style crosshair centered on screen.
 pub fn spawn_crosshair(mut commands: Commands) {
     commands
-        .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                left: Val::Percent(50.0),
-                top: Val::Percent(50.0),
-                ..default()
-            },
-        ))
+        .spawn((Node {
+            position_type: PositionType::Absolute,
+            left: Val::Percent(50.0),
+            top: Val::Percent(50.0),
+            ..default()
+        },))
         .with_children(|parent| {
             // Horizontal bar (20×2px), centered via flex on the crosshair point.
             parent.spawn((
@@ -61,22 +59,23 @@ pub fn setup_hud(mut commands: Commands, camera_entity: Entity) {
             BackgroundColor(Color::BLACK.with_alpha(0.6)),
             UiTargetCamera(camera_entity),
         ))
-    .with_children(|parent| {
-        parent.spawn((
-            Text::new("xyz: 0.0, 0.0, 0.0"),
-            TextFont {
-                font_size: 16.0,
-                ..default()
-            },
-            TextColor(Color::WHITE),
-            HudText,
-        ));
-    });
+        .with_children(|parent| {
+            parent.spawn((
+                Text::new("xyz: 0.0, 0.0, 0.0"),
+                TextFont {
+                    font_size: 16.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                HudText,
+            ));
+        });
 }
 
 pub fn update_hud(
     query: Query<&Transform, With<Camera3d>>,
     mut text_query: Query<&mut Text, With<HudText>>,
+    hit_state: Res<crate::raycast::RayHitState>,
 ) {
     let Ok(transform) = query.single() else {
         return;
@@ -86,5 +85,12 @@ pub fn update_hud(
     };
 
     let p = transform.translation;
-    **text = format!("xyz: {:.1}, {:.1}, {:.1}", p.x, p.y, p.z);
+    if let Some(pos) = &hit_state.hit_pos {
+        **text = format!(
+            "xyz: {:.1}, {:.1}, {:.1}  |  瞄准: ({}, {}, {})",
+            p.x, p.y, p.z, pos.x, pos.y, pos.z
+        );
+    } else {
+        **text = format!("xyz: {:.1}, {:.1}, {:.1}", p.x, p.y, p.z);
+    }
 }

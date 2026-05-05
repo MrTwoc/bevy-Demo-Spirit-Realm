@@ -4,7 +4,7 @@
 //! Slot (col, row) 表示第 col 列、第 row 行的子图区域。
 
 /// 子图像素尺寸（长和宽均为 32px）
-pub const TILE_SIZE_PX: u32 = 32;
+pub const TILE_SIZE_PX: u32 = 128;
 
 /// Atlas 图片尺寸
 pub const ATLAS_WIDTH_PX: f32 = 250.0;
@@ -31,32 +31,32 @@ impl AtlasSlot {
 /// 草方块的 6 个面各自使用的 atlas slot
 pub mod grass {
     use super::AtlasSlot;
-    pub const TOP:    AtlasSlot = AtlasSlot { col: 0, row: 0 }; // 草地顶
+    pub const TOP: AtlasSlot = AtlasSlot { col: 0, row: 0 }; // 草地顶
     pub const BOTTOM: AtlasSlot = AtlasSlot { col: 0, row: 1 }; // 泥土（底面用土）
-    pub const RIGHT:  AtlasSlot = AtlasSlot { col: 1, row: 0 }; // 草土侧面
-    pub const LEFT:   AtlasSlot = AtlasSlot { col: 1, row: 0 }; // 草土侧面
-    pub const FRONT:  AtlasSlot = AtlasSlot { col: 1, row: 0 }; // 草土侧面
-    pub const BACK:   AtlasSlot = AtlasSlot { col: 1, row: 0 }; // 草土侧面
+    pub const RIGHT: AtlasSlot = AtlasSlot { col: 1, row: 0 }; // 草土侧面
+    pub const LEFT: AtlasSlot = AtlasSlot { col: 1, row: 0 }; // 草土侧面
+    pub const FRONT: AtlasSlot = AtlasSlot { col: 1, row: 0 }; // 草土侧面
+    pub const BACK: AtlasSlot = AtlasSlot { col: 1, row: 0 }; // 草土侧面
 }
 
 /// 泥土方块的 6 个面
 pub mod dirt {
     use super::AtlasSlot;
-    pub const TOP:    AtlasSlot = AtlasSlot { col: 0, row: 1 }; // 土顶
+    pub const TOP: AtlasSlot = AtlasSlot { col: 0, row: 1 }; // 土顶
     pub const BOTTOM: AtlasSlot = AtlasSlot { col: 0, row: 1 }; // 土底
-    pub const RIGHT:  AtlasSlot = AtlasSlot { col: 1, row: 1 }; // 土侧
-    pub const LEFT:   AtlasSlot = AtlasSlot { col: 1, row: 1 }; // 土侧
-    pub const FRONT:  AtlasSlot = AtlasSlot { col: 1, row: 1 }; // 土侧
-    pub const BACK:   AtlasSlot = AtlasSlot { col: 1, row: 1 }; // 土侧
+    pub const RIGHT: AtlasSlot = AtlasSlot { col: 1, row: 1 }; // 土侧
+    pub const LEFT: AtlasSlot = AtlasSlot { col: 1, row: 1 }; // 土侧
+    pub const FRONT: AtlasSlot = AtlasSlot { col: 1, row: 1 }; // 土侧
+    pub const BACK: AtlasSlot = AtlasSlot { col: 1, row: 1 }; // 土侧
 }
 
 /// 石头方块的 6 个面
 pub mod stone {
     use super::AtlasSlot;
-    pub const TOP:    AtlasSlot = AtlasSlot { col: 2, row: 0 }; // 石顶
+    pub const TOP: AtlasSlot = AtlasSlot { col: 2, row: 0 }; // 石顶
     pub const BOTTOM: AtlasSlot = AtlasSlot { col: 2, row: 0 }; // 石底
-    pub const RIGHT:  AtlasSlot = AtlasSlot { col: 2, row: 0 }; // 石侧
-    pub const LEFT:   AtlasSlot = AtlasSlot { col: 2, row: 0 }; // 石侧
-    pub const FRONT:  AtlasSlot = AtlasSlot { col: 2, row: 0 }; // 石侧
-    pub const BACK:   AtlasSlot = AtlasSlot { col: 2, row: 0 }; // 石侧
+    pub const RIGHT: AtlasSlot = AtlasSlot { col: 2, row: 0 }; // 石侧
+    pub const LEFT: AtlasSlot = AtlasSlot { col: 2, row: 0 }; // 石侧
+    pub const FRONT: AtlasSlot = AtlasSlot { col: 2, row: 0 }; // 石侧
+    pub const BACK: AtlasSlot = AtlasSlot { col: 2, row: 0 }; // 石侧
 }
