@@ -802,7 +802,7 @@ pub fn maybe_downgrade(&mut self) -> bool { ... }
 
 以下内容是方案 B 当前的空白点，当前 MVP 阶段暂不实施，留作后续参考：
 
-### 11.1 方块放置/破坏后的 mesh 重建机制
+### 11.1 方块放置/破坏后的 mesh 重建机制（✅ 已完成 — DirtyChunk 组件）
 
 当前文档只覆盖了静态纹理显示。玩家放/挖方块后，需要：
 
@@ -811,6 +811,38 @@ pub fn maybe_downgrade(&mut self) -> bool { ... }
 - 区分**同步重建**（立即执行，影响操作手感）和**异步重建**（分摊到多帧，不阻塞）
 
 这块与 §10.2 的 `mark_block_dirty` 紧密耦合，建议同时实施。
+
+#### 实现说明（2025-05-05）
+
+已实现 `src/chunk_dirty.rs`，包含：
+
+**`DirtyChunk` 组件** — 空组件，仅作为标记存在。加在哪个实体上，哪个实体就在下一帧重建 mesh。
+
+**`DirtyChunk::mark(entity)`** — 公开 API，给 `Commands` + `Entity` 即可标记脏区块。
+
+**`rebuild_dirty_chunks` 系统**（Update 阶段）— 查找所有带 `DirtyChunk` 标记的实体，重建 mesh，清除标记。流程：
+1. `ChunkData::Empty` → 清除标记，跳过（无 mesh 可生成）
+2. 其他状态 → 重建 mesh → `commands.entity(e).insert(Mesh3d, MeshMaterial3d)` 替换
+
+**`is_air_chunk(chunk_data)`** — 辅助函数，判断区块是否"全空气"（`Empty` 或 `Uniform(0)`）。
+
+**已知限制**：旧 mesh/material handle 未从 `Assets` 显式移除，会造成 GPU 内存缓慢积累。生产环境需加 `ChunkMeshHandle` 组件追踪旧 handle 并调用 `meshes.remove(handle)`。
+
+```rust
+// 使用示例
+use crate::chunk_dirty::{mark_chunk_dirty, set_block_dirty};
+
+// 标记脏（已知 entity）
+mark_chunk_dirty(&mut commands, chunk_entity);
+
+// 修改方块 + 标记脏（一次性）
+set_block_dirty(&mut commands, chunk_entity, &mut chunk_data, (x, y, z), new_block_id);
+```
+
+#### 待实现
+
+- [ ] `ChunkMeshHandle` 组件追踪旧 handle，避免内存泄漏
+- [ ] `mark_block_dirty` 与 `set_block_dirty` 联动（等方块放置/破坏功能）
 
 ### 11.2 UV 顶点排列的运行时验证
 

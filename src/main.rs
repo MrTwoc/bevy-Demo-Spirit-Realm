@@ -1,5 +1,6 @@
 mod camera;
 mod chunk;
+mod chunk_dirty;
 mod chunk_wire_frame;
 mod cube;
 mod hud;
@@ -29,6 +30,7 @@ fn main() {
                 chunk_wire_frame::toggle_wireframe,
                 chunk_wire_frame::sync_chunk_wireframe,
                 chunk_wire_frame::draw_wireframes,
+                chunk_dirty::rebuild_dirty_chunks,
                 hud::update_hud,
             ),
         )

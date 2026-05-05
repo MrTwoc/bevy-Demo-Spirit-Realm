@@ -35,7 +35,6 @@ https://iquilezles.org/articles/morenoise/<br>
 - [ ] 超平坦世界生成<br>
 - [ ] 噪声世界生成<br>
 - [ ] 方块放置/破坏<br>
-- [ ] 各种优化、动态剔除<br>
 - [ ] 方块材质加载<br>
 - [ ] 区块系统实现<br>
 
