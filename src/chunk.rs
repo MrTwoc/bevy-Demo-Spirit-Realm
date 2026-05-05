@@ -5,6 +5,8 @@ use bevy::{
 };
 use std::hash::Hash;
 
+use crate::atlas::{self, grass, dirt, stone};
+
 /// Size of one dimension of a chunk (32³ blocks per chunk).
 pub const CHUNK_SIZE: usize = 32;
 
@@ -21,6 +23,48 @@ pub enum Face {
     Left,
     Front,
     Back,
+}
+
+/// Block type + face direction → which atlas slot to use.
+#[derive(Clone, Copy)]
+enum BlockTexture {
+    GrassTop,
+    GrassSide,
+    GrassBottom, // dirt texture
+    DirtTop,
+    DirtSide,
+    Stone,
+}
+
+impl BlockTexture {
+    fn from_block_and_face(block_id: BlockId, face: Face) -> Self {
+        match block_id {
+            1 => match face {
+                // grass
+                Face::Top => BlockTexture::GrassTop,
+                Face::Bottom => BlockTexture::GrassBottom,
+                _ => BlockTexture::GrassSide,
+            },
+            2 => BlockTexture::Stone, // stone (all faces same)
+            3 => match face {
+                // dirt
+                Face::Top | Face::Bottom => BlockTexture::DirtTop,
+                _ => BlockTexture::DirtSide,
+            },
+            _ => BlockTexture::Stone,
+        }
+    }
+
+    fn atlas_slot(&self) -> atlas::AtlasSlot {
+        match self {
+            BlockTexture::GrassTop => grass::TOP,
+            BlockTexture::GrassSide => grass::RIGHT,
+            BlockTexture::GrassBottom => dirt::TOP,
+            BlockTexture::DirtTop => dirt::TOP,
+            BlockTexture::DirtSide => dirt::RIGHT,
+            BlockTexture::Stone => stone::TOP,
+        }
+    }
 }
 
 /// All 6 faces of a block in order: +X, -X, +Y, -Y, +Z, -Z
