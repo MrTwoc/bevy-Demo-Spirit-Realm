@@ -723,6 +723,79 @@ Phase 1 和 Phase 2 可以并行开发，互不依赖。
 
 当前 `Chunk` 结构体可以**直接替换为** `ChunkData`，因为 `Chunk` 的 `blocks: Vec<BlockId>` 和 `ChunkData::Mixed(Vec<BlockId>)` 完全等价。只需把 `Chunk` 类型别名改为 `ChunkData` 即可平滑过渡。
 
+### 10.6 ChunkData 工程化建议（来自代码审查）
+
+> 以下内容为社区评审反馈，已筛选适用于当前 MVP 阶段的建议。
+
+#### ✅ MVP 阶段应采纳
+
+**A. `debug_assert!` 越界检查**
+
+`get()` 和 `set()` 的坐标参数应加开发期断言：
+
+```rust
+pub fn get(&self, x: usize, y: usize, z: usize) -> BlockId {
+    debug_assert!(x < CHUNK_SIZE && y < CHUNK_SIZE && z < CHUNK_SIZE);
+    match self { ... }
+}
+
+pub fn set(&mut self, x: usize, y: usize, z: usize, id: BlockId) {
+    debug_assert!(x < CHUNK_SIZE && y < CHUNK_SIZE && z < CHUNK_SIZE);
+    // ...
+}
+```
+
+release 构建下断言失效（不损失性能），debug 构建下快速暴露错误坐标来源。
+
+**B. `is_air_uniform()` 辅助方法**
+
+```rust
+/// Returns true if the chunk contains only air (either explicitly or via Uniform(0)).
+pub fn is_air_uniform(&self) -> bool {
+    matches!(self, ChunkData::Empty) || matches!(self, ChunkData::Uniform(id) if *id == 0)
+}
+```
+
+`Empty` 和 `Uniform(0)` 语义等价但表述不同，外部每次 match 太繁琐，此方法提供统一出口。
+
+**C. 区块存在性需与数据解耦**
+
+当前 "未生成的区块" 和 "全空气区块" 都用 `ChunkData::Empty` 表示。等将来引入多区块管理器时需要区分：
+
+```rust
+// 方案 A：Option
+Option<ChunkData>  // None = 未生成，Some(Empty) = 已生成但全空气
+
+// 方案 B：状态枚举
+enum ChunkState {
+    Unloaded,
+    Loaded(ChunkData),
+}
+```
+
+这是 Phase 3 多区块阶段的架构债务，当前单区块阶段无需处理，但应在文档中明确。
+
+**D. `maybe_downgrade()` 留好接口**
+
+```rust
+/// 检查是否可以降级（Mixed → Uniform/Empty），返回是否实际发生了降级。
+/// 应在区块保存或卸载时调用，不在热路径上执行。
+pub fn maybe_downgrade(&mut self) -> bool { ... }
+```
+
+#### ⚠️ 暂不采纳（Phase 3 以后考虑）
+
+| 建议 | 原因 |
+|------|------|
+| 调色板压缩 `PalettedStorage` | 64KB vs 8KB 不影响 MVP 功能正确性，属于性能优化过早实施 |
+| 多线程 `RwLock<ChunkData>` | 当前项目单线程执行，不存在争用 |
+| `tracing` 日志监控升级频率 | 生产级建议，当前项目阶段不需要 |
+| 写时复制 `Arc<[BlockId; 32768]>` | 同上，当前无多线程读取需求 |
+
+#### 接口强制要求
+
+为保证未来存储格式可演进，所有外部代码必须通过 `get()` / `set()` 访问区块数据，**禁止直接索引 `Mixed` 内部的 `Vec<BlockId>`**。当前代码已满足此要求。
+
 ---
 
 ## 11. 未来扩展项（暂不实施）
@@ -745,7 +818,7 @@ Phase 1 和 Phase 2 可以并行开发，互不依赖。
 
 调试方法：在 UV 计算后临时将某个面的 UV 强制设为 `[[0,0],[1,0],[1,1],[0,1]]`，观察纹理是否出现拉伸/翻转，据此判断顶点顺序是否正确。
 
-### 11.3 多区块加载与视锥剔除
+### 11.3 多区块加载与各项剔除优化
 
 当前 `spawn_initial_chunks` 只生成 1 个区块。扩展到多区块时需要：
 
