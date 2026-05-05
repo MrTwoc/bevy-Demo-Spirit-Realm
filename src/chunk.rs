@@ -5,7 +5,7 @@ use bevy::{
 };
 use std::hash::Hash;
 
-use crate::atlas::{self, grass, dirt, stone};
+use crate::atlas::{self, dirt, grass, stone};
 
 /// Size of one dimension of a chunk (32³ blocks per chunk).
 pub const CHUNK_SIZE: usize = 32;
@@ -188,7 +188,9 @@ pub type Chunk = ChunkData;
 /// Returns (positions, uvs, normals, indices).
 ///
 /// UVs are computed from a texture atlas based on block type and face direction.
-pub fn generate_chunk_mesh(chunk: &Chunk) -> (Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<[f32; 3]>, Vec<u32>) {
+pub fn generate_chunk_mesh(
+    chunk: &Chunk,
+) -> (Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<[f32; 3]>, Vec<u32>) {
     let mut positions = Vec::new();
     let mut uvs = Vec::new();
     let mut normals = Vec::new();
@@ -212,13 +214,17 @@ pub fn generate_chunk_mesh(chunk: &Chunk) -> (Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<
                     positions.extend(face_verts);
                     uvs.extend(face_uvs);
                     normals.extend([face_normal; 4]);
+                    // Reverse winding order: (0,2,1) and (0,3,2) to get
+                    // counter-clockwise triangles when viewed from the
+                    // face normal direction (Bevy uses right-hand coordinate
+                    // system with back-face culling = CCW front faces).
                     indices.extend([
                         base_index,
+                        base_index + 2,
                         base_index + 1,
-                        base_index + 2,
                         base_index,
-                        base_index + 2,
                         base_index + 3,
+                        base_index + 2,
                     ]);
                 }
             }
