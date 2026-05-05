@@ -1,3 +1,4 @@
+mod atlas;
 mod camera;
 mod chunk;
 mod chunk_dirty;
