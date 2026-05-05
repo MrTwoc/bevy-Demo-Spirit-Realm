@@ -65,8 +65,11 @@ pub fn rebuild_dirty_chunks(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    asset_server: Res<AssetServer>,
     dirty_chunks: Query<(Entity, &ChunkData, &Mesh3d, &MeshMaterial3d<StandardMaterial>, &Transform), With<DirtyChunk>>,
 ) {
+    let texture_handle = asset_server.load("textures/array_texture.png");
+
     for (entity, chunk_data, _old_mesh, _old_mat, transform) in &dirty_chunks {
         // Air-only chunks: no mesh to generate, just clear dirty flag.
         if is_air_chunk(chunk_data) {
@@ -75,7 +78,7 @@ pub fn rebuild_dirty_chunks(
         }
 
         // Regenerate mesh
-        let (positions, uvs, normals, colors, indices) = generate_chunk_mesh(chunk_data);
+        let (positions, uvs, normals, indices) = generate_chunk_mesh(chunk_data);
 
         let mesh = meshes.add(
             Mesh::new(
@@ -85,20 +88,16 @@ pub fn rebuild_dirty_chunks(
             .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
             .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
             .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-            .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
             .with_inserted_indices(Indices::U32(indices)),
         );
 
         let mat = materials.add(StandardMaterial {
-            base_color: Color::WHITE,
+            base_color_texture: Some(texture_handle.clone()),
             ..default()
         });
 
         // Replace handles on the existing entity (Bevy drops old handle refs automatically)
-        commands.entity(entity).insert((
-            Mesh3d(mesh),
-            MeshMaterial3d(mat),
-        ));
+        commands.entity(entity).insert((Mesh3d(mesh), MeshMaterial3d(mat)));
 
         // Remove dirty flag
         commands.entity(entity).remove::<DirtyChunk>();
