@@ -242,81 +242,77 @@ fn face_quad(
     face: Face,
     block_id: BlockId,
 ) -> ([[f32; 3]; 4], [[f32; 2]; 4], [f32; 3]) {
+    // 方块 (x, y, z) 覆盖世界空间 [x, y, z] → [x+1, y+1, z+1]，
+    // 与 DDA 射线检测的 floor() 坐标系保持一致。
     let (verts, normal) = match face {
         Face::Top => {
             // +Y face (grass top)
-            let h = 0.5;
             (
                 [
-                    [x as f32 - 0.5, y as f32 + h, z as f32 - 0.5],
-                    [x as f32 + 0.5, y as f32 + h, z as f32 - 0.5],
-                    [x as f32 + 0.5, y as f32 + h, z as f32 + 0.5],
-                    [x as f32 - 0.5, y as f32 + h, z as f32 + 0.5],
+                    [x as f32, y as f32 + 1.0, z as f32],
+                    [x as f32 + 1.0, y as f32 + 1.0, z as f32],
+                    [x as f32 + 1.0, y as f32 + 1.0, z as f32 + 1.0],
+                    [x as f32, y as f32 + 1.0, z as f32 + 1.0],
                 ],
                 [0.0, 1.0, 0.0],
             )
         }
         Face::Bottom => {
             // -Y face (dirt side)
-            let h = -0.5;
             (
                 [
-                    [x as f32 - 0.5, y as f32 + h, z as f32 + 0.5],
-                    [x as f32 + 0.5, y as f32 + h, z as f32 + 0.5],
-                    [x as f32 + 0.5, y as f32 + h, z as f32 - 0.5],
-                    [x as f32 - 0.5, y as f32 + h, z as f32 - 0.5],
+                    [x as f32, y as f32, z as f32 + 1.0],
+                    [x as f32 + 1.0, y as f32, z as f32 + 1.0],
+                    [x as f32 + 1.0, y as f32, z as f32],
+                    [x as f32, y as f32, z as f32],
                 ],
                 [0.0, -1.0, 0.0],
             )
         }
         Face::Right => {
             // +X face
-            let h = 0.5;
             (
                 [
-                    [x as f32 + h, y as f32 - 0.5, z as f32 - 0.5],
-                    [x as f32 + h, y as f32 - 0.5, z as f32 + 0.5],
-                    [x as f32 + h, y as f32 + 0.5, z as f32 + 0.5],
-                    [x as f32 + h, y as f32 + 0.5, z as f32 - 0.5],
+                    [x as f32 + 1.0, y as f32, z as f32],
+                    [x as f32 + 1.0, y as f32, z as f32 + 1.0],
+                    [x as f32 + 1.0, y as f32 + 1.0, z as f32 + 1.0],
+                    [x as f32 + 1.0, y as f32 + 1.0, z as f32],
                 ],
                 [1.0, 0.0, 0.0],
             )
         }
         Face::Left => {
             // -X face
-            let h = -0.5;
             (
                 [
-                    [x as f32 + h, y as f32 - 0.5, z as f32 + 0.5],
-                    [x as f32 + h, y as f32 - 0.5, z as f32 - 0.5],
-                    [x as f32 + h, y as f32 + 0.5, z as f32 - 0.5],
-                    [x as f32 + h, y as f32 + 0.5, z as f32 + 0.5],
+                    [x as f32, y as f32, z as f32 + 1.0],
+                    [x as f32, y as f32, z as f32],
+                    [x as f32, y as f32 + 1.0, z as f32],
+                    [x as f32, y as f32 + 1.0, z as f32 + 1.0],
                 ],
                 [-1.0, 0.0, 0.0],
             )
         }
         Face::Front => {
             // +Z face
-            let h = 0.5;
             (
                 [
-                    [x as f32 + 0.5, y as f32 - 0.5, z as f32 + h],
-                    [x as f32 - 0.5, y as f32 - 0.5, z as f32 + h],
-                    [x as f32 - 0.5, y as f32 + 0.5, z as f32 + h],
-                    [x as f32 + 0.5, y as f32 + 0.5, z as f32 + h],
+                    [x as f32 + 1.0, y as f32, z as f32 + 1.0],
+                    [x as f32, y as f32, z as f32 + 1.0],
+                    [x as f32, y as f32 + 1.0, z as f32 + 1.0],
+                    [x as f32 + 1.0, y as f32 + 1.0, z as f32 + 1.0],
                 ],
                 [0.0, 0.0, 1.0],
             )
         }
         Face::Back => {
             // -Z face
-            let h = -0.5;
             (
                 [
-                    [x as f32 - 0.5, y as f32 - 0.5, z as f32 + h],
-                    [x as f32 + 0.5, y as f32 - 0.5, z as f32 + h],
-                    [x as f32 + 0.5, y as f32 + 0.5, z as f32 + h],
-                    [x as f32 - 0.5, y as f32 + 0.5, z as f32 + h],
+                    [x as f32, y as f32, z as f32],
+                    [x as f32 + 1.0, y as f32, z as f32],
+                    [x as f32 + 1.0, y as f32 + 1.0, z as f32],
+                    [x as f32, y as f32 + 1.0, z as f32],
                 ],
                 [0.0, 0.0, -1.0],
             )
