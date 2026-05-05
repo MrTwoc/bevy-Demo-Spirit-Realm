@@ -213,7 +213,7 @@ pub fn generate_chunk_mesh(
                     }
 
                     let base_index = positions.len() as u32;
-                    let (face_verts, face_uvs, face_normal) = face_quad(x, y, z, face);
+                    let (face_verts, face_uvs, face_normal) = face_quad(x, y, z, face, block_id);
                     positions.extend(face_verts);
                     uvs.extend(face_uvs);
                     normals.extend([face_normal; 4]);
@@ -235,7 +235,13 @@ pub fn generate_chunk_mesh(
 }
 
 /// Returns the 4 vertices, UVs, and normal for a single face.
-fn face_quad(x: usize, y: usize, z: usize, face: Face) -> ([[f32; 3]; 4], [[f32; 2]; 4], [f32; 3]) {
+fn face_quad(
+    x: usize,
+    y: usize,
+    z: usize,
+    face: Face,
+    block_id: BlockId,
+) -> ([[f32; 3]; 4], [[f32; 2]; 4], [f32; 3]) {
     let (verts, normal) = match face {
         Face::Top => {
             // +Y face (grass top)
@@ -316,7 +322,33 @@ fn face_quad(x: usize, y: usize, z: usize, face: Face) -> ([[f32; 3]; 4], [[f32;
             )
         }
     };
-    (verts, face_uvs(face), normal)
+
+    // Compute atlas UV for this block type + face direction
+    let tex = BlockTexture::from_block_and_face(block_id, face);
+    let (u0, u1, v0, v1) = {
+        let slot = tex.atlas_slot();
+        let (u0, u1, v0, v1) = slot.uv();
+        (u0, u1, v0, v1)
+    };
+
+    // UV vertex order must match position vertex order per face.
+    // Position vertices are ordered: v0=bottom-left, v1=bottom-right, v2=top-right, v3=top-left (viewed from outside).
+    let face_uvs: [[f32; 2]; 4] = match face {
+        Face::Top | Face::Bottom | Face::Right | Face::Front => [
+            [u0, v0], // bottom-left
+            [u1, v0], // bottom-right
+            [u1, v1], // top-right
+            [u0, v1], // top-left
+        ],
+        Face::Left | Face::Back => [
+            [u1, v0], // bottom-right (mirrored)
+            [u0, v0], // bottom-left
+            [u0, v1], // top-left
+            [u1, v1], // top-right
+        ],
+    };
+
+    (verts, face_uvs, normal)
 }
 
 /// UV coordinates for each face (placeholder — single color per face).
