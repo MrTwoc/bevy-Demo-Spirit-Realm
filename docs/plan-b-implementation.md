@@ -723,3 +723,50 @@ Phase 1 和 Phase 2 可以并行开发，互不依赖。
 
 当前 `Chunk` 结构体可以**直接替换为** `ChunkData`，因为 `Chunk` 的 `blocks: Vec<BlockId>` 和 `ChunkData::Mixed(Vec<BlockId>)` 完全等价。只需把 `Chunk` 类型别名改为 `ChunkData` 即可平滑过渡。
 
+---
+
+## 11. 未来扩展项（暂不实施）
+
+以下内容是方案 B 当前的空白点，当前 MVP 阶段暂不实施，留作后续参考：
+
+### 11.1 方块放置/破坏后的 mesh 重建机制
+
+当前文档只覆盖了静态纹理显示。玩家放/挖方块后，需要：
+
+- 设计 `DirtyFlag` 组件或 `DirtyChunk` 资源标记需要重建的区块
+- 在 Update 系统里检测 dirty 状态，调用 `generate_chunk_mesh` 重建并替换 mesh
+- 区分**同步重建**（立即执行，影响操作手感）和**异步重建**（分摊到多帧，不阻塞）
+
+这块与 §10.2 的 `mark_block_dirty` 紧密耦合，建议同时实施。
+
+### 11.2 UV 顶点排列的运行时验证
+
+`Face::Left` / `Face::Back` 的 UV 顶点做了水平镜像处理，但实际是否与 `positions` 的顶点顺序完全对应，需要在实际运行时验证。
+
+调试方法：在 UV 计算后临时将某个面的 UV 强制设为 `[[0,0],[1,0],[1,1],[0,1]]`，观察纹理是否出现拉伸/翻转，据此判断顶点顺序是否正确。
+
+### 11.3 多区块加载与视锥剔除
+
+当前 `spawn_initial_chunks` 只生成 1 个区块。扩展到多区块时需要：
+
+- 实现 `ChunkManager` 管理多个 `ChunkData` 的加载/卸载
+- `spawn_chunk_area(area_radius)` 批量生成区块网格
+- 添加基于视锥的可见性判断，不再渲染相机背后和视锥外的区块
+
+### 11.4 相机初始位置随区块数量调整
+
+当前 camera 初始位置 `(16.0, 20.0, 16.0)` 固定在第一个区块（原点）的正上方。多区块场景下应改为：
+
+```rust
+// 以玩家/相机位置为中心，周围 1~2 区块范围内加载
+let camera_target = player_position; // 或固定在地形高度上方
+```
+
+### 11.5 纹理加载状态监控
+
+`asset_server.load()` 异步加载，首次加载失败（文件损坏/路径错误）时 mesh 会渲染为白色。建议后续加入：
+
+- `TextureLoaderState` 资源跟踪加载进度
+- 或利用 Bevy 的 `AssetServer::get_load_state` 查询加载结果
+- 出错时在 HUD 显示调试信息
+
