@@ -9,13 +9,25 @@ mod input;
 mod raycast;
 
 use crate::chunk_wire_frame::WireframeMode;
-use bevy::{pbr::wireframe::WireframePlugin, prelude::*};
+use bevy::{
+    diagnostic::FrameTimeDiagnosticsPlugin, pbr::wireframe::WireframePlugin, prelude::*,
+    render::diagnostic::RenderDiagnosticsPlugin,
+};
 
 fn main() {
     App::new()
         .init_resource::<WireframeMode>()
         .init_resource::<raycast::RayHitState>()
-        .add_plugins((DefaultPlugins, WireframePlugin::default()))
+        .insert_resource(hud::TriangleUpdateTimer(Timer::from_seconds(
+            0.5,
+            TimerMode::Repeating,
+        )))
+        .add_plugins((
+            DefaultPlugins,
+            WireframePlugin::default(),
+            FrameTimeDiagnosticsPlugin::default(),
+            RenderDiagnosticsPlugin,
+        ))
         .add_systems(
             Startup,
             (
@@ -36,6 +48,7 @@ fn main() {
                 chunk_dirty::rebuild_dirty_chunks,
                 raycast::raycast_highlight_system,
                 hud::update_hud,
+                hud::update_triangle_count,
             ),
         )
         .run();
