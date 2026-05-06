@@ -1,4 +1,13 @@
-//! Voxel chunk: 32x32x32 block storage + face-culled mesh generation.
+//! Voxel chunk: block storage + face-culled mesh generation.
+//!
+//! TODO(P0): 当前使用 32³ 正方体区块，后期需迁移到 16×32×16 SubChunk。
+//! 原因：Y 轴范围 ±20480（40960 格），是 Minecraft 的 160 倍。
+//! 16×32×16 设计：
+//!   - Y 轴保持 32 格：覆盖完整地层（石→土→草→空气），40960/32=1280 SubChunk/列
+//!   - XZ 缩小到 16 格：更细粒度加载/卸载，单 SubChunk 内存从 32KB 降至 8KB
+//!   - SuperChunk 合批：8×8×4 SubChunk = 256×128×64 米，合并为 1 个 Draw Call
+//! 迁移时需将 CHUNK_SIZE 改为分轴常量：CHUNK_SIZE_XZ=16, CHUNK_SIZE_Y=32
+//! 参见 docs/架构总纲.md §3.1 垂直分层
 
 use bevy::{
     asset::RenderAssetUsages, mesh::Indices, prelude::*, render::render_resource::PrimitiveTopology,
@@ -6,6 +15,7 @@ use bevy::{
 use std::hash::Hash;
 
 /// Size of one dimension of a chunk (32³ blocks per chunk).
+/// TODO(P0): 后期改为 CHUNK_SIZE_XZ=16, CHUNK_SIZE_Y=32（16×32×16 SubChunk）
 pub const CHUNK_SIZE: usize = 32;
 
 /// A single block type identifier.
@@ -332,7 +342,7 @@ pub fn spawn_chunk_entity(
     meshes: &mut Assets<Mesh>,
     chunk: Chunk,
     position: Vec3,
-) {
+) -> Entity {
     let (positions, colors, normals, indices) = generate_chunk_mesh(&chunk);
 
     let mesh = meshes.add(
@@ -351,13 +361,15 @@ pub fn spawn_chunk_entity(
         ..default()
     });
 
-    commands.spawn((
-        chunk,
-        Mesh3d(mesh),
-        MeshMaterial3d(mat),
-        Transform::from_translation(position),
-        Visibility::default(),
-    ));
+    commands
+        .spawn((
+            chunk,
+            Mesh3d(mesh),
+            MeshMaterial3d(mat),
+            Transform::from_translation(position),
+            Visibility::default(),
+        ))
+        .id()
 }
 
 /// Creates the initial chunk and spawns it at world origin.
@@ -389,7 +401,7 @@ pub fn spawn_initial_chunks(
         .id();
 
     // Create HUD tied to this camera entity
-    crate::hud::setup_hud(commands, camera_entity);
+    crate::hud::setup_hud(&mut commands, camera_entity);
 }
 
 // ---------------------------------------------------------------------------

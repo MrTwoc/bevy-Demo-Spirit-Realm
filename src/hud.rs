@@ -56,7 +56,7 @@ pub(crate) struct TriangleCountText;
 #[derive(Resource)]
 pub struct TriangleUpdateTimer(pub Timer);
 
-pub fn setup_hud(mut commands: Commands, camera_entity: Entity) {
+pub fn setup_hud(commands: &mut Commands, camera_entity: Entity) {
     commands
         .spawn((
             Node {
@@ -91,7 +91,7 @@ pub fn setup_hud(mut commands: Commands, camera_entity: Entity) {
         });
 
     // Spawn crosshair tied to the same camera
-    spawn_crosshair(&mut commands, camera_entity);
+    spawn_crosshair(commands, camera_entity);
 }
 
 pub fn update_hud(

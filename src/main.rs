@@ -2,6 +2,7 @@ mod block_interaction;
 mod camera;
 mod chunk;
 mod chunk_dirty;
+mod chunk_manager;
 mod chunk_wire_frame;
 mod fps_overlay;
 mod hud;
@@ -19,6 +20,7 @@ fn main() {
     App::new()
         .init_resource::<WireframeMode>()
         .init_resource::<raycast::RayHitState>()
+        .init_resource::<chunk_manager::LoadedChunks>()
         .insert_resource(hud::TriangleUpdateTimer(Timer::from_seconds(
             1.0,
             TimerMode::Repeating,
@@ -32,7 +34,7 @@ fn main() {
         ))
         .add_systems(
             Startup,
-            (lighting::setup_lighting, chunk::spawn_initial_chunks),
+            (lighting::setup_lighting, chunk_manager::setup_world),
         )
         .add_systems(
             Update,
@@ -46,6 +48,7 @@ fn main() {
                 chunk_dirty::rebuild_dirty_chunks,
                 raycast::raycast_highlight_system,
                 block_interaction::block_interaction_system,
+                chunk_manager::chunk_loader_system,
                 hud::update_hud,
                 hud::update_triangle_count,
             ),
