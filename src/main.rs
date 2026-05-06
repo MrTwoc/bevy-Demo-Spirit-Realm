@@ -4,6 +4,7 @@ mod chunk;
 mod chunk_dirty;
 mod chunk_wire_frame;
 mod cube;
+mod fps_overlay;
 mod hud;
 mod input;
 mod raycast;
@@ -27,6 +28,7 @@ fn main() {
             WireframePlugin::default(),
             FrameTimeDiagnosticsPlugin::default(),
             RenderDiagnosticsPlugin,
+            fps_overlay::FpsOverlayPlugin,
         ))
         .add_systems(
             Startup,

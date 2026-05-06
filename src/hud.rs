@@ -104,7 +104,7 @@ pub fn update_hud(
     let p = transform.translation;
     if let Some(pos) = &hit_state.hit_pos {
         **text = format!(
-            "xyz: {:.1}, {:.1}, {:.1}  |  Target: ({}, {}, {})",
+            "xyz: {:.1}, {:.1}, {:.1}\nTarget: ({}, {}, {})",
             p.x, p.y, p.z, pos.x, pos.y, pos.z
         );
     } else {
