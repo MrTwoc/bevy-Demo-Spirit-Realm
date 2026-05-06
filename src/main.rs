@@ -9,6 +9,7 @@ mod hud;
 mod input;
 mod lighting;
 mod raycast;
+mod resource_pack;
 
 use crate::chunk_wire_frame::WireframeMode;
 use bevy::{
@@ -31,14 +32,17 @@ fn main() {
             FrameTimeDiagnosticsPlugin::default(),
             RenderDiagnosticsPlugin,
             fps_overlay::FpsOverlayPlugin,
+            resource_pack::ResourcePackPlugin,
         ))
         .add_systems(
             Startup,
-            (lighting::setup_lighting, chunk_manager::setup_world),
+            (
+                resource_pack::load_resource_pack_system,
+                lighting::setup_lighting,
+                chunk_manager::setup_world,
+            )
+                .chain(),
         )
-        // chunk_loader_system 在 First schedule 中运行，确保 despawn 命令
-        // 在 Update 中的其他系统（sync_chunk_wireframe、rebuild_dirty_chunks 等）
-        // 查询实体之前就已经执行完毕，避免 "Entity despawned" 错误。
         .add_systems(First, chunk_manager::chunk_loader_system)
         .add_systems(
             Update,

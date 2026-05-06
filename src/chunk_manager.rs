@@ -1,40 +1,29 @@
 //! Chunk manager: loads chunks around the player and unloads distant ones.
-//!
-//! Each frame, the system checks the player's position and ensures all chunks
-//! within `RENDER_DISTANCE` are loaded. Chunks beyond `UNLOAD_DISTANCE` are
-//! despawned to free memory.
-//!
-//! TODO(P0): 当前只加载 Y=0 一层区块（cy 硬编码为 0），需支持多层 Y 轴加载。
-//! 目标方案（参见 docs/架构总纲.md §4.3）：
-//!   - 引入 load_radius_v 参数控制垂直加载半径（如 ±4 层 = ±128 米）
-//!   - 玩家所在 Y 层 ± load_radius_v 范围内的区块都应加载
-//!   - 更高/更低的 SubChunk → Empty 或 Uniform（空气）
-//!   - 迁移到 16×32×16 SubChunk 后，Y 方向 1280 个 SubChunk/列，
-//!     实际只加载 ~16 个（±4 个 Y 层），其余按需流式加载
 
+use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use std::collections::HashMap;
 
 use crate::chunk::{Chunk, ChunkCoord, fill_terrain, spawn_chunk_entity};
+use crate::chunk_dirty::ChunkAtlasHandle;
+use crate::resource_pack::ResourcePackManager;
 
-/// Number of chunks in each direction from the player to load.
-/// RENDER_DISTANCE=2 means a 5×5 grid of chunks (2 in each direction + center).
 pub const RENDER_DISTANCE: i32 = 2;
-
-/// Chunks beyond this distance (in chunk coordinates) are unloaded.
-/// Set slightly larger than RENDER_DISTANCE to avoid thrashing.
 pub const UNLOAD_DISTANCE: i32 = RENDER_DISTANCE + 1;
 
-/// Resource tracking which chunks are currently loaded.
-/// Maps chunk coordinate → entity.
 #[derive(Resource, Default)]
 pub struct LoadedChunks {
     pub entities: HashMap<ChunkCoord, Entity>,
 }
 
-/// Number of Y-axis chunk layers to load (centered on player's chunk layer).
-/// TODO(P0): 后期改为 load_radius_v 参数，支持动态垂直加载范围。
-pub const Y_LAYERS: i32 = 1; // 当前只加载 1 层（cy=0），后期改为 ±4
+pub const Y_LAYERS: i32 = 1;
+
+/// 存储 Atlas 纹理句柄的资源
+#[derive(Resource)]
+pub struct AtlasTextureHandle {
+    pub handle: Handle<Image>,
+}
 
 /// Startup system: spawns the camera and HUD, then loads initial chunks.
 pub fn setup_world(
@@ -42,8 +31,32 @@ pub fn setup_world(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut loaded: ResMut<LoadedChunks>,
+    resource_pack: Res<ResourcePackManager>,
+    mut images: ResMut<Assets<Image>>,
 ) {
-    // Camera starts above the center of the initial chunk area.
+    // 从资源包创建 Atlas 纹理
+    let atlas_handle = if let Some(atlas) = &resource_pack.atlas {
+        let size = Extent3d {
+            width: atlas.size.0,
+            height: atlas.size.1,
+            depth_or_array_layers: 1,
+        };
+        let bevy_image = Image::new(
+            size,
+            TextureDimension::D2,
+            atlas.image.clone(),
+            TextureFormat::Rgba8UnormSrgb,
+            RenderAssetUsages::default(),
+        );
+        images.add(bevy_image)
+    } else {
+        images.add(Image::default())
+    };
+
+    commands.insert_resource(AtlasTextureHandle {
+        handle: atlas_handle.clone(),
+    });
+
     use crate::camera::CameraController;
     let camera_transform = Transform::from_xyz(16.0, 20.0, 16.0);
     let camera_entity = commands
@@ -54,10 +67,8 @@ pub fn setup_world(
         ))
         .id();
 
-    // Create HUD tied to this camera entity
     crate::hud::setup_hud(&mut commands, camera_entity);
 
-    // Load initial chunks around origin
     load_chunks_around(
         ChunkCoord {
             cx: 0,
@@ -68,6 +79,8 @@ pub fn setup_world(
         &mut materials,
         &mut meshes,
         &mut loaded,
+        &resource_pack,
+        &atlas_handle,
     );
 }
 
@@ -78,24 +91,25 @@ pub fn chunk_loader_system(
     mut meshes: ResMut<Assets<Mesh>>,
     mut loaded: ResMut<LoadedChunks>,
     camera_query: Query<&Transform, With<Camera3d>>,
+    resource_pack: Res<ResourcePackManager>,
+    atlas_handle: Res<AtlasTextureHandle>,
 ) {
     let Ok(cam_transform) = camera_query.single() else {
         return;
     };
 
-    // Determine which chunk the player is in
     let player_chunk = ChunkCoord::from_world(cam_transform.translation);
 
-    // Load chunks within render distance
     load_chunks_around(
         player_chunk,
         &mut commands,
         &mut materials,
         &mut meshes,
         &mut loaded,
+        &resource_pack,
+        &atlas_handle.handle,
     );
 
-    // Unload chunks beyond unload distance
     unload_distant_chunks(player_chunk, &mut commands, &mut loaded);
 }
 
@@ -106,8 +120,9 @@ fn load_chunks_around(
     materials: &mut Assets<StandardMaterial>,
     meshes: &mut Assets<Mesh>,
     loaded: &mut LoadedChunks,
+    resource_pack: &ResourcePackManager,
+    atlas_handle: &Handle<Image>,
 ) {
-    // TODO(P0): 当前 Y_LAYERS=1 只加载 cy=0 一层，后期改为基于玩家 Y 坐标的动态范围
     let cy_min = -Y_LAYERS / 2;
     let cy_max = Y_LAYERS / 2;
 
@@ -121,17 +136,29 @@ fn load_chunks_around(
                 };
 
                 if loaded.entities.contains_key(&coord) {
-                    continue; // already loaded
+                    continue;
                 }
 
-                // Generate terrain for this chunk
                 let mut chunk = Chunk::filled(0);
                 fill_terrain(&mut chunk);
 
                 let position = coord.to_world_origin();
-                let entity = spawn_chunk_entity(commands, materials, meshes, chunk, position);
+                let entity = spawn_chunk_entity(
+                    commands,
+                    materials,
+                    meshes,
+                    chunk,
+                    position,
+                    resource_pack,
+                    atlas_handle,
+                );
+
+                commands
+                    .entity(entity)
+                    .insert(ChunkAtlasHandle(atlas_handle.clone()));
+
                 loaded.entities.insert(coord, entity);
-            } // end cy loop
+            }
         }
     }
 }
