@@ -24,12 +24,13 @@ pub enum Face {
 }
 
 /// Block type → color mapping.
-/// 1 = grass (green), 2 = stone (gray), 3 = dirt (brown)
+/// 1 = grass (green), 2 = stone (gray), 3 = dirt (brown), 4 = sand (yellow)
 fn block_color(block_id: BlockId) -> [f32; 4] {
     match block_id {
         1 => [0.2, 0.8, 0.2, 1.0], // green (grass)
         2 => [0.5, 0.5, 0.5, 1.0], // gray (stone)
         3 => [0.6, 0.4, 0.2, 1.0], // brown (dirt)
+        4 => [0.9, 0.8, 0.2, 1.0], // yellow (sand)
         _ => [0.0, 0.0, 0.0, 1.0], // black (unknown)
     }
 }
@@ -298,14 +299,22 @@ fn face_quad(
 /// Fills a chunk with only the bottom 3 layers.
 /// y=0 → stone  (BlockId=2, gray, bottom)
 /// y=1 → dirt   (BlockId=3, brown, middle)
-/// y=2 → grass  (BlockId=1, green, top)
+/// y=2 → random top layer: grass (green), sand (yellow), or stone (gray)
 /// y>=3 → air   (BlockId=0)
 pub fn fill_terrain(chunk: &mut Chunk) {
     for z in 0..CHUNK_SIZE {
         for x in 0..CHUNK_SIZE {
             chunk.set(x, 0, z, 2); // stone  — bottom (gray)
             chunk.set(x, 1, z, 3); // dirt   — middle (brown)
-            chunk.set(x, 2, z, 1); // grass  — top    (green)
+
+            // Simple deterministic pseudo-random based on coordinates
+            let hash = (x as u32).wrapping_mul(73856093) ^ (z as u32).wrapping_mul(19349663);
+            let top_block = match hash % 3 {
+                0 => 1, // grass  (green)
+                1 => 4, // sand   (yellow)
+                _ => 2, // stone  (gray)
+            };
+            chunk.set(x, 2, z, top_block);
             // y >= 3: air (implicit, chunk is zero-initialized)
         }
     }
