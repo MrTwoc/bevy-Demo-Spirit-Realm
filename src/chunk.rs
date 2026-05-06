@@ -48,6 +48,43 @@ const FACES: [(Face, [i32; 3]); 6] = [
     (Face::Back, [0, 0, -1]),
 ];
 
+/// 6 个方向的邻居区块数据，用于跨区块面剔除。
+///
+/// 索引顺序与 FACES 一致：[+X, -X, +Y, -Y, +Z, -Z]。
+/// 如果某个方向没有邻居（未加载），对应位置为 `None`，
+/// 面剔除时会将缺失的邻居视为空气（即保留该面）。
+pub struct ChunkNeighbors {
+    /// 6 个方向的邻居区块数据引用
+    pub neighbors: [Option<BlockId>; 6],
+    /// 6 个方向的邻居完整数据（用于跨边界查询）
+    pub neighbor_data: [Option<Vec<BlockId>>; 6],
+}
+
+impl ChunkNeighbors {
+    /// 创建空的邻居数据（所有方向都没有邻居）
+    pub fn empty() -> Self {
+        Self {
+            neighbors: [None; 6],
+            neighbor_data: std::array::from_fn(|_| None),
+        }
+    }
+
+    /// 获取指定方向邻居在 (x, y, z) 位置的方块 ID。
+    /// 如果邻居不存在，返回 0（空气）。
+    pub fn get_neighbor_block(&self, face_index: usize, x: usize, y: usize, z: usize) -> BlockId {
+        if let Some(ref data) = self.neighbor_data[face_index] {
+            if x < CHUNK_SIZE && y < CHUNK_SIZE && z < CHUNK_SIZE {
+                let idx = z * CHUNK_SIZE * CHUNK_SIZE + y * CHUNK_SIZE + x;
+                data[idx]
+            } else {
+                0
+            }
+        } else {
+            0 // 没有邻居数据，视为空气
+        }
+    }
+}
+
 /// Chunk data: three-state storage for a 32x32x32 voxel chunk.
 #[derive(Component, Clone)]
 pub enum ChunkData {
@@ -105,22 +142,53 @@ impl ChunkData {
         }
     }
 
-    pub fn is_face_visible(&self, x: usize, y: usize, z: usize, face: &[i32; 3]) -> bool {
+    /// 将 ChunkData 转换为 Vec<BlockId>（用于传递给邻居查询）
+    pub fn to_vec(&self) -> Vec<BlockId> {
+        match self {
+            ChunkData::Empty => vec![0; CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE],
+            ChunkData::Uniform(id) => vec![*id; CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE],
+            ChunkData::Mixed(data) => data.clone(),
+        }
+    }
+
+    /// 判断指定面是否可见（需要渲染）。
+    ///
+    /// 当邻居在区块边界内时，直接查询本区块数据。
+    /// 当邻居在区块边界外时，通过 `neighbors` 查询邻居区块数据。
+    pub fn is_face_visible(
+        &self,
+        x: usize,
+        y: usize,
+        z: usize,
+        face: &[i32; 3],
+        face_index: usize,
+        neighbors: &ChunkNeighbors,
+    ) -> bool {
         let nx = x as i32 + face[0];
         let ny = y as i32 + face[1];
         let nz = z as i32 + face[2];
 
-        if nx < 0
-            || ny < 0
-            || nz < 0
-            || nx >= CHUNK_SIZE as i32
-            || ny >= CHUNK_SIZE as i32
-            || nz >= CHUNK_SIZE as i32
+        let current_id = self.get(x, y, z);
+
+        // 邻居在区块边界内，直接查询本区块
+        if nx >= 0
+            && ny >= 0
+            && nz >= 0
+            && nx < CHUNK_SIZE as i32
+            && ny < CHUNK_SIZE as i32
+            && nz < CHUNK_SIZE as i32
         {
-            return true;
+            return self.get(nx as usize, ny as usize, nz as usize) != current_id;
         }
 
-        self.get(nx as usize, ny as usize, nz as usize) != self.get(x, y, z)
+        // 邻居在区块边界外，查询邻居区块数据
+        let neighbor_x = nx.rem_euclid(CHUNK_SIZE as i32) as usize;
+        let neighbor_y = ny.rem_euclid(CHUNK_SIZE as i32) as usize;
+        let neighbor_z = nz.rem_euclid(CHUNK_SIZE as i32) as usize;
+
+        let neighbor_id =
+            neighbors.get_neighbor_block(face_index, neighbor_x, neighbor_y, neighbor_z);
+        neighbor_id != current_id
     }
 }
 
@@ -135,9 +203,13 @@ pub type Chunk = ChunkData;
 /// Generates a face-culled mesh for the chunk.
 /// Returns (positions, uvs, normals, indices).
 /// UV 坐标从 ResourcePackManager 的动态 Atlas 中查找。
+///
+/// `neighbors` 提供 6 个方向的邻居区块数据，用于跨区块面剔除。
+/// 当邻居不存在时，边界面上的方块面会被保留（视为空气）。
 pub fn generate_chunk_mesh(
     chunk: &Chunk,
     resource_pack: &ResourcePackManager,
+    neighbors: &ChunkNeighbors,
 ) -> (Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<[f32; 3]>, Vec<u32>) {
     let mut positions = Vec::new();
     let mut uvs = Vec::new();
@@ -152,8 +224,8 @@ pub fn generate_chunk_mesh(
                     continue;
                 }
 
-                for (face, offset) in FACES.iter().cloned() {
-                    if !chunk.is_face_visible(x, y, z, &offset) {
+                for (face_index, (face, offset)) in FACES.iter().cloned().enumerate() {
+                    if !chunk.is_face_visible(x, y, z, &offset, face_index, neighbors) {
                         continue;
                     }
 
@@ -296,8 +368,9 @@ pub fn spawn_chunk_entity(
     position: Vec3,
     resource_pack: &ResourcePackManager,
     atlas_texture: &Handle<Image>,
+    neighbors: &ChunkNeighbors,
 ) -> Entity {
-    let (positions, uvs, normals, indices) = generate_chunk_mesh(&chunk, resource_pack);
+    let (positions, uvs, normals, indices) = generate_chunk_mesh(&chunk, resource_pack, neighbors);
 
     let mesh = meshes.add(
         Mesh::new(
@@ -348,7 +421,7 @@ impl BlockPos {
     }
 }
 
-#[derive(Clone, Copy, Hash, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
 pub struct ChunkCoord {
     pub cx: i32,
     pub cy: i32,

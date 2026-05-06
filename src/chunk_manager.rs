@@ -5,16 +5,22 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use std::collections::HashMap;
 
-use crate::chunk::{Chunk, ChunkCoord, fill_terrain, spawn_chunk_entity};
-use crate::chunk_dirty::ChunkAtlasHandle;
+use crate::chunk::{Chunk, ChunkCoord, ChunkNeighbors, fill_terrain, spawn_chunk_entity};
+use crate::chunk_dirty::{ChunkAtlasHandle, ChunkCoordComponent};
 use crate::resource_pack::ResourcePackManager;
 
 pub const RENDER_DISTANCE: i32 = 2;
 pub const UNLOAD_DISTANCE: i32 = RENDER_DISTANCE;
 
+/// 已加载区块的条目，包含实体和区块数据
+pub struct ChunkEntry {
+    pub entity: Entity,
+    pub data: Chunk,
+}
+
 #[derive(Resource, Default)]
 pub struct LoadedChunks {
-    pub entities: HashMap<ChunkCoord, Entity>,
+    pub entries: HashMap<ChunkCoord, ChunkEntry>,
 }
 
 pub const Y_LAYERS: i32 = 1;
@@ -23,6 +29,35 @@ pub const Y_LAYERS: i32 = 1;
 #[derive(Resource)]
 pub struct AtlasTextureHandle {
     pub handle: Handle<Image>,
+}
+
+/// 6 个方向的偏移量，与 chunk.rs 中 FACES 顺序一致：[+X, -X, +Y, -Y, +Z, -Z]
+const NEIGHBOR_OFFSETS: [(i32, i32, i32); 6] = [
+    (1, 0, 0),  // +X (Right)
+    (-1, 0, 0), // -X (Left)
+    (0, 1, 0),  // +Y (Top)
+    (0, -1, 0), // -Y (Bottom)
+    (0, 0, 1),  // +Z (Front)
+    (0, 0, -1), // -Z (Back)
+];
+
+/// 从已加载区块中收集指定坐标的 6 个邻居数据
+fn collect_neighbors(coord: ChunkCoord, loaded: &LoadedChunks) -> ChunkNeighbors {
+    let mut neighbors = ChunkNeighbors::empty();
+
+    for (i, (dx, dy, dz)) in NEIGHBOR_OFFSETS.iter().enumerate() {
+        let neighbor_coord = ChunkCoord {
+            cx: coord.cx + dx,
+            cy: coord.cy + dy,
+            cz: coord.cz + dz,
+        };
+
+        if let Some(entry) = loaded.entries.get(&neighbor_coord) {
+            neighbors.neighbor_data[i] = Some(entry.data.to_vec());
+        }
+    }
+
+    neighbors
 }
 
 /// Startup system: spawns the camera and HUD, then loads initial chunks.
@@ -135,29 +170,40 @@ fn load_chunks_around(
                     cz: center.cz + dz,
                 };
 
-                if loaded.entities.contains_key(&coord) {
+                if loaded.entries.contains_key(&coord) {
                     continue;
                 }
 
                 let mut chunk = Chunk::filled(0);
                 fill_terrain(&mut chunk);
 
+                // 收集邻居数据用于跨区块面剔除
+                let neighbors = collect_neighbors(coord, loaded);
+
                 let position = coord.to_world_origin();
                 let entity = spawn_chunk_entity(
                     commands,
                     materials,
                     meshes,
-                    chunk,
+                    chunk.clone(),
                     position,
                     resource_pack,
                     atlas_handle,
+                    &neighbors,
                 );
 
-                commands
-                    .entity(entity)
-                    .insert(ChunkAtlasHandle(atlas_handle.clone()));
+                commands.entity(entity).insert((
+                    ChunkAtlasHandle(atlas_handle.clone()),
+                    ChunkCoordComponent(coord),
+                ));
 
-                loaded.entities.insert(coord, entity);
+                loaded.entries.insert(
+                    coord,
+                    ChunkEntry {
+                        entity,
+                        data: chunk,
+                    },
+                );
             }
         }
     }
@@ -166,7 +212,7 @@ fn load_chunks_around(
 /// Despawns chunks that are beyond UNLOAD_DISTANCE from the player.
 fn unload_distant_chunks(center: ChunkCoord, commands: &mut Commands, loaded: &mut LoadedChunks) {
     let to_remove: Vec<ChunkCoord> = loaded
-        .entities
+        .entries
         .keys()
         .filter(|coord| {
             let dx = (coord.cx - center.cx).abs();
@@ -177,8 +223,8 @@ fn unload_distant_chunks(center: ChunkCoord, commands: &mut Commands, loaded: &m
         .collect();
 
     for coord in to_remove {
-        if let Some(entity) = loaded.entities.remove(&coord) {
-            commands.entity(entity).despawn();
+        if let Some(entry) = loaded.entries.remove(&coord) {
+            commands.entity(entry.entity).despawn();
         }
     }
 }

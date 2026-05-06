@@ -203,6 +203,6 @@ pub fn update_chunk_count(
     mut text_query: Query<&mut Text, With<ChunkCountText>>,
 ) {
     if let Ok(mut text) = text_query.single_mut() {
-        **text = format!("Chunks: {}", loaded.entities.len());
+        **text = format!("Chunks: {}", loaded.entries.len());
     }
 }
