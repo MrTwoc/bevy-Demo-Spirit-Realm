@@ -78,7 +78,7 @@ pub fn setup_hud(mut commands: Commands, camera_entity: Entity) {
                 HudText,
             ));
             parent.spawn((
-                Text::new("三角面数: --"),
+                Text::new("Triangle Count: --"),
                 TextFont {
                     font_size: 16.0,
                     ..default()
@@ -104,7 +104,7 @@ pub fn update_hud(
     let p = transform.translation;
     if let Some(pos) = &hit_state.hit_pos {
         **text = format!(
-            "xyz: {:.1}, {:.1}, {:.1}  |  瞄准: ({}, {}, {})",
+            "xyz: {:.1}, {:.1}, {:.1}  |  Target: ({}, {}, {})",
             p.x, p.y, p.z, pos.x, pos.y, pos.z
         );
     } else {
@@ -145,7 +145,7 @@ pub fn update_triangle_count(
     }
 
     let display_text = if let Some(value) = gpu_triangles {
-        format!("三角面数(GPU): {:.0}", value)
+        format!("Triangle Count(GPU): {:.0}", value)
     } else {
         // 回退：统计 Mesh 数据中的三角形数
         let total: u32 = mesh_query
@@ -157,7 +157,7 @@ pub fn update_triangle_count(
                 })
             })
             .sum();
-        format!("三角面数: {}", total)
+        format!("Triangle Count: {}", total)
     };
 
     if let Ok(mut text) = text_query.single_mut() {
