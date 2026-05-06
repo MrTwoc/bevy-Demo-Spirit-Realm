@@ -1,8 +1,66 @@
 //! Resource Pack System — 动态 Atlas 构建和材质包加载
+//!
+//! 材质包统一存放在 `assets/resourcepacks/` 目录下，
+//! 每个子文件夹即为一个材质包。可通过 `ResourcePackManager::selected_pack`
+//! 指定要使用的材质包名称（子文件夹名），默认使用第一个找到的材质包。
+//!
+//! # 方块→纹理映射机制（当前实现 vs Minecraft）
+//!
+//! ## 当前实现（硬编码映射）
+//!
+//! 当前使用 `block_texture_map: HashMap<(u8, String), String>` 进行映射：
+//! - Key: `(block_id, face)` — 方块 ID + 面名称（"top"/"bottom"/"side"）
+//! - Value: 纹理名称（对应材质包中的 PNG 文件名，不含扩展名）
+//!
+//! 映射链路：
+//! ```text
+//! block_id + face → block_texture_map → texture_name → Atlas UV
+//! ```
+//!
+//! ## Minecraft 实现（JSON 驱动映射）
+//!
+//! Minecraft 使用四层 JSON 引用链：
+//! ```text
+//! block_id → blockstates/*.json → models/*.json → textures → Atlas UV
+//! ```
+//!
+//! 示例（草方块）：
+//! ```json
+//! // blockstates/grass_block.json
+//! { "variants": { "": { "model": "block/grass_block" } } }
+//!
+//! // models/block/grass_block.json
+//! {
+//!   "textures": {
+//!     "top": "block/grass_top",
+//!     "side": "block/grass_side",
+//!     "bottom": "block/dirt"
+//!   },
+//!   "elements": [{
+//!     "faces": {
+//!       "up":    { "texture": "#top" },
+//!       "north": { "texture": "#side" },
+//!       "down":  { "texture": "#bottom" }
+//!     }
+//!   }]
+//! }
+//! ```
+//!
+//! ## 待完善事项（TODO）
+//!
+//! 1. **Phase 2**: 实现 `blockstates/*.json` 解析，替代硬编码映射
+//! 2. **Phase 3**: 实现 `models/*.json` 解析，支持复杂模型和状态变体
+//! 3. **纹理命名规范化**: 从简单文件名改为路径式命名（如 `block/grass_top`）
+//! 4. **回退机制**: 纹理缺失时显示紫黑棋盘格（missing texture）
+//!
+//! 参见: `docs/动态Atlas材质包系统.md`
 
 use bevy::prelude::*;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+
+/// 材质包根目录（所有材质包存放于此）
+pub const RESOURCE_PACKS_DIR: &str = "assets/resourcepacks";
 
 /// 纹理在 Atlas 中的位置信息
 #[derive(Debug, Clone)]
@@ -25,16 +83,53 @@ pub struct TextureAtlas {
 /// 资源包管理器
 #[derive(Resource)]
 pub struct ResourcePackManager {
+    /// 材质包根目录
+    pub packs_dir: PathBuf,
+    /// 当前选中的材质包名称（子文件夹名），None 表示自动选择第一个
+    pub selected_pack: Option<String>,
+    /// 当前实际加载的材质包路径
     pub current_pack: PathBuf,
+    /// 所有可用材质包列表
+    pub available_packs: Vec<String>,
     pub texture_cache: HashMap<String, (Vec<u8>, u32, u32)>, // (pixels, width, height)
     pub atlas: Option<TextureAtlas>,
+    /// 方块→纹理映射表（硬编码，待改为 JSON 驱动）
+    ///
+    /// # 映射结构
+    ///
+    /// - **Key**: `(block_id: u8, face: String)`
+    ///   - `block_id`: 方块类型 ID（1=草方块, 2=石头, 3=泥土, 4=沙子）
+    ///   - `face`: 面名称，取值为 "top"、"bottom"、"side"
+    ///
+    /// - **Value**: `texture_name: String`
+    ///   - 对应材质包中的 PNG 文件名（不含扩展名）
+    ///   - 例如 "dirt" 对应 `assets/resourcepacks/1号材质包/dirt.png`
+    ///
+    /// # 与 Minecraft 的对比
+    ///
+    /// | 方面 | 当前实现 | Minecraft |
+    /// |------|----------|-----------|
+    /// | 映射方式 | 硬编码 HashMap | blockstates/models JSON |
+    /// | 面定义 | 仅 top/bottom/side | up/down/north/south/east/west |
+    /// | 状态变体 | 不支持 | 支持（如朝向、水位等） |
+    /// | 模型复用 | 不支持 | 支持（JSON 引用） |
+    ///
+    /// # TODO: Phase 2-3 改造
+    ///
+    /// 将此硬编码映射替换为 JSON 驱动的映射系统：
+    /// 1. 加载 `blockstates/*.json` 获取方块→模型映射
+    /// 2. 加载 `models/*.json` 获取模型→纹理映射
+    /// 3. 解析 `#variable` 引用（如 `#side` → `block/grass_side`）
     pub block_texture_map: HashMap<(u8, String), String>,
 }
 
 impl Default for ResourcePackManager {
     fn default() -> Self {
         Self {
-            current_pack: PathBuf::from("assets/1号材质包"),
+            packs_dir: PathBuf::from(RESOURCE_PACKS_DIR),
+            selected_pack: None,
+            current_pack: PathBuf::new(),
+            available_packs: Vec::new(),
             texture_cache: HashMap::new(),
             atlas: None,
             block_texture_map: Self::default_block_texture_map(),
@@ -43,26 +138,78 @@ impl Default for ResourcePackManager {
 }
 
 impl ResourcePackManager {
-    /// 默认的方块纹理映射表
+    /// 默认的方块纹理映射表（硬编码，待改为 JSON 驱动）
+    ///
+    /// # 当前映射关系
+    ///
+    /// | block_id | 方块名称 | top | bottom | side | 备注 |
+    /// |----------|----------|-----|--------|------|------|
+    /// | 1 | 草方块 | dirt | dirt | dirt | 临时用 dirt 替代 |
+    /// | 2 | 石头 | obsidian | obsidian | obsidian | 临时用 obsidian 替代 |
+    /// | 3 | 泥土 | dirt | dirt | dirt | - |
+    /// | 4 | 沙子 | glass | glass | glass | 临时用 glass 替代 |
+    ///
+    /// # Minecraft 对应实现
+    ///
+    /// Minecraft 中草方块的映射（通过 JSON 链）：
+    /// ```text
+    /// block_id=grass_block
+    ///   → blockstates/grass_block.json → model="block/grass_block"
+    ///   → models/block/grass_block.json
+    ///     → top=#top → "block/grass_top"
+    ///     → side=#side → "block/grass_side"
+    ///     → bottom=#bottom → "block/dirt"
+    /// ```
+    ///
+    /// # TODO: Phase 2 改造
+    ///
+    /// 将此函数替换为 JSON 加载逻辑：
+    /// ```rust
+    /// fn load_block_texture_map_from_json(dir: &Path) -> HashMap<(u8, String), String> {
+    ///     // 1. 加载 blockstates/*.json
+    ///     // 2. 加载 models/*.json
+    ///     // 3. 解析 #variable 引用
+    ///     // 4. 构建映射表
+    /// }
+    /// ```
     fn default_block_texture_map() -> HashMap<(u8, String), String> {
         let mut map = HashMap::new();
 
-        // 草方块 (block_id = 1) — 用 dirt 替代
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 1: 草方块 (Grass Block)
+        // ─────────────────────────────────────────────────────────────
+        // TODO: 替换为 JSON 映射
+        // Minecraft 对应: grass_top.png / grass_side.png / dirt.png
+        // 当前临时方案: 全部使用 dirt.png
         map.insert((1, "top".to_string()), "dirt".to_string());
         map.insert((1, "bottom".to_string()), "dirt".to_string());
         map.insert((1, "side".to_string()), "dirt".to_string());
 
-        // 石头 (block_id = 2) — 用 obsidian 替代
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 2: 石头 (Stone)
+        // ─────────────────────────────────────────────────────────────
+        // TODO: 替换为 JSON 映射
+        // Minecraft 对应: stone.png
+        // 当前临时方案: 全部使用 obsidian.png
         map.insert((2, "top".to_string()), "obsidian".to_string());
         map.insert((2, "bottom".to_string()), "obsidian".to_string());
         map.insert((2, "side".to_string()), "obsidian".to_string());
 
-        // 泥土 (block_id = 3)
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 3: 泥土 (Dirt)
+        // ─────────────────────────────────────────────────────────────
+        // TODO: 替换为 JSON 映射
+        // Minecraft 对应: dirt.png
         map.insert((3, "top".to_string()), "dirt".to_string());
         map.insert((3, "bottom".to_string()), "dirt".to_string());
         map.insert((3, "side".to_string()), "dirt".to_string());
 
-        // 沙子 (block_id = 4) — 用 glass 替代
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 4: 沙子 (Sand)
+        // ─────────────────────────────────────────────────────────────
+        // TODO: 替换为 JSON 映射
+        // Minecraft 对应: sand.png
+        // 当前临时方案: 全部使用 glass.png
         map.insert((4, "top".to_string()), "glass".to_string());
         map.insert((4, "bottom".to_string()), "glass".to_string());
         map.insert((4, "side".to_string()), "glass".to_string());
@@ -70,37 +217,52 @@ impl ResourcePackManager {
         map
     }
 
-    /// 扫描材质包目录，加载所有 PNG 纹理
-    pub fn load_resource_pack(&mut self) -> Result<(), String> {
-        let search_paths = vec![
-            PathBuf::from("assets/1号材质包"),
-            PathBuf::from("assets/resourcepacks/default/assets/minecraft/textures/block"),
-            PathBuf::from("assets/textures"),
-        ];
-
-        let mut loaded = false;
-        for path in &search_paths {
-            if path.exists() {
-                info!("Found resource pack at: {:?}", path);
-                self.current_pack = path.clone();
-                match self.scan_textures(path) {
-                    Ok(count) => {
-                        info!("Loaded {} textures from {:?}", count, path);
-                        loaded = true;
-                        break;
-                    }
-                    Err(e) => {
-                        warn!("Failed to load from {:?}: {}", path, e);
+    /// 扫描 `assets/resourcepacks/` 下所有可用材质包
+    pub fn scan_available_packs(&mut self) {
+        self.available_packs.clear();
+        if let Ok(entries) = std::fs::read_dir(&self.packs_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        self.available_packs.push(name.to_string());
                     }
                 }
             }
         }
+        self.available_packs.sort();
+        info!("Available resource packs: {:?}", self.available_packs);
+    }
 
-        if !loaded {
-            warn!("No resource pack found, generating default textures...");
-            let default_dir = PathBuf::from("assets/1号材质包");
-            self.generate_default_textures(&default_dir)?;
-            self.scan_textures(&default_dir)?;
+    /// 从 `assets/resourcepacks/` 加载材质包
+    ///
+    /// 优先使用 `selected_pack` 指定的材质包；若未指定或不存在，
+    /// 则自动选择第一个可用材质包；若目录为空则生成默认材质包。
+    pub fn load_resource_pack(&mut self) -> Result<(), String> {
+        // 确保材质包根目录存在
+        std::fs::create_dir_all(&self.packs_dir).map_err(|e| e.to_string())?;
+
+        // 扫描可用材质包
+        self.scan_available_packs();
+
+        // 确定要加载的材质包路径
+        let pack_path = self.resolve_pack_path()?;
+
+        info!("Loading resource pack from: {:?}", pack_path);
+        self.current_pack = pack_path.clone();
+
+        match self.scan_textures(&pack_path) {
+            Ok(count) => {
+                info!("Loaded {} textures from {:?}", count, pack_path);
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to load from {:?}: {}, generating defaults...",
+                    pack_path, e
+                );
+                self.generate_default_textures(&pack_path)?;
+                self.scan_textures(&pack_path)?;
+            }
         }
 
         self.build_atlas()?;
@@ -110,6 +272,58 @@ impl ResourcePackManager {
             self.texture_cache.len(),
             self.atlas.as_ref().map(|a| a.size)
         );
+        Ok(())
+    }
+
+    /// 解析要使用的材质包路径
+    fn resolve_pack_path(&mut self) -> Result<PathBuf, String> {
+        // 1. 优先使用 selected_pack 指定的材质包
+        if let Some(ref name) = self.selected_pack {
+            let path = self.packs_dir.join(name);
+            if path.exists() {
+                return Ok(path);
+            }
+            warn!(
+                "Selected pack '{}' not found at {:?}, falling back to auto-detect",
+                name, path
+            );
+        }
+
+        // 2. 自动选择第一个可用材质包
+        if let Some(first) = self.available_packs.first() {
+            let path = self.packs_dir.join(first);
+            info!("Auto-selected resource pack: '{}'", first);
+            return Ok(path);
+        }
+
+        // 3. 没有任何材质包，创建默认的
+        warn!("No resource packs found, creating default pack...");
+        let default_name = "default";
+        let default_path = self.packs_dir.join(default_name);
+        self.generate_default_textures(&default_path)?;
+        self.available_packs.push(default_name.to_string());
+        Ok(default_path)
+    }
+
+    /// 切换到指定名称的材质包（运行时调用）
+    pub fn switch_pack(&mut self, pack_name: &str) -> Result<(), String> {
+        let path = self.packs_dir.join(pack_name);
+        if !path.exists() {
+            return Err(format!(
+                "Resource pack '{}' not found at {:?}",
+                pack_name, path
+            ));
+        }
+
+        self.selected_pack = Some(pack_name.to_string());
+        self.current_pack = path.clone();
+        self.texture_cache.clear();
+        self.atlas = None;
+
+        self.scan_textures(&path)?;
+        self.build_atlas()?;
+
+        info!("Switched to resource pack: '{}'", pack_name);
         Ok(())
     }
 
