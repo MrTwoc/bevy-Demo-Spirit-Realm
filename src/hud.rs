@@ -7,14 +7,18 @@ use bevy::{
 };
 
 /// Spawns a white Minecraft-style crosshair centered on screen.
-pub fn spawn_crosshair(mut commands: Commands) {
+/// Must be called with a valid camera entity so the UI targets the correct camera.
+pub fn spawn_crosshair(commands: &mut Commands, camera_entity: Entity) {
     commands
-        .spawn((Node {
-            position_type: PositionType::Absolute,
-            left: Val::Percent(50.0),
-            top: Val::Percent(50.0),
-            ..default()
-        },))
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Percent(50.0),
+                top: Val::Percent(50.0),
+                ..default()
+            },
+            UiTargetCamera(camera_entity),
+        ))
         .with_children(|parent| {
             // Horizontal bar (20×2px), centered via flex on the crosshair point.
             parent.spawn((
@@ -22,7 +26,6 @@ pub fn spawn_crosshair(mut commands: Commands) {
                     position_type: PositionType::Absolute,
                     width: Val::Px(20.0),
                     height: Val::Px(2.0),
-                    // Place center of this bar at parent's top-left (the crosshair center).
                     left: Val::Px(-10.0),
                     top: Val::Px(-1.0),
                     ..default()
@@ -35,7 +38,6 @@ pub fn spawn_crosshair(mut commands: Commands) {
                     position_type: PositionType::Absolute,
                     width: Val::Px(2.0),
                     height: Val::Px(20.0),
-                    // Place center of this bar at parent's top-left (the crosshair center).
                     left: Val::Px(-1.0),
                     top: Val::Px(-10.0),
                     ..default()
@@ -87,6 +89,9 @@ pub fn setup_hud(mut commands: Commands, camera_entity: Entity) {
                 TriangleCountText,
             ));
         });
+
+    // Spawn crosshair tied to the same camera
+    spawn_crosshair(&mut commands, camera_entity);
 }
 
 pub fn update_hud(

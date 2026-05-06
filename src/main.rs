@@ -32,11 +32,7 @@ fn main() {
         ))
         .add_systems(
             Startup,
-            (
-                lighting::setup_lighting,
-                chunk::spawn_initial_chunks,
-                hud::spawn_crosshair,
-            ),
+            (lighting::setup_lighting, chunk::spawn_initial_chunks),
         )
         .add_systems(
             Update,
