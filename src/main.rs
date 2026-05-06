@@ -36,6 +36,10 @@ fn main() {
             Startup,
             (lighting::setup_lighting, chunk_manager::setup_world),
         )
+        // chunk_loader_system 在 First schedule 中运行，确保 despawn 命令
+        // 在 Update 中的其他系统（sync_chunk_wireframe、rebuild_dirty_chunks 等）
+        // 查询实体之前就已经执行完毕，避免 "Entity despawned" 错误。
+        .add_systems(First, chunk_manager::chunk_loader_system)
         .add_systems(
             Update,
             (
@@ -48,7 +52,6 @@ fn main() {
                 chunk_dirty::rebuild_dirty_chunks,
                 raycast::raycast_highlight_system,
                 block_interaction::block_interaction_system,
-                chunk_manager::chunk_loader_system,
                 hud::update_hud,
                 hud::update_triangle_count,
             ),
