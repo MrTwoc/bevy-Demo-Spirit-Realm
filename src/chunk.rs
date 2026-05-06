@@ -7,6 +7,7 @@ use bevy::{
 };
 use std::hash::Hash;
 
+use crate::chunk_dirty::ChunkMeshHandle;
 use crate::resource_pack::ResourcePackManager;
 
 /// Size of one dimension of a chunk (32³ blocks per chunk).
@@ -360,6 +361,9 @@ pub fn fill_terrain(chunk: &mut Chunk) {
 // ---------------------------------------------------------------------------
 
 /// Spawns a single chunk entity with texture-mapped mesh.
+///
+/// 返回 Entity ID。mesh 和 material handle 通过 `ChunkMeshHandle` 组件存储在实体上，
+/// 用于后续重建时移除旧资源，避免 GPU 内存泄漏。
 pub fn spawn_chunk_entity(
     commands: &mut Commands,
     materials: &mut Assets<StandardMaterial>,
@@ -372,7 +376,7 @@ pub fn spawn_chunk_entity(
 ) -> Entity {
     let (positions, uvs, normals, indices) = generate_chunk_mesh(&chunk, resource_pack, neighbors);
 
-    let mesh = meshes.add(
+    let mesh_handle = meshes.add(
         Mesh::new(
             PrimitiveTopology::TriangleList,
             RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
@@ -383,7 +387,7 @@ pub fn spawn_chunk_entity(
         .with_inserted_indices(Indices::U32(indices)),
     );
 
-    let mat = materials.add(StandardMaterial {
+    let mat_handle = materials.add(StandardMaterial {
         base_color: Color::WHITE,
         base_color_texture: Some(atlas_texture.clone()),
         ..default()
@@ -392,8 +396,12 @@ pub fn spawn_chunk_entity(
     commands
         .spawn((
             chunk,
-            Mesh3d(mesh),
-            MeshMaterial3d(mat),
+            Mesh3d(mesh_handle.clone()),
+            MeshMaterial3d(mat_handle.clone()),
+            ChunkMeshHandle {
+                mesh: mesh_handle,
+                material: mat_handle,
+            },
             Transform::from_translation(position),
             Visibility::default(),
         ))
