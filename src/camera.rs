@@ -32,11 +32,18 @@ impl Default for CameraController {
 }
 
 /// Handles WASD + Space/Shift camera movement.
+/// Only moves when the cursor is locked (pointer grab active), like Minecraft.
 pub fn camera_movement(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
+    cursor_options: Single<&CursorOptions>,
     mut query: Query<(&mut Transform, &CameraController), With<Camera3d>>,
 ) {
+    // Only move when cursor is locked.
+    if cursor_options.grab_mode != CursorGrabMode::Locked {
+        return;
+    }
+
     let Ok((mut transform, _controller)) = query.single_mut() else {
         return;
     };
