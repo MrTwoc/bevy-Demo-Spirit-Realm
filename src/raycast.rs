@@ -26,11 +26,13 @@ const HIGHLIGHT_COLOR: Color = Color::srgba(1.0, 1.0, 0.0, 0.3);
 #[derive(Component)]
 pub struct HighlightBlock;
 
-/// 存储当前射线命中的方块位置
+/// 存储当前射线命中的方块位置和命中面法线
 #[derive(Resource, Default)]
 pub struct RayHitState {
     /// 当前命中的方块世界坐标（None 表示未命中）
     pub hit_pos: Option<BlockPos>,
+    /// 命中面法线（用于确定放置方块的位置）
+    pub hit_normal: Option<IVec3>,
 }
 
 // ---------------------------------------------------------------------------
@@ -259,6 +261,7 @@ pub fn raycast_highlight_system(
     match hit {
         Some(hit) => {
             hit_state.hit_pos = Some(hit.block_pos);
+            hit_state.hit_normal = Some(hit.normal);
 
             // 在命中位置放置半透明高亮方块
             let highlight_pos = Vec3::new(
@@ -285,6 +288,7 @@ pub fn raycast_highlight_system(
         }
         None => {
             hit_state.hit_pos = None;
+            hit_state.hit_normal = None;
         }
     }
 }

@@ -1,3 +1,4 @@
+mod block_interaction;
 mod camera;
 mod chunk;
 mod chunk_dirty;
@@ -48,6 +49,7 @@ fn main() {
                 chunk_wire_frame::draw_wireframes,
                 chunk_dirty::rebuild_dirty_chunks,
                 raycast::raycast_highlight_system,
+                block_interaction::block_interaction_system,
                 hud::update_hud,
                 hud::update_triangle_count,
             ),
