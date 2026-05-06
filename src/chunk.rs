@@ -5,8 +5,6 @@ use bevy::{
 };
 use std::hash::Hash;
 
-use crate::atlas::{self, dirt, grass, stone};
-
 /// Size of one dimension of a chunk (32³ blocks per chunk).
 pub const CHUNK_SIZE: usize = 32;
 
@@ -25,45 +23,14 @@ pub enum Face {
     Back,
 }
 
-/// Block type + face direction → which atlas slot to use.
-#[derive(Clone, Copy)]
-enum BlockTexture {
-    GrassTop,
-    GrassSide,
-    GrassBottom, // dirt texture
-    DirtTop,
-    DirtSide,
-    Stone,
-}
-
-impl BlockTexture {
-    fn from_block_and_face(block_id: BlockId, face: Face) -> Self {
-        match block_id {
-            1 => match face {
-                // grass
-                Face::Top => BlockTexture::GrassTop,
-                Face::Bottom => BlockTexture::GrassBottom,
-                _ => BlockTexture::GrassSide,
-            },
-            2 => BlockTexture::Stone, // stone (all faces same)
-            3 => match face {
-                // dirt
-                Face::Top | Face::Bottom => BlockTexture::DirtTop,
-                _ => BlockTexture::DirtSide,
-            },
-            _ => BlockTexture::Stone,
-        }
-    }
-
-    fn atlas_slot(&self) -> atlas::AtlasSlot {
-        match self {
-            BlockTexture::GrassTop => grass::TOP,
-            BlockTexture::GrassSide => grass::RIGHT,
-            BlockTexture::GrassBottom => dirt::TOP,
-            BlockTexture::DirtTop => dirt::TOP,
-            BlockTexture::DirtSide => dirt::RIGHT,
-            BlockTexture::Stone => stone::TOP,
-        }
+/// Block type → color mapping.
+/// 1 = grass (green), 2 = stone (gray), 3 = dirt (brown)
+fn block_color(block_id: BlockId) -> [f32; 4] {
+    match block_id {
+        1 => [0.2, 0.8, 0.2, 1.0], // green (grass)
+        2 => [0.5, 0.5, 0.5, 1.0], // gray (stone)
+        3 => [0.6, 0.4, 0.2, 1.0], // brown (dirt)
+        _ => [0.0, 0.0, 0.0, 1.0], // black (unknown)
     }
 }
 
@@ -185,14 +152,14 @@ pub type Chunk = ChunkData;
 /// Generates a face-culled mesh for the chunk.
 ///
 /// Only renders faces adjacent to a different block type (or air / chunk boundary).
-/// Returns (positions, uvs, normals, indices).
+/// Returns (positions, colors, normals, indices).
 ///
-/// UVs are computed from a texture atlas based on block type and face direction.
+/// Colors are per-vertex RGBA based on block type (solid color, no textures).
 pub fn generate_chunk_mesh(
     chunk: &Chunk,
-) -> (Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<[f32; 3]>, Vec<u32>) {
+) -> (Vec<[f32; 3]>, Vec<[f32; 4]>, Vec<[f32; 3]>, Vec<u32>) {
     let mut positions = Vec::new();
-    let mut uvs = Vec::new();
+    let mut colors = Vec::new();
     let mut normals = Vec::new();
     let mut indices = Vec::new();
 
@@ -210,9 +177,9 @@ pub fn generate_chunk_mesh(
                     }
 
                     let base_index = positions.len() as u32;
-                    let (face_verts, face_uvs, face_normal) = face_quad(x, y, z, face, block_id);
+                    let (face_verts, face_color, face_normal) = face_quad(x, y, z, face, block_id);
                     positions.extend(face_verts);
-                    uvs.extend(face_uvs);
+                    colors.extend([face_color; 4]);
                     normals.extend([face_normal; 4]);
                     // Reverse winding order: (0,2,1) and (0,3,2) to get
                     // counter-clockwise triangles when viewed from the
@@ -231,22 +198,22 @@ pub fn generate_chunk_mesh(
         }
     }
 
-    (positions, uvs, normals, indices)
+    (positions, colors, normals, indices)
 }
 
-/// Returns the 4 vertices, UVs, and normal for a single face.
+/// Returns the 4 vertices, color, and normal for a single face.
 fn face_quad(
     x: usize,
     y: usize,
     z: usize,
     face: Face,
     block_id: BlockId,
-) -> ([[f32; 3]; 4], [[f32; 2]; 4], [f32; 3]) {
+) -> ([[f32; 3]; 4], [f32; 4], [f32; 3]) {
     // 方块 (x, y, z) 覆盖世界空间 [x, y, z] → [x+1, y+1, z+1]，
     // 与 DDA 射线检测的 floor() 坐标系保持一致。
     let (verts, normal) = match face {
         Face::Top => {
-            // +Y face (grass top)
+            // +Y face
             (
                 [
                     [x as f32, y as f32 + 1.0, z as f32],
@@ -258,7 +225,7 @@ fn face_quad(
             )
         }
         Face::Bottom => {
-            // -Y face (dirt side)
+            // -Y face
             (
                 [
                     [x as f32, y as f32, z as f32 + 1.0],
@@ -319,32 +286,9 @@ fn face_quad(
         }
     };
 
-    // Compute atlas UV for this block type + face direction
-    let tex = BlockTexture::from_block_and_face(block_id, face);
-    let (u0, u1, v0, v1) = {
-        let slot = tex.atlas_slot();
-        let (u0, u1, v0, v1) = slot.uv();
-        (u0, u1, v0, v1)
-    };
+    let color = block_color(block_id);
 
-    // UV vertex order must match position vertex order per face.
-    // Position vertices are ordered: v0=bottom-left, v1=bottom-right, v2=top-right, v3=top-left (viewed from outside).
-    let face_uvs: [[f32; 2]; 4] = match face {
-        Face::Top | Face::Bottom | Face::Right | Face::Front => [
-            [u0, v0], // bottom-left
-            [u1, v0], // bottom-right
-            [u1, v1], // top-right
-            [u0, v1], // top-left
-        ],
-        Face::Left | Face::Back => [
-            [u1, v0], // bottom-right (mirrored)
-            [u0, v0], // bottom-left
-            [u0, v1], // top-left
-            [u1, v1], // top-right
-        ],
-    };
-
-    (verts, face_uvs, normal)
+    (verts, color, normal)
 }
 
 // --------------------------------------------------------------------------
@@ -352,16 +296,16 @@ fn face_quad(
 // --------------------------------------------------------------------------
 
 /// Fills a chunk with only the bottom 3 layers.
-/// y=0 → stone  (BlockId=2, bottom / deepest)
-/// y=1 → dirt   (BlockId=3, middle)
-/// y=2 → grass  (BlockId=1, top / surface)
+/// y=0 → stone  (BlockId=2, gray, bottom)
+/// y=1 → dirt   (BlockId=3, brown, middle)
+/// y=2 → grass  (BlockId=1, green, top)
 /// y>=3 → air   (BlockId=0)
 pub fn fill_terrain(chunk: &mut Chunk) {
     for z in 0..CHUNK_SIZE {
         for x in 0..CHUNK_SIZE {
-            chunk.set(x, 0, z, 2); // stone  — bottom
-            chunk.set(x, 1, z, 3); // dirt   — middle
-            chunk.set(x, 2, z, 1); // grass  — top surface
+            chunk.set(x, 0, z, 2); // stone  — bottom (gray)
+            chunk.set(x, 1, z, 3); // dirt   — middle (brown)
+            chunk.set(x, 2, z, 1); // grass  — top    (green)
             // y >= 3: air (implicit, chunk is zero-initialized)
         }
     }
@@ -372,17 +316,15 @@ pub fn fill_terrain(chunk: &mut Chunk) {
 // ---------------------------------------------------------------------------
 
 /// Spawns a single chunk entity with ONE combined mesh and ONE draw call.
-/// Spawns a single chunk entity with ONE combined mesh and ONE draw call.
-/// Uses a texture atlas for per-face UV mapping.
+/// Uses vertex colors for solid-color blocks (no textures).
 pub fn spawn_chunk_entity(
     commands: &mut Commands,
     materials: &mut Assets<StandardMaterial>,
     meshes: &mut Assets<Mesh>,
     chunk: Chunk,
     position: Vec3,
-    texture_handle: Handle<Image>,
 ) {
-    let (positions, uvs, normals, indices) = generate_chunk_mesh(&chunk);
+    let (positions, colors, normals, indices) = generate_chunk_mesh(&chunk);
 
     let mesh = meshes.add(
         Mesh::new(
@@ -390,13 +332,13 @@ pub fn spawn_chunk_entity(
             RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
         )
         .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
         .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
         .with_inserted_indices(Indices::U32(indices)),
     );
 
     let mat = materials.add(StandardMaterial {
-        base_color_texture: Some(texture_handle),
+        base_color: Color::WHITE,
         ..default()
     });
 
@@ -414,12 +356,9 @@ pub fn spawn_initial_chunks(
     mut commands: Commands,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    asset_server: Res<AssetServer>,
 ) {
     let mut chunk = Chunk::filled(0); // start with air
     fill_terrain(&mut chunk);
-
-    let texture_handle = asset_server.load("textures/array_texture.png");
 
     spawn_chunk_entity(
         &mut commands,
@@ -427,7 +366,6 @@ pub fn spawn_initial_chunks(
         &mut meshes,
         chunk,
         Vec3::ZERO,
-        texture_handle,
     );
 
     // Camera starts above the chunk.

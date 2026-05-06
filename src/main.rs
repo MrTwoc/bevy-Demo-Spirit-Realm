@@ -1,4 +1,3 @@
-mod atlas;
 mod camera;
 mod chunk;
 mod chunk_dirty;
@@ -20,7 +19,7 @@ fn main() {
         .init_resource::<WireframeMode>()
         .init_resource::<raycast::RayHitState>()
         .insert_resource(hud::TriangleUpdateTimer(Timer::from_seconds(
-            0.5,
+            1.0,
             TimerMode::Repeating,
         )))
         .add_plugins((
