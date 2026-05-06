@@ -6,6 +6,8 @@ use bevy::{
     ui::{BackgroundColor, Node, PositionType, UiRect, UiTargetCamera, Val},
 };
 
+use crate::chunk_manager::LoadedChunks;
+
 /// Spawns a white Minecraft-style crosshair centered on screen.
 /// Must be called with a valid camera entity so the UI targets the correct camera.
 pub fn spawn_crosshair(commands: &mut Commands, camera_entity: Entity) {
@@ -53,6 +55,9 @@ pub(crate) struct HudText;
 #[derive(Component)]
 pub(crate) struct TriangleCountText;
 
+#[derive(Component)]
+pub(crate) struct ChunkCountText;
+
 #[derive(Resource)]
 pub struct TriangleUpdateTimer(pub Timer);
 
@@ -87,6 +92,15 @@ pub fn setup_hud(commands: &mut Commands, camera_entity: Entity) {
                 },
                 TextColor(Color::WHITE),
                 TriangleCountText,
+            ));
+            parent.spawn((
+                Text::new("Chunks: 0"),
+                TextFont {
+                    font_size: 16.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                ChunkCountText,
             ));
         });
 
@@ -167,5 +181,15 @@ pub fn update_triangle_count(
 
     if let Ok(mut text) = text_query.single_mut() {
         **text = display_text;
+    }
+}
+
+/// 每帧更新 HUD 中显示的已加载区块数量。
+pub fn update_chunk_count(
+    loaded: Res<LoadedChunks>,
+    mut text_query: Query<&mut Text, With<ChunkCountText>>,
+) {
+    if let Ok(mut text) = text_query.single_mut() {
+        **text = format!("Chunks: {}", loaded.entities.len());
     }
 }

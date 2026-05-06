@@ -10,7 +10,7 @@ use crate::chunk_dirty::ChunkAtlasHandle;
 use crate::resource_pack::ResourcePackManager;
 
 pub const RENDER_DISTANCE: i32 = 2;
-pub const UNLOAD_DISTANCE: i32 = RENDER_DISTANCE + 1;
+pub const UNLOAD_DISTANCE: i32 = RENDER_DISTANCE;
 
 #[derive(Resource, Default)]
 pub struct LoadedChunks {

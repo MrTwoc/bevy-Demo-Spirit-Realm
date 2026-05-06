@@ -58,6 +58,7 @@ fn main() {
                 block_interaction::block_interaction_system,
                 hud::update_hud,
                 hud::update_triangle_count,
+                hud::update_chunk_count,
             ),
         )
         .run();
