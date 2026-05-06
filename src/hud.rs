@@ -50,7 +50,10 @@ pub fn spawn_crosshair(commands: &mut Commands, camera_entity: Entity) {
 }
 
 #[derive(Component)]
-pub(crate) struct HudText;
+pub(crate) struct PositionText;
+
+#[derive(Component)]
+pub(crate) struct TargetText;
 
 #[derive(Component)]
 pub(crate) struct TriangleCountText;
@@ -68,6 +71,7 @@ pub fn setup_hud(commands: &mut Commands, camera_entity: Entity) {
                 position_type: PositionType::Absolute,
                 left: Val::Px(12.0),
                 top: Val::Px(12.0),
+                flex_direction: FlexDirection::Column,
                 padding: UiRect::new(Val::Px(8.0), Val::Px(8.0), Val::Px(6.0), Val::Px(6.0)),
                 ..default()
             },
@@ -82,7 +86,16 @@ pub fn setup_hud(commands: &mut Commands, camera_entity: Entity) {
                     ..default()
                 },
                 TextColor(Color::WHITE),
-                HudText,
+                PositionText,
+            ));
+            parent.spawn((
+                Text::new("Target: --"),
+                TextFont {
+                    font_size: 16.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                TargetText,
             ));
             parent.spawn((
                 Text::new("Triangle Count: --"),
@@ -110,24 +123,24 @@ pub fn setup_hud(commands: &mut Commands, camera_entity: Entity) {
 
 pub fn update_hud(
     query: Query<&Transform, With<Camera3d>>,
-    mut text_query: Query<&mut Text, With<HudText>>,
+    mut pos_query: Query<&mut Text, (With<PositionText>, Without<TargetText>)>,
+    mut target_query: Query<&mut Text, (With<TargetText>, Without<PositionText>)>,
     hit_state: Res<crate::raycast::RayHitState>,
 ) {
     let Ok(transform) = query.single() else {
         return;
     };
-    let Ok(mut text) = text_query.single_mut() else {
-        return;
-    };
 
     let p = transform.translation;
-    if let Some(pos) = &hit_state.hit_pos {
-        **text = format!(
-            "xyz: {:.1}, {:.1}, {:.1}\nTarget: ({}, {}, {})",
-            p.x, p.y, p.z, pos.x, pos.y, pos.z
-        );
-    } else {
+    if let Ok(mut text) = pos_query.single_mut() {
         **text = format!("xyz: {:.1}, {:.1}, {:.1}", p.x, p.y, p.z);
+    }
+    if let Ok(mut text) = target_query.single_mut() {
+        if let Some(pos) = &hit_state.hit_pos {
+            **text = format!("Target: ({}, {}, {})", pos.x, pos.y, pos.z);
+        } else {
+            **text = "Target: --".to_string();
+        }
     }
 }
 

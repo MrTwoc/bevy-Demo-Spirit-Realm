@@ -31,7 +31,7 @@ impl Default for FpsOverlayConfig {
             text_color: Color::WHITE,
             background_color: Color::BLACK.with_alpha(0.6),
             left_offset: 12.0,
-            top_offset: 60.0,
+            top_offset: 120.0,
         }
     }
 }
