@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 bevy = { version = "0.18.1", features = ["dynamic_linking", "bevy_gizmos"] }
 image = "0.25"
+noise = "0.9"
 
 [profile.dev]
 opt-level = 1

@@ -44,7 +44,11 @@ impl Default for LoadedChunks {
     }
 }
 
-pub const Y_LAYERS: i32 = 1;
+/// Y 轴加载半径：玩家上下各加载多少层 Y 区块。
+/// 每层 32 格，±4 层 = ±128 米，覆盖玩家周围主要交互高度。
+pub const Y_LOAD_RADIUS: i32 = 4;
+/// Y 轴卸载半径：超过此距离的 Y 区块会被卸载。比加载半径大 1 避免边界闪烁。
+pub const Y_UNLOAD_RADIUS: i32 = Y_LOAD_RADIUS + 1;
 
 /// 存储 Atlas 纹理句柄的资源
 #[derive(Resource)]
@@ -112,7 +116,8 @@ pub fn setup_world(
     });
 
     use crate::camera::CameraController;
-    let camera_transform = Transform::from_xyz(16.0, 20.0, 16.0);
+    // 摄像机初始位置在地形上方（地形基准高度 16 + 振幅 32 = 最高约 48，留余量）
+    let camera_transform = Transform::from_xyz(16.0, 64.0, 16.0);
     let camera_entity = commands
         .spawn((
             Camera3d::default(),
@@ -172,7 +177,7 @@ pub fn chunk_loader_system(
         }
 
         let mut chunk = Chunk::filled(0);
-        fill_terrain(&mut chunk);
+        fill_terrain(&mut chunk, &coord);
 
         // 收集邻居数据用于跨区块面剔除
         let neighbors = collect_neighbors(coord, &*loaded);
@@ -206,10 +211,13 @@ pub fn chunk_loader_system(
 
 /// 重建加载队列：收集渲染距离内所有未加载的区块坐标，按与玩家的距离排序。
 ///
+/// Y 轴使用流式加载：基于玩家当前 Y 坐标动态计算加载范围，
+/// 只加载玩家上下 `Y_LOAD_RADIUS` 层的区块，支持 ±10240 格地形探索。
+///
 /// 近处的区块排在前面，优先加载。
 fn rebuild_load_queue(center: ChunkCoord, loaded: &mut LoadedChunks) {
-    let cy_min = -Y_LAYERS / 2;
-    let cy_max = Y_LAYERS / 2;
+    let cy_min = center.cy - Y_LOAD_RADIUS;
+    let cy_max = center.cy + Y_LOAD_RADIUS;
 
     let mut missing: Vec<ChunkCoord> = Vec::new();
 
@@ -232,17 +240,21 @@ fn rebuild_load_queue(center: ChunkCoord, loaded: &mut LoadedChunks) {
         }
     }
 
-    // 按与玩家的曼哈顿距离排序（近处优先）
+    // 按与玩家的三维距离排序（近处优先）
     missing.sort_by_key(|coord| {
         let dx = (coord.cx - center.cx).abs();
+        let dy = (coord.cy - center.cy).abs();
         let dz = (coord.cz - center.cz).abs();
-        dx * dx + dz * dz
+        dx * dx + dy * dy + dz * dz
     });
 
     loaded.load_queue = missing;
 }
 
-/// 卸载超出 UNLOAD_DISTANCE 的区块实体。
+/// 卸载超出加载范围的区块实体。
+///
+/// XZ 方向：超出 `UNLOAD_DISTANCE` 的区块卸载。
+/// Y 方向：超出 `Y_UNLOAD_RADIUS` 的区块卸载。
 fn unload_distant_chunks(center: ChunkCoord, commands: &mut Commands, loaded: &mut LoadedChunks) {
     let to_remove: Vec<ChunkCoord> = loaded
         .entries
@@ -250,7 +262,8 @@ fn unload_distant_chunks(center: ChunkCoord, commands: &mut Commands, loaded: &m
         .filter(|coord| {
             let dx = (coord.cx - center.cx).abs();
             let dz = (coord.cz - center.cz).abs();
-            dx > UNLOAD_DISTANCE || dz > UNLOAD_DISTANCE
+            let dy = (coord.cy - center.cy).abs();
+            dx > UNLOAD_DISTANCE || dz > UNLOAD_DISTANCE || dy > Y_UNLOAD_RADIUS
         })
         .copied()
         .collect();

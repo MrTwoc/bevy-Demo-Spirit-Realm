@@ -5,6 +5,7 @@
 use bevy::{
     asset::RenderAssetUsages, mesh::Indices, prelude::*, render::render_resource::PrimitiveTopology,
 };
+use noise::{Fbm, MultiFractal, NoiseFn, Simplex};
 use std::hash::Hash;
 
 use crate::chunk_dirty::ChunkMeshHandle;
@@ -338,20 +339,70 @@ fn face_quad(
 // Terrain helpers
 // --------------------------------------------------------------------------
 
-/// Fills a chunk with terrain layers.
-pub fn fill_terrain(chunk: &mut Chunk) {
+/// 地形基准高度（世界 Y 坐标）。噪声在此基础上起伏。
+const TERRAIN_BASE_HEIGHT: i32 = 16;
+/// 地形起伏幅度。噪声值 ±1.0 映射为 ±此值。
+const TERRAIN_AMPLITUDE: f64 = 32.0;
+/// 噪声种子，保证所有区块生成一致的地形。
+const TERRAIN_SEED: u32 = 42;
+/// 泥土层厚度（地表以下多少格是泥土，再往下是石头）。
+const DIRT_LAYER_DEPTH: i32 = 4;
+/// 沙滩高度阈值：地表高度低于此值时使用沙子而非草地。
+const SAND_HEIGHT_THRESHOLD: i32 = TERRAIN_BASE_HEIGHT - 8;
+
+/// 创建全局 FBM 噪声生成器（Simplex + 分形布朗运动）。
+fn create_terrain_noise() -> Fbm<Simplex> {
+    Fbm::<Simplex>::new(TERRAIN_SEED)
+        .set_octaves(4)
+        .set_frequency(0.005)
+        .set_lacunarity(2.0)
+        .set_persistence(0.5)
+}
+
+/// Fills a chunk with noise-generated terrain.
+///
+/// 使用 Simplex FBM 噪声在 XZ 平面采样，生成有起伏的自然地形。
+/// 地形分层：地表=草地/沙子，浅层=泥土，深层=石头。
+///
+/// `coord` 是区块的世界坐标，用于将局部 (x, z) 转换为世界坐标进行噪声采样，
+/// 保证区块边界处地形连续。
+pub fn fill_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
+    let noise = create_terrain_noise();
+
     for z in 0..CHUNK_SIZE {
         for x in 0..CHUNK_SIZE {
-            chunk.set(x, 0, z, 2); // stone
-            chunk.set(x, 1, z, 3); // dirt
+            // 将局部坐标转换为世界坐标
+            let world_x = coord.cx as f64 * CHUNK_SIZE as f64 + x as f64;
+            let world_z = coord.cz as f64 * CHUNK_SIZE as f64 + z as f64;
 
-            let hash = (x as u32).wrapping_mul(73856093) ^ (z as u32).wrapping_mul(19349663);
-            let top_block = match hash % 3 {
-                0 => 1, // grass
-                1 => 4, // sand
-                _ => 2, // stone
-            };
-            chunk.set(x, 2, z, top_block);
+            // 采样 FBM 噪声，输出范围约 -1.0 ~ +1.0
+            let noise_val = noise.get([world_x, world_z]);
+            // 映射为地表高度
+            let surface_height = TERRAIN_BASE_HEIGHT + (noise_val * TERRAIN_AMPLITUDE) as i32;
+
+            for y in 0..CHUNK_SIZE {
+                // 将局部 Y 转换为世界 Y
+                let world_y = coord.cy as i32 * CHUNK_SIZE as i32 + y as i32;
+
+                if world_y > surface_height {
+                    continue; // 空气，不需要设置（默认就是 0）
+                }
+
+                let block_id = if world_y == surface_height {
+                    // 地表层：根据高度选择草地或沙子
+                    if surface_height < SAND_HEIGHT_THRESHOLD {
+                        4 // sand
+                    } else {
+                        1 // grass
+                    }
+                } else if world_y > surface_height - DIRT_LAYER_DEPTH {
+                    3 // dirt
+                } else {
+                    2 // stone
+                };
+
+                chunk.set(x, y, z, block_id);
+            }
         }
     }
 }
