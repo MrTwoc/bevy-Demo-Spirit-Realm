@@ -403,6 +403,9 @@ pub fn spawn_chunk_entity(
                 material: mat_handle,
             },
             Transform::from_translation(position),
+            // Visibility::default() 会启用 Bevy 的视锥剔除（Frustum Culling）。
+            // Bevy 的 calculate_bounds 系统会自动为 Mesh3d 实体计算 Aabb，
+            // 从而启用视锥剔除和遮挡剔除。
             Visibility::default(),
         ))
         .id()
