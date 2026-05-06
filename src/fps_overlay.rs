@@ -50,40 +50,52 @@ pub struct FpsOverlayPlugin;
 impl Plugin for FpsOverlayPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<FpsOverlayConfig>()
-            .add_systems(Startup, spawn_fps_overlay)
+            .add_systems(PostStartup, spawn_fps_overlay)
             .add_systems(Update, (update_fps_text, toggle_fps_overlay));
     }
 }
 
 /// 生成 FPS 叠加层 UI
-fn spawn_fps_overlay(mut commands: Commands, config: Res<FpsOverlayConfig>) {
+fn spawn_fps_overlay(
+    mut commands: Commands,
+    config: Res<FpsOverlayConfig>,
+    camera_query: Query<Entity, With<Camera3d>>,
+) {
     if !config.enabled {
         return;
     }
 
-    commands
-        .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                left: Val::Px(config.left_offset),
-                top: Val::Px(config.top_offset),
-                padding: UiRect::new(Val::Px(8.0), Val::Px(8.0), Val::Px(4.0), Val::Px(4.0)),
+    // 获取相机实体以设置 UiTargetCamera
+    let camera_entity = camera_query.single().ok();
+
+    let mut entity_cmds = commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(config.left_offset),
+            top: Val::Px(config.top_offset),
+            padding: UiRect::new(Val::Px(8.0), Val::Px(8.0), Val::Px(4.0), Val::Px(4.0)),
+            ..default()
+        },
+        BackgroundColor(config.background_color),
+        FpsOverlayRoot,
+    ));
+
+    // 如果找到相机实体，绑定到该相机的 UI 层
+    if let Some(cam) = camera_entity {
+        entity_cmds.insert(UiTargetCamera(cam));
+    }
+
+    entity_cmds.with_children(|parent| {
+        parent.spawn((
+            Text::new("FPS: --"),
+            TextFont {
+                font_size: config.font_size,
                 ..default()
             },
-            BackgroundColor(config.background_color),
-            FpsOverlayRoot,
-        ))
-        .with_children(|parent| {
-            parent.spawn((
-                Text::new("FPS: --"),
-                TextFont {
-                    font_size: config.font_size,
-                    ..default()
-                },
-                TextColor(config.text_color),
-                FpsText,
-            ));
-        });
+            TextColor(config.text_color),
+            FpsText,
+        ));
+    });
 }
 
 /// 更新 FPS 文本内容
