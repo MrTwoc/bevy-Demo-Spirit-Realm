@@ -2,10 +2,10 @@ mod camera;
 mod chunk;
 mod chunk_dirty;
 mod chunk_wire_frame;
-mod cube;
 mod fps_overlay;
 mod hud;
 mod input;
+mod lighting;
 mod raycast;
 
 use crate::chunk_wire_frame::WireframeMode;
@@ -32,7 +32,7 @@ fn main() {
         .add_systems(
             Startup,
             (
-                cube::setup_lighting,
+                lighting::setup_lighting,
                 chunk::spawn_initial_chunks,
                 hud::spawn_crosshair,
             ),
