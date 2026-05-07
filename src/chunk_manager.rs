@@ -5,6 +5,7 @@
 //! 使用LRU（最近最少使用）缓存淘汰机制，优先卸载最久未访问且距离较远的区块。
 
 use bevy::asset::RenderAssetUsages;
+use bevy::image::ImageSampler;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use std::collections::HashMap;
@@ -117,13 +118,15 @@ pub fn setup_world(
             height: atlas.size.1,
             depth_or_array_layers: 1,
         };
-        let bevy_image = Image::new(
+        let mut bevy_image = Image::new(
             size,
             TextureDimension::D2,
             atlas.image.clone(),
             TextureFormat::Rgba8UnormSrgb,
             RenderAssetUsages::default(),
         );
+        // 使用最近邻采样（Nearest），保持 16x16 像素纹理锐利，避免模糊
+        bevy_image.sampler = ImageSampler::nearest();
         images.add(bevy_image)
     } else {
         images.add(Image::default())
