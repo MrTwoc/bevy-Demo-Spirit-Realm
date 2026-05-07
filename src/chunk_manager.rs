@@ -25,12 +25,19 @@ pub const MAX_CACHED_CHUNKS: usize = 2000;
 /// LRU淘汰时每帧最多卸载的区块数。避免一帧内卸载太多导致卡顿。
 pub const LRU_UNLOADS_PER_FRAME: usize = 16;
 
-/// 已加载区块的条目，包含实体、区块数据和LRU访问信息
+/// 已加载区块的条目，包含实体、区块数据、GPU 资源句柄和 LRU 访问信息。
+///
+/// `mesh_handle` 和 `material_handle` 用于在卸载/淘汰时正确释放 GPU 资源，
+/// 避免 `Assets<Mesh>` 和 `Assets<StandardMaterial>` 中的资源泄漏（P0 #1 修复）。
 pub struct ChunkEntry {
     pub entity: Entity,
     pub data: Chunk,
     /// 最后访问时间戳（帧号），用于LRU淘汰
     pub last_accessed: u64,
+    /// 区块网格的 Mesh 句柄，卸载时需要从 Assets 中移除
+    pub mesh_handle: Handle<Mesh>,
+    /// 区块材质的 StandardMaterial 句柄，卸载时需要从 Assets 中移除
+    pub material_handle: Handle<StandardMaterial>,
 }
 
 #[derive(Resource)]
@@ -178,11 +185,23 @@ pub fn chunk_loader_system(
     if loaded.last_player_chunk != Some(player_chunk) {
         loaded.last_player_chunk = Some(player_chunk);
         rebuild_load_queue(player_chunk, &mut *loaded);
-        unload_distant_chunks(player_chunk, &mut commands, &mut *loaded);
+        unload_distant_chunks(
+            player_chunk,
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            &mut *loaded,
+        );
     }
 
     // LRU 淘汰：当缓存区块数超过上限时，淘汰最久未访问且距离较远的区块
-    lru_evict(player_chunk, &mut commands, &mut *loaded);
+    lru_evict(
+        player_chunk,
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        &mut *loaded,
+    );
 
     // 分帧加载：每帧最多加载 CHUNKS_PER_FRAME 个区块
     let drain_count = CHUNKS_PER_FRAME.min(loaded.load_queue.len());
@@ -201,7 +220,7 @@ pub fn chunk_loader_system(
         let neighbors = collect_neighbors(coord, &*loaded);
 
         let position = coord.to_world_origin();
-        let entity = spawn_chunk_entity(
+        let (entity, mesh_handle, material_handle) = spawn_chunk_entity(
             &mut commands,
             &mut materials,
             &mut meshes,
@@ -223,6 +242,8 @@ pub fn chunk_loader_system(
                 entity,
                 data: chunk,
                 last_accessed: current_frame,
+                mesh_handle,
+                material_handle,
             },
         );
     }
@@ -274,7 +295,15 @@ fn rebuild_load_queue(center: ChunkCoord, loaded: &mut LoadedChunks) {
 ///
 /// XZ 方向：超出 `UNLOAD_DISTANCE` 的区块卸载。
 /// Y 方向：超出 `Y_UNLOAD_RADIUS` 的区块卸载。
-fn unload_distant_chunks(center: ChunkCoord, commands: &mut Commands, loaded: &mut LoadedChunks) {
+///
+/// 卸载前会清理关联的 GPU 资源（mesh + material），避免内存泄漏。
+fn unload_distant_chunks(
+    center: ChunkCoord,
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    loaded: &mut LoadedChunks,
+) {
     let to_remove: Vec<ChunkCoord> = loaded
         .entries
         .keys()
@@ -289,6 +318,9 @@ fn unload_distant_chunks(center: ChunkCoord, commands: &mut Commands, loaded: &m
 
     for coord in to_remove {
         if let Some(entry) = loaded.entries.remove(&coord) {
+            // 清理 GPU 资源后再销毁实体
+            meshes.remove(&entry.mesh_handle);
+            materials.remove(&entry.material_handle);
             commands.entity(entry.entity).despawn();
         }
     }
@@ -300,7 +332,15 @@ fn unload_distant_chunks(center: ChunkCoord, commands: &mut Commands, loaded: &m
 /// 1. 只淘汰渲染距离外的区块（近景区块不淘汰）
 /// 2. 按 (last_accessed, distance) 排序，最久未访问 + 最远的优先淘汰
 /// 3. 每帧最多淘汰 `LRU_UNLOADS_PER_FRAME` 个区块，避免卡顿
-fn lru_evict(center: ChunkCoord, commands: &mut Commands, loaded: &mut LoadedChunks) {
+///
+/// 淘汰前会清理关联的 GPU 资源（mesh + material），避免内存泄漏。
+fn lru_evict(
+    center: ChunkCoord,
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    loaded: &mut LoadedChunks,
+) {
     if loaded.entries.len() <= MAX_CACHED_CHUNKS {
         return;
     }
@@ -335,6 +375,9 @@ fn lru_evict(center: ChunkCoord, commands: &mut Commands, loaded: &mut LoadedChu
     for i in 0..evict_count {
         let coord = candidates[i].0;
         if let Some(entry) = loaded.entries.remove(&coord) {
+            // 清理 GPU 资源后再销毁实体
+            meshes.remove(&entry.mesh_handle);
+            materials.remove(&entry.material_handle);
             commands.entity(entry.entity).despawn();
         }
     }

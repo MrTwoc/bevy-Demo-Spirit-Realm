@@ -566,8 +566,13 @@ pub fn fill_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
 
 /// Spawns a single chunk entity with texture-mapped mesh.
 ///
-/// 返回 Entity ID。mesh 和 material handle 通过 `ChunkMeshHandle` 组件存储在实体上，
-/// 用于后续重建时移除旧资源，避免 GPU 内存泄漏。
+/// 返回 `(Entity, Handle<Mesh>, Handle<StandardMaterial>)`。
+/// - `Entity` 用于 ECS 组件插入
+/// - `Handle<Mesh>` 和 `Handle<StandardMaterial>` 用于在卸载/淘汰时从 `Assets` 中移除，
+///   避免 GPU 内存泄漏（P0 #1 修复）
+///
+/// mesh 和 material handle 同时通过 `ChunkMeshHandle` 组件存储在实体上，
+/// 用于脏块重建时移除旧资源。
 pub fn spawn_chunk_entity(
     commands: &mut Commands,
     materials: &mut Assets<StandardMaterial>,
@@ -577,7 +582,7 @@ pub fn spawn_chunk_entity(
     resource_pack: &ResourcePackManager,
     atlas_texture: &Handle<Image>,
     neighbors: &ChunkNeighbors,
-) -> Entity {
+) -> (Entity, Handle<Mesh>, Handle<StandardMaterial>) {
     let (positions, uvs, normals, indices) = generate_chunk_mesh(&chunk, resource_pack, neighbors);
 
     let mesh_handle = meshes.add(
@@ -597,14 +602,14 @@ pub fn spawn_chunk_entity(
         ..default()
     });
 
-    commands
+    let entity = commands
         .spawn((
             chunk,
             Mesh3d(mesh_handle.clone()),
             MeshMaterial3d(mat_handle.clone()),
             ChunkMeshHandle {
-                mesh: mesh_handle,
-                material: mat_handle,
+                mesh: mesh_handle.clone(),
+                material: mat_handle.clone(),
             },
             Transform::from_translation(position),
             // Visibility::default() 会启用 Bevy 的视锥剔除（Frustum Culling）。
@@ -612,7 +617,9 @@ pub fn spawn_chunk_entity(
             // 从而启用视锥剔除和遮挡剔除。
             Visibility::default(),
         ))
-        .id()
+        .id();
+
+    (entity, mesh_handle, mat_handle)
 }
 
 // ---------------------------------------------------------------------------
