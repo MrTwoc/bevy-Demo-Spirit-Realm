@@ -163,7 +163,7 @@ impl ResourcePackManager {
     /// | 1 | 草方块 | grass_block_top | dirt | grass_block_side | 顶部/侧面/底部分别使用不同材质 |
     /// | 2 | 石头 | stone | stone | stone | 使用 stone.png |
     /// | 3 | 泥土 | dirt | dirt | dirt | - |
-    /// | 4 | 沙子 | glass | glass | glass | 临时用 glass 替代 |
+    /// | 4 | 沙子 | sand | sand | sand | 使用 sand.png |
     ///
     /// # Minecraft 对应实现
     ///
@@ -227,10 +227,9 @@ impl ResourcePackManager {
         // ─────────────────────────────────────────────────────────────
         // TODO: 替换为 JSON 映射
         // Minecraft 对应: sand.png
-        // 当前临时方案: 全部使用 glass.png
-        map.insert((4, "top".to_string()), "glass".to_string());
-        map.insert((4, "bottom".to_string()), "glass".to_string());
-        map.insert((4, "side".to_string()), "glass".to_string());
+        map.insert((4, "top".to_string()), "sand".to_string());
+        map.insert((4, "bottom".to_string()), "sand".to_string());
+        map.insert((4, "side".to_string()), "sand".to_string());
 
         map
     }
