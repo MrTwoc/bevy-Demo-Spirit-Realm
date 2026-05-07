@@ -8,6 +8,7 @@ mod fps_overlay;
 mod hud;
 mod input;
 mod lighting;
+mod perf_logger;
 mod raycast;
 mod resource_pack;
 
@@ -32,6 +33,7 @@ fn main() {
             FrameTimeDiagnosticsPlugin::default(),
             RenderDiagnosticsPlugin,
             fps_overlay::FpsOverlayPlugin,
+            perf_logger::PerfLoggerPlugin,
             resource_pack::ResourcePackPlugin,
         ))
         .add_systems(
