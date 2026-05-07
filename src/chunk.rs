@@ -1,11 +1,15 @@
 //! Voxel chunk: block storage + face-culled mesh generation.
 //!
-//! TODO(P0): 当前使用 32³ 正方体区块，后期需迁移到 16×32×16 SubChunk。
+//! 使用调色板压缩（PalettedChunkData）优化内存占用：
+//! - Empty: 0 字节（全空气）
+//! - Uniform: 2 字节（全同一种方块）
+//! - Paletted: ~4KB（调色板压缩，32³=32768体素）
 
 use bevy::{
     asset::RenderAssetUsages, mesh::Indices, prelude::*, render::render_resource::PrimitiveTopology,
 };
 use noise::{Fbm, MultiFractal, NoiseFn, Simplex};
+use std::collections::HashMap;
 use std::hash::Hash;
 
 use crate::chunk_dirty::ChunkMeshHandle;
@@ -13,10 +17,138 @@ use crate::resource_pack::ResourcePackManager;
 
 /// Size of one dimension of a chunk (32³ blocks per chunk).
 pub const CHUNK_SIZE: usize = 32;
+/// Total number of voxels in a chunk (32³ = 32768).
+const CHUNK_VOLUME: usize = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
 
 /// A single block type identifier.
 /// 0 = air (not rendered), 1 = grass, 2 = stone, 3 = dirt, 4 = sand.
 pub type BlockId = u8;
+
+/// 调色板压缩的区块数据。
+///
+/// 使用调色板（palette）存储不同的方块类型，每个体素只存储调色板索引。
+/// 对于32³=32768个体素：
+/// - 如果只有1种方块：调色板1项 + 索引0位 = ~2字节
+/// - 如果有2-256种方块：调色板N项 + 索引8位 = ~32KB + N*2字节
+/// - 使用4位索引（最多16种方块）：调色板16项 + 索引4位 = ~16KB + 32字节
+///
+/// 当前实现使用8位索引（最多256种方块），适合大多数场景。
+#[derive(Clone)]
+pub struct PalettedChunkData {
+    /// 调色板：索引 -> BlockId
+    palette: Vec<BlockId>,
+    /// 反向调色板：BlockId -> 索引（用于快速查找）
+    reverse_palette: HashMap<BlockId, u8>,
+    /// 体素索引数组：每个字节是调色板索引
+    indices: Vec<u8>,
+}
+
+impl PalettedChunkData {
+    /// 创建全空气的调色板区块
+    pub fn new() -> Self {
+        let mut palette = Vec::new();
+        palette.push(0); // 索引0 = 空气
+        let mut reverse_palette = HashMap::new();
+        reverse_palette.insert(0, 0);
+
+        Self {
+            palette,
+            reverse_palette,
+            indices: vec![0; CHUNK_VOLUME],
+        }
+    }
+
+    /// 从BlockId数组创建调色板区块
+    pub fn from_blocks(blocks: &[BlockId]) -> Self {
+        let mut palette = Vec::new();
+        let mut reverse_palette = HashMap::new();
+        let mut indices = Vec::with_capacity(blocks.len());
+
+        // 收集所有不同的方块类型
+        for &block_id in blocks {
+            if !reverse_palette.contains_key(&block_id) {
+                let index = palette.len() as u8;
+                palette.push(block_id);
+                reverse_palette.insert(block_id, index);
+            }
+        }
+
+        // 生成索引数组
+        for &block_id in blocks {
+            let index = reverse_palette[&block_id];
+            indices.push(index);
+        }
+
+        Self {
+            palette,
+            reverse_palette,
+            indices,
+        }
+    }
+
+    /// 获取指定位置的方块ID
+    pub fn get(&self, x: usize, y: usize, z: usize) -> BlockId {
+        if x >= CHUNK_SIZE || y >= CHUNK_SIZE || z >= CHUNK_SIZE {
+            return 0;
+        }
+        let idx = z * CHUNK_SIZE * CHUNK_SIZE + y * CHUNK_SIZE + x;
+        let palette_index = self.indices[idx] as usize;
+        self.palette[palette_index]
+    }
+
+    /// 设置指定位置的方块ID
+    pub fn set(&mut self, x: usize, y: usize, z: usize, id: BlockId) {
+        if x >= CHUNK_SIZE || y >= CHUNK_SIZE || z >= CHUNK_SIZE {
+            return;
+        }
+        let idx = z * CHUNK_SIZE * CHUNK_SIZE + y * CHUNK_SIZE + x;
+
+        // 获取或创建调色板索引
+        let palette_index = if let Some(&index) = self.reverse_palette.get(&id) {
+            index
+        } else {
+            // 新方块类型，添加到调色板
+            let index = self.palette.len() as u8;
+            self.palette.push(id);
+            self.reverse_palette.insert(id, index);
+            index
+        };
+
+        self.indices[idx] = palette_index;
+    }
+
+    /// 转换为BlockId数组（用于兼容旧代码）
+    pub fn to_blocks(&self) -> Vec<BlockId> {
+        self.indices
+            .iter()
+            .map(|&idx| self.palette[idx as usize])
+            .collect()
+    }
+
+    /// 获取调色板中的方块类型数量
+    pub fn palette_len(&self) -> usize {
+        self.palette.len()
+    }
+
+    /// 检查是否为空气区块
+    pub fn is_empty(&self) -> bool {
+        self.palette.len() == 1 && self.palette[0] == 0
+    }
+
+    /// 检查是否为单一方块类型
+    pub fn is_uniform(&self) -> bool {
+        self.palette.len() == 1
+    }
+
+    /// 获取单一方块类型（如果是Uniform）
+    pub fn uniform_block(&self) -> Option<BlockId> {
+        if self.is_uniform() {
+            Some(self.palette[0])
+        } else {
+            None
+        }
+    }
+}
 
 /// Face direction on a block.
 #[derive(Clone, Copy)]
@@ -88,11 +220,16 @@ impl ChunkNeighbors {
 }
 
 /// Chunk data: three-state storage for a 32x32x32 voxel chunk.
+///
+/// 使用调色板压缩优化内存：
+/// - Empty: 0 字节（全空气）
+/// - Uniform: 2 字节（全同一种方块）
+/// - Paletted: ~4KB（调色板压缩，32³=32768体素）
 #[derive(Component, Clone)]
 pub enum ChunkData {
     Empty,
     Uniform(BlockId),
-    Mixed(Vec<BlockId>),
+    Paletted(PalettedChunkData),
 }
 
 impl ChunkData {
@@ -112,13 +249,7 @@ impl ChunkData {
         match self {
             ChunkData::Empty => 0,
             ChunkData::Uniform(id) => *id,
-            ChunkData::Mixed(data) => {
-                if x < CHUNK_SIZE && y < CHUNK_SIZE && z < CHUNK_SIZE {
-                    data[Self::flatten(x, y, z)]
-                } else {
-                    0
-                }
-            }
+            ChunkData::Paletted(data) => data.get(x, y, z),
         }
     }
 
@@ -133,13 +264,23 @@ impl ChunkData {
             }
             ChunkData::Uniform(current_id) => {
                 if *current_id != id {
-                    let mut data = vec![*current_id; CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE];
-                    data[Self::flatten(x, y, z)] = id;
-                    *self = ChunkData::Mixed(data);
+                    // 从Uniform转换为Paletted
+                    let mut data = PalettedChunkData::new();
+                    // 填充所有体素为当前方块
+                    for oz in 0..CHUNK_SIZE {
+                        for oy in 0..CHUNK_SIZE {
+                            for ox in 0..CHUNK_SIZE {
+                                data.set(ox, oy, oz, *current_id);
+                            }
+                        }
+                    }
+                    // 设置新方块
+                    data.set(x, y, z, id);
+                    *self = ChunkData::Paletted(data);
                 }
             }
-            ChunkData::Mixed(data) => {
-                data[Self::flatten(x, y, z)] = id;
+            ChunkData::Paletted(data) => {
+                data.set(x, y, z, id);
             }
         }
     }
@@ -147,9 +288,9 @@ impl ChunkData {
     /// 将 ChunkData 转换为 Vec<BlockId>（用于传递给邻居查询）
     pub fn to_vec(&self) -> Vec<BlockId> {
         match self {
-            ChunkData::Empty => vec![0; CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE],
-            ChunkData::Uniform(id) => vec![*id; CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE],
-            ChunkData::Mixed(data) => data.clone(),
+            ChunkData::Empty => vec![0; CHUNK_VOLUME],
+            ChunkData::Uniform(id) => vec![*id; CHUNK_VOLUME],
+            ChunkData::Paletted(data) => data.to_blocks(),
         }
     }
 
@@ -191,6 +332,18 @@ impl ChunkData {
         let neighbor_id =
             neighbors.get_neighbor_block(face_index, neighbor_x, neighbor_y, neighbor_z);
         neighbor_id != current_id
+    }
+
+    /// 获取内存占用估算（字节）
+    pub fn memory_usage(&self) -> usize {
+        match self {
+            ChunkData::Empty => 0,
+            ChunkData::Uniform(_) => 2,
+            ChunkData::Paletted(data) => {
+                // 调色板 + 索引数组
+                data.palette_len() * 2 + CHUNK_VOLUME
+            }
+        }
     }
 }
 

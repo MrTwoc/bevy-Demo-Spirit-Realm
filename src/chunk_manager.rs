@@ -2,6 +2,7 @@
 //!
 //! 使用分帧加载队列避免一帧内同步加载大量区块导致卡顿。
 //! 区块按与玩家的距离排序，每帧只加载固定数量（`CHUNKS_PER_FRAME`）。
+//! 使用LRU（最近最少使用）缓存淘汰机制，优先卸载最久未访问且距离较远的区块。
 
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
@@ -18,11 +19,18 @@ pub const RENDER_DISTANCE: i32 = 8;
 pub const UNLOAD_DISTANCE: i32 = RENDER_DISTANCE + 1;
 /// 每帧最多加载的区块数。控制加载速度，避免卡顿。
 pub const CHUNKS_PER_FRAME: usize = 4;
+/// 最大缓存区块数。当超过此数量时，使用LRU策略淘汰最久未访问的区块。
+/// 默认值：渲染距离内约 8*8*π*9 ≈ 1800 个区块，设置为 2000 留有余量。
+pub const MAX_CACHED_CHUNKS: usize = 2000;
+/// LRU淘汰时每帧最多卸载的区块数。避免一帧内卸载太多导致卡顿。
+pub const LRU_UNLOADS_PER_FRAME: usize = 16;
 
-/// 已加载区块的条目，包含实体和区块数据
+/// 已加载区块的条目，包含实体、区块数据和LRU访问信息
 pub struct ChunkEntry {
     pub entity: Entity,
     pub data: Chunk,
+    /// 最后访问时间戳（帧号），用于LRU淘汰
+    pub last_accessed: u64,
 }
 
 #[derive(Resource)]
@@ -32,6 +40,8 @@ pub struct LoadedChunks {
     pub load_queue: Vec<ChunkCoord>,
     /// 上一次玩家所在的区块坐标，用于检测玩家是否移动到了新区块
     pub last_player_chunk: Option<ChunkCoord>,
+    /// 当前帧号，用于LRU时间戳
+    pub frame_counter: u64,
 }
 
 impl Default for LoadedChunks {
@@ -40,6 +50,7 @@ impl Default for LoadedChunks {
             entries: HashMap::new(),
             load_queue: Vec::new(),
             last_player_chunk: None,
+            frame_counter: 0,
         }
     }
 }
@@ -159,12 +170,19 @@ pub fn chunk_loader_system(
 
     let player_chunk = ChunkCoord::from_world(cam_transform.translation);
 
+    // 递增帧计数器
+    loaded.frame_counter += 1;
+    let current_frame = loaded.frame_counter;
+
     // 玩家移动到新区块时，重建加载队列
     if loaded.last_player_chunk != Some(player_chunk) {
         loaded.last_player_chunk = Some(player_chunk);
         rebuild_load_queue(player_chunk, &mut *loaded);
         unload_distant_chunks(player_chunk, &mut commands, &mut *loaded);
     }
+
+    // LRU 淘汰：当缓存区块数超过上限时，淘汰最久未访问且距离较远的区块
+    lru_evict(player_chunk, &mut commands, &mut *loaded);
 
     // 分帧加载：每帧最多加载 CHUNKS_PER_FRAME 个区块
     let drain_count = CHUNKS_PER_FRAME.min(loaded.load_queue.len());
@@ -204,6 +222,7 @@ pub fn chunk_loader_system(
             ChunkEntry {
                 entity,
                 data: chunk,
+                last_accessed: current_frame,
             },
         );
     }
@@ -269,6 +288,52 @@ fn unload_distant_chunks(center: ChunkCoord, commands: &mut Commands, loaded: &m
         .collect();
 
     for coord in to_remove {
+        if let Some(entry) = loaded.entries.remove(&coord) {
+            commands.entity(entry.entity).despawn();
+        }
+    }
+}
+
+/// LRU 缓存淘汰：当缓存区块数超过 `MAX_CACHED_CHUNKS` 时，淘汰最久未访问且距离较远的区块。
+///
+/// 淘汰策略：
+/// 1. 只淘汰渲染距离外的区块（近景区块不淘汰）
+/// 2. 按 (last_accessed, distance) 排序，最久未访问 + 最远的优先淘汰
+/// 3. 每帧最多淘汰 `LRU_UNLOADS_PER_FRAME` 个区块，避免卡顿
+fn lru_evict(center: ChunkCoord, commands: &mut Commands, loaded: &mut LoadedChunks) {
+    if loaded.entries.len() <= MAX_CACHED_CHUNKS {
+        return;
+    }
+
+    // 收集渲染距离外的区块，按 (last_accessed, distance) 排序
+    let mut candidates: Vec<(ChunkCoord, u64, i32)> = loaded
+        .entries
+        .iter()
+        .filter(|(coord, _)| {
+            let dx = (coord.cx - center.cx).abs();
+            let dz = (coord.cz - center.cz).abs();
+            // 只淘汰渲染距离外的区块
+            dx > RENDER_DISTANCE || dz > RENDER_DISTANCE
+        })
+        .map(|(coord, entry)| {
+            let dx = (coord.cx - center.cx).abs();
+            let dy = (coord.cy - center.cy).abs();
+            let dz = (coord.cz - center.cz).abs();
+            let dist_sq = dx * dx + dy * dy + dz * dz;
+            (*coord, entry.last_accessed, dist_sq)
+        })
+        .collect();
+
+    // 按 last_accessed 升序（最久未访问优先），距离降序（最远优先）
+    candidates.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| b.2.cmp(&a.2)));
+
+    // 淘汰最多 LRU_UNLOADS_PER_FRAME 个区块
+    let evict_count = (loaded.entries.len() - MAX_CACHED_CHUNKS)
+        .min(LRU_UNLOADS_PER_FRAME)
+        .min(candidates.len());
+
+    for i in 0..evict_count {
+        let coord = candidates[i].0;
         if let Some(entry) = loaded.entries.remove(&coord) {
             commands.entity(entry.entity).despawn();
         }

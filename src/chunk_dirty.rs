@@ -37,7 +37,7 @@ pub fn is_air_chunk(chunk: &ChunkData) -> bool {
     match chunk {
         ChunkData::Empty => true,
         ChunkData::Uniform(id) => *id == 0,
-        ChunkData::Mixed(_) => false,
+        ChunkData::Paletted(data) => data.is_empty(),
     }
 }
 
