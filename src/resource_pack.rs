@@ -59,6 +59,22 @@ use bevy::prelude::*;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+/// 需要生物群系着色（biome tint）的纹理列表
+///
+/// Minecraft 中某些纹理是灰度的，需要乘以生物群系颜色才能显示正确颜色。
+/// 这里使用默认平原生物群系的草方块颜色 (0x8AB656)。
+///
+/// # 着色原理
+///
+/// 原始像素 RGB × 着色颜色 RGB = 最终颜色
+/// 例如：灰度值 (0.8, 0.8, 0.8) × (0.54, 0.71, 0.34) = (0.43, 0.57, 0.27)
+const BIOME_TINTED_TEXTURES: &[(&str, [f32; 3])] = &[
+    // grass_block_top: 平原生物群系默认草色 #8AB656
+    ("grass_block_top", [0.54, 0.71, 0.34]),
+    // grass_block_side: 侧面也需要轻微着色
+    ("grass_block_side", [0.75, 0.88, 0.60]),
+];
+
 /// 材质包根目录（所有材质包存放于此）
 pub const RESOURCE_PACKS_DIR: &str = "assets/resourcepacks";
 
@@ -144,8 +160,8 @@ impl ResourcePackManager {
     ///
     /// | block_id | 方块名称 | top | bottom | side | 备注 |
     /// |----------|----------|-----|--------|------|------|
-    /// | 1 | 草方块 | dirt | dirt | dirt | 临时用 dirt 替代 |
-    /// | 2 | 石头 | obsidian | obsidian | obsidian | 临时用 obsidian 替代 |
+    /// | 1 | 草方块 | grass_block_top | dirt | grass_block_side | 顶部/侧面/底部分别使用不同材质 |
+    /// | 2 | 石头 | stone | stone | stone | 使用 stone.png |
     /// | 3 | 泥土 | dirt | dirt | dirt | - |
     /// | 4 | 沙子 | glass | glass | glass | 临时用 glass 替代 |
     ///
@@ -180,20 +196,22 @@ impl ResourcePackManager {
         // ─────────────────────────────────────────────────────────────
         // TODO: 替换为 JSON 映射
         // Minecraft 对应: grass_top.png / grass_side.png / dirt.png
-        // 当前临时方案: 全部使用 dirt.png
-        map.insert((1, "top".to_string()), "dirt".to_string());
+        // top 使用 grass_block_side（草方块顶部材质）
+        // side 使用 grass_block_side（草方块侧面材质）
+        // bottom 使用 dirt（草方块底部为泥土）
+        map.insert((1, "top".to_string()), "grass_block_top".to_string());
         map.insert((1, "bottom".to_string()), "dirt".to_string());
-        map.insert((1, "side".to_string()), "dirt".to_string());
+        map.insert((1, "side".to_string()), "grass_block_side".to_string());
 
         // ─────────────────────────────────────────────────────────────
         // block_id = 2: 石头 (Stone)
         // ─────────────────────────────────────────────────────────────
         // TODO: 替换为 JSON 映射
         // Minecraft 对应: stone.png
-        // 当前临时方案: 全部使用 obsidian.png
-        map.insert((2, "top".to_string()), "obsidian".to_string());
-        map.insert((2, "bottom".to_string()), "obsidian".to_string());
-        map.insert((2, "side".to_string()), "obsidian".to_string());
+        // 使用 stone.png 材质
+        map.insert((2, "top".to_string()), "stone".to_string());
+        map.insert((2, "bottom".to_string()), "stone".to_string());
+        map.insert((2, "side".to_string()), "stone".to_string());
 
         // ─────────────────────────────────────────────────────────────
         // block_id = 3: 泥土 (Dirt)
@@ -359,8 +377,20 @@ impl ResourcePackManager {
                     .to_string();
 
                 match load_png_as_rgba(&path) {
-                    Ok((pixels, width, height)) => {
-                        info!("  Loaded texture: {} ({}x{})", filename, width, height);
+                    Ok((mut pixels, width, height)) => {
+                        // 对需要生物群系着色的纹理应用颜色变换
+                        if let Some(tint) = BIOME_TINTED_TEXTURES
+                            .iter()
+                            .find(|(name, _)| *name == filename)
+                        {
+                            apply_biome_tint(&mut pixels, tint.1);
+                            info!(
+                                "  Loaded texture: {} ({}x{}) [biome tinted]",
+                                filename, width, height
+                            );
+                        } else {
+                            info!("  Loaded texture: {} ({}x{})", filename, width, height);
+                        }
                         self.texture_cache.insert(filename, (pixels, width, height));
                         *count += 1;
                     }
@@ -506,6 +536,19 @@ fn save_rgba_as_png(path: &Path, pixels: &[u8], width: u32, height: u32) -> Resu
     encoder
         .write_image(pixels, width, height, image::ExtendedColorType::Rgba8)
         .map_err(|e| e.to_string())
+}
+
+/// 对 RGBA 像素数据应用生物群系着色
+///
+/// 将每个像素的 RGB 通道乘以着色颜色，模拟 Minecraft 的 biome tint 效果。
+/// Alpha 通道保持不变。
+fn apply_biome_tint(pixels: &mut [u8], tint: [f32; 3]) {
+    for chunk in pixels.chunks_exact_mut(4) {
+        chunk[0] = (chunk[0] as f32 * tint[0]).clamp(0.0, 255.0) as u8;
+        chunk[1] = (chunk[1] as f32 * tint[1]).clamp(0.0, 255.0) as u8;
+        chunk[2] = (chunk[2] as f32 * tint[2]).clamp(0.0, 255.0) as u8;
+        // chunk[3] (alpha) 保持不变
+    }
 }
 
 /// 创建默认纹理像素数据
