@@ -10,7 +10,7 @@
 **项目整体架构蓝图**。整合了空间管理、LOD、剔除系统、渲染管线的完整方案。
 - 目标规模：Y轴 ±20480、XZ无限、128+ 区块可视距离
 - 整体架构：动态近景（0~16区块）+ 静态远景（17~128+区块）
-- SubChunk 分层：16×32×16，HashMap 稀疏索引
+- SubChunk 分层：32³（当前），HashMap 稀疏索引
 - 渲染管线：Frustum Culling + Hi-Z Occlusion + MultiDrawIndirect
 
 ### [体素管理方案.md](./体素管理方案.md)
