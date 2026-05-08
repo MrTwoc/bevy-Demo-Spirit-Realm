@@ -19,12 +19,12 @@ pub const RENDER_DISTANCE: i32 = 8;
 /// 卸载距离：超过此距离的区块会被卸载。比渲染距离大 1 避免边界闪烁。
 pub const UNLOAD_DISTANCE: i32 = RENDER_DISTANCE + 1;
 /// 每帧最多加载的区块数。控制加载速度，避免卡顿。
-pub const CHUNKS_PER_FRAME: usize = 4;
+pub const CHUNKS_PER_FRAME: usize = 2;
 /// 最大缓存区块数。当超过此数量时，使用LRU策略淘汰最久未访问的区块。
 /// 默认值：渲染距离内约 8*8*π*9 ≈ 1800 个区块，设置为 2000 留有余量。
 pub const MAX_CACHED_CHUNKS: usize = 2000;
 /// LRU淘汰时每帧最多卸载的区块数。避免一帧内卸载太多导致卡顿。
-pub const LRU_UNLOADS_PER_FRAME: usize = 16;
+pub const LRU_UNLOADS_PER_FRAME: usize = 8;
 
 /// 已加载区块的条目，包含实体、区块数据、GPU 资源句柄和 LRU 访问信息。
 ///

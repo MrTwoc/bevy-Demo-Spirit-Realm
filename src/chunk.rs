@@ -478,11 +478,12 @@ fn face_quad(
     };
 
     let (u_min, u_max, v_min, v_max) = uv;
+    let eps = 0.016; // UV 收缩量，防止双线性插值边缘渗色（约 0.5px / 32px）
     let face_uvs = [
-        [u_min, v_max],
-        [u_max, v_max],
-        [u_max, v_min],
-        [u_min, v_min],
+        [u_min + eps, v_max - eps],
+        [u_max - eps, v_max - eps],
+        [u_max - eps, v_min + eps],
+        [u_min + eps, v_min + eps],
     ];
 
     (verts, face_uvs, normal)
