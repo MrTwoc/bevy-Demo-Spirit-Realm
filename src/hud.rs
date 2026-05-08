@@ -61,6 +61,9 @@ pub(crate) struct TriangleCountText;
 #[derive(Component)]
 pub(crate) struct ChunkCountText;
 
+#[derive(Component)]
+pub(crate) struct ViewDistanceText;
+
 #[derive(Resource)]
 pub struct TriangleUpdateTimer(pub Timer);
 
@@ -114,6 +117,15 @@ pub fn setup_hud(commands: &mut Commands, camera_entity: Entity) {
                 },
                 TextColor(Color::WHITE),
                 ChunkCountText,
+            ));
+            parent.spawn((
+                Text::new("view-distance: 0"),
+                TextFont {
+                    font_size: 16.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                ViewDistanceText,
             ));
         });
 
@@ -204,5 +216,12 @@ pub fn update_chunk_count(
 ) {
     if let Ok(mut text) = text_query.single_mut() {
         **text = format!("Chunks: {}", loaded.entries.len());
+    }
+}
+
+/// 每帧更新 HUD 中显示的视距。
+pub fn update_view_distance(mut text_query: Query<&mut Text, With<ViewDistanceText>>) {
+    if let Ok(mut text) = text_query.single_mut() {
+        **text = format!("view-distance: {}", crate::chunk_manager::RENDER_DISTANCE);
     }
 }

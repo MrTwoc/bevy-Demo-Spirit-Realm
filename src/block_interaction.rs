@@ -5,11 +5,14 @@
 //! When a block at a chunk boundary is modified, neighbor chunks are also
 //! marked dirty so their meshes can re-evaluate cross-boundary face culling.
 
+use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
 
 use crate::chunk::{BlockId, BlockPos, CHUNK_SIZE, ChunkCoord, ChunkData, world_to_chunk};
-use crate::chunk_dirty::{ChunkCoordComponent, mark_chunk_dirty};
-use crate::chunk_manager::LoadedChunks;
+use crate::chunk_dirty::{
+    ChunkAtlasHandle, ChunkCoordComponent, ChunkMeshHandle, DirtyChunk, mark_chunk_dirty,
+};
+use crate::chunk_manager::{AtlasTextureHandle, LoadedChunks};
 use crate::raycast::RayHitState;
 
 /// The block type to place when right-clicking.
@@ -79,6 +82,9 @@ pub fn block_interaction_system(
     mut commands: Commands,
     mut loaded: ResMut<LoadedChunks>,
     cursor_options: Single<&bevy::window::CursorOptions>,
+    atlas_handle: Res<AtlasTextureHandle>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     // Only interact when cursor is locked (player is in game mode)
     if cursor_options.grab_mode != bevy::window::CursorGrabMode::Locked {
@@ -103,6 +109,9 @@ pub fn block_interaction_system(
                 &mut chunk_query,
                 &mut commands,
                 &mut loaded,
+                &atlas_handle,
+                &mut meshes,
+                &mut materials,
             );
         }
     }
@@ -155,12 +164,17 @@ fn destroy_block(
 }
 
 /// Places a block adjacent to the hit face.
+///
+/// 如果目标区块不存在（被全空气跳过优化跳过），会按需创建该区块实体。
 fn place_block(
     block_pos: &BlockPos,
     normal: &IVec3,
     chunk_query: &mut Query<(Entity, &mut ChunkData, &Transform, &ChunkCoordComponent)>,
     commands: &mut Commands,
     loaded: &mut LoadedChunks,
+    atlas_handle: &AtlasTextureHandle,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
 ) {
     // The new block goes at hit_pos + normal
     let place_pos = BlockPos {
@@ -180,11 +194,13 @@ fn place_block(
     // 先收集需要标记脏的邻居坐标
     let neighbor_coords = boundary_neighbor_coords(coord, (lx, ly, lz));
 
-    // Find the chunk entity that contains the placement position
+    // 查找目标区块实体
+    let mut found = false;
     for (entity, mut chunk_data, _transform, coord_comp) in chunk_query.iter_mut() {
         if coord_comp.0 != coord {
             continue;
         }
+        found = true;
 
         // Only place if the target position is currently air
         if chunk_data.get(lx, ly, lz) == 0 {
@@ -198,6 +214,54 @@ fn place_block(
             mark_chunk_dirty(commands, entity);
         }
         break;
+    }
+
+    // 目标区块不存在（被全空气跳过优化跳过），按需创建
+    if !found {
+        let mut chunk = ChunkData::filled(0);
+        chunk.set(lx, ly, lz, PLACE_BLOCK_ID);
+
+        let position = coord.to_world_origin();
+
+        // 创建占位 Mesh 和 Material
+        let placeholder_mesh = meshes.add(Mesh::new(
+            bevy::render::render_resource::PrimitiveTopology::TriangleList,
+            RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+        ));
+        let placeholder_mat = materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            base_color_texture: Some(atlas_handle.handle.clone()),
+            ..default()
+        });
+
+        let entity = commands
+            .spawn((
+                chunk.clone(),
+                Transform::from_translation(position),
+                Visibility::default(),
+                ChunkAtlasHandle(atlas_handle.handle.clone()),
+                ChunkCoordComponent(coord),
+                Mesh3d(placeholder_mesh.clone()),
+                MeshMaterial3d(placeholder_mat.clone()),
+                ChunkMeshHandle {
+                    mesh: placeholder_mesh.clone(),
+                    material: placeholder_mat.clone(),
+                },
+                DirtyChunk,
+            ))
+            .id();
+
+        // 注册到 LoadedChunks
+        loaded.entries.insert(
+            coord,
+            crate::chunk_manager::ChunkEntry {
+                entity,
+                data: chunk,
+                last_accessed: loaded.frame_counter,
+                mesh_handle: placeholder_mesh,
+                material_handle: placeholder_mat,
+            },
+        );
     }
 
     // 在 mut 遍历结束后，标记边界邻居为脏

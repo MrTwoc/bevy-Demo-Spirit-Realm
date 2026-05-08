@@ -65,5 +65,6 @@ fn main() {
             ),
         )
         .add_systems(Update, hud::update_chunk_count)
+        .add_systems(Update, hud::update_view_distance)
         .run();
 }

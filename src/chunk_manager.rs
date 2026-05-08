@@ -19,7 +19,7 @@ use std::collections::HashMap;
 
 use crate::async_mesh::{AsyncMeshManager, MESH_UPLOADS_PER_FRAME, MeshTask, UvLookupTable};
 use crate::chunk::{Chunk, ChunkCoord, ChunkNeighbors, fill_terrain};
-use crate::chunk_dirty::{ChunkAtlasHandle, ChunkCoordComponent, ChunkMeshHandle};
+use crate::chunk_dirty::{ChunkAtlasHandle, ChunkCoordComponent, ChunkMeshHandle, is_air_chunk};
 use crate::resource_pack::ResourcePackManager;
 
 /// 渲染距离（区块数）。增大此值可以看到更远的世界，但需要更多区块加载。
@@ -304,6 +304,11 @@ pub fn chunk_loader_system(
         // 生成地形数据（轻量操作，保留在主线程）
         let mut chunk = Chunk::filled(0);
         fill_terrain(&mut chunk, &coord);
+
+        // 跳过全空气区块（高于地形或低于地形的区块），不创建实体和提交任务
+        if is_air_chunk(&chunk) {
+            continue;
+        }
 
         // 收集邻居数据用于跨区块面剔除
         let neighbors = collect_neighbors(coord, &*loaded);
