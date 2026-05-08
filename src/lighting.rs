@@ -9,7 +9,7 @@ pub fn setup_lighting(mut commands: Commands) {
         DirectionalLight {
             color: Color::srgb(1.0, 0.95, 0.8), // warm sunlight tint
             illuminance: 5000.0,                // bright enough for outdoor scene
-            shadows_enabled: true,
+            shadows_enabled: false,
             ..default()
         },
         Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -0.8, 0.4, 0.0)),
