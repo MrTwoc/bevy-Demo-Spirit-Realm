@@ -20,6 +20,7 @@ use bevy::{
 
 fn main() {
     App::new()
+        .insert_resource(ClearColor(Color::srgb(0.53, 0.81, 0.92))) // 天空蓝背景
         .init_resource::<WireframeMode>()
         .init_resource::<raycast::RayHitState>()
         .init_resource::<chunk_manager::LoadedChunks>()
