@@ -1,12 +1,15 @@
 //! Dirty-flag driven chunk mesh rebuild system.
+//!
+//! 脏块重建现在通过异步网格生成系统处理：
+//! 1. 检测到 DirtyChunk 组件时，提交异步网格生成任务
+//! 2. 移除 DirtyChunk 组件（标记为已提交）
+//! 3. 异步结果由 `chunk_loader_system` 统一收集并上传 GPU
 
-use bevy::{
-    asset::RenderAssetUsages, mesh::Indices, prelude::*, render::render_resource::PrimitiveTopology,
-};
+use bevy::prelude::*;
 
-use crate::chunk::{ChunkCoord, ChunkData, ChunkNeighbors, generate_chunk_mesh};
+use crate::async_mesh::{AsyncMeshManager, MeshTask, UvLookupTable};
+use crate::chunk::{ChunkCoord, ChunkData, ChunkNeighbors};
 use crate::chunk_manager::LoadedChunks;
-use crate::resource_pack::ResourcePackManager;
 
 /// Tag component: chunk needs mesh rebuild.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
@@ -70,76 +73,43 @@ fn collect_neighbors(coord: ChunkCoord, loaded: &LoadedChunks) -> ChunkNeighbors
     neighbors
 }
 
-/// Rebuilds dirty chunk meshes using the resource pack for UV coordinates.
+/// 检测脏块并提交异步网格重建任务。
 ///
-/// 重建时会移除旧的 mesh 和 material 资源，避免 GPU 内存泄漏。
+/// 工作流程：
+/// 1. 遍历所有带 `DirtyChunk` 组件的实体
+/// 2. 收集邻居数据，提交异步网格生成任务
+/// 3. 移除 `DirtyChunk` 组件（结果将由 `chunk_loader_system` 统一处理）
+///
+/// 异步结果通过 `chunk_loader_system` 中的 `AsyncMeshManager::collect_results()` 收集，
+/// 并根据 `ChunkCoord` 匹配到正确的实体进行 GPU 上传。
 pub fn rebuild_dirty_chunks(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    resource_pack: Res<ResourcePackManager>,
+    async_mesh: Res<AsyncMeshManager>,
+    uv_table: Res<UvLookupTable>,
     loaded: Res<LoadedChunks>,
-    dirty_chunks: Query<
-        (
-            Entity,
-            &ChunkData,
-            &Transform,
-            &ChunkAtlasHandle,
-            Option<&ChunkCoordComponent>,
-            Option<&ChunkMeshHandle>,
-        ),
-        With<DirtyChunk>,
-    >,
+    dirty_chunks: Query<(Entity, &ChunkData, &ChunkCoordComponent), With<DirtyChunk>>,
 ) {
-    for (entity, chunk_data, _transform, atlas_handle, coord_comp, old_handles) in &dirty_chunks {
+    for (entity, chunk_data, coord_comp) in &dirty_chunks {
+        let coord = coord_comp.0;
+
+        // 全空气区块直接移除脏标记，不需要网格
         if is_air_chunk(chunk_data) {
             commands.entity(entity).remove::<DirtyChunk>();
             continue;
         }
 
-        // 移除旧的 mesh 和 material 资源，避免内存泄漏
-        if let Some(old) = old_handles {
-            meshes.remove(&old.mesh);
-            materials.remove(&old.material);
-        }
-
         // 收集邻居数据用于跨区块面剔除
-        let neighbors = if let Some(coord_comp) = coord_comp {
-            collect_neighbors(coord_comp.0, &loaded)
-        } else {
-            ChunkNeighbors::empty()
-        };
+        let neighbors = collect_neighbors(coord, &loaded);
 
-        let (positions, uvs, normals, indices) =
-            generate_chunk_mesh(chunk_data, &resource_pack, &neighbors);
-
-        let mesh_handle = meshes.add(
-            Mesh::new(
-                PrimitiveTopology::TriangleList,
-                RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
-            )
-            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
-            .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
-            .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-            .with_inserted_indices(Indices::U32(indices)),
-        );
-
-        let mat_handle = materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            base_color_texture: Some(atlas_handle.0.clone()),
-            ..default()
+        // 提交异步网格生成任务
+        async_mesh.submit_task(MeshTask::Generate {
+            coord,
+            data: chunk_data.clone(),
+            neighbors,
+            uv_table: uv_table.clone(),
         });
 
-        commands
-            .entity(entity)
-            .insert((
-                Mesh3d(mesh_handle.clone()),
-                MeshMaterial3d(mat_handle.clone()),
-                ChunkMeshHandle {
-                    mesh: mesh_handle,
-                    material: mat_handle,
-                },
-            ))
-            .remove::<DirtyChunk>();
+        // 移除脏标记（异步结果将由 chunk_loader_system 处理）
+        commands.entity(entity).remove::<DirtyChunk>();
     }
 }

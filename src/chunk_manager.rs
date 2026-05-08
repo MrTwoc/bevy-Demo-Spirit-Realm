@@ -3,6 +3,13 @@
 //! 使用分帧加载队列避免一帧内同步加载大量区块导致卡顿。
 //! 区块按与玩家的距离排序，每帧只加载固定数量（`CHUNKS_PER_FRAME`）。
 //! 使用LRU（最近最少使用）缓存淘汰机制，优先卸载最久未访问且距离较远的区块。
+//!
+//! # 异步网格生成
+//!
+//! 网格生成已迁移到后台工作线程（Phase 0 优化），消除加载尖峰：
+//! - 主线程：地形生成 + 任务提交（轻量）
+//! - 工作线程：网格计算（CPU 密集）
+//! - 主线程：结果收集 + GPU 上传（分帧控制）
 
 use bevy::asset::RenderAssetUsages;
 use bevy::image::ImageSampler;
@@ -10,16 +17,17 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use std::collections::HashMap;
 
-use crate::chunk::{Chunk, ChunkCoord, ChunkNeighbors, fill_terrain, spawn_chunk_entity};
-use crate::chunk_dirty::{ChunkAtlasHandle, ChunkCoordComponent};
+use crate::async_mesh::{AsyncMeshManager, MESH_UPLOADS_PER_FRAME, MeshTask, UvLookupTable};
+use crate::chunk::{Chunk, ChunkCoord, ChunkNeighbors, fill_terrain};
+use crate::chunk_dirty::{ChunkAtlasHandle, ChunkCoordComponent, ChunkMeshHandle};
 use crate::resource_pack::ResourcePackManager;
 
 /// 渲染距离（区块数）。增大此值可以看到更远的世界，但需要更多区块加载。
 pub const RENDER_DISTANCE: i32 = 8;
 /// 卸载距离：超过此距离的区块会被卸载。比渲染距离大 1 避免边界闪烁。
 pub const UNLOAD_DISTANCE: i32 = RENDER_DISTANCE + 1;
-/// 每帧最多加载的区块数。控制加载速度，避免卡顿。
-pub const CHUNKS_PER_FRAME: usize = 2;
+/// 每帧最多提交到异步队列的区块数。控制任务提交速率，避免工作线程积压。
+pub const CHUNKS_PER_FRAME: usize = 4;
 /// 最大缓存区块数。当超过此数量时，使用LRU策略淘汰最久未访问的区块。
 /// 默认值：渲染距离内约 8*8*π*9 ≈ 1800 个区块，设置为 2000 留有余量。
 pub const MAX_CACHED_CHUNKS: usize = 2000;
@@ -105,6 +113,8 @@ fn collect_neighbors(coord: ChunkCoord, loaded: &LoadedChunks) -> ChunkNeighbors
 }
 
 /// Startup system: spawns the camera and HUD, then queues initial chunks for loading.
+///
+/// 同时初始化异步网格管理器和 UV 查找表资源。
 pub fn setup_world(
     mut commands: Commands,
     mut loaded: ResMut<LoadedChunks>,
@@ -136,6 +146,14 @@ pub fn setup_world(
         handle: atlas_handle.clone(),
     });
 
+    // 初始化异步网格管理器
+    let worker_count = crate::async_mesh::default_worker_count();
+    commands.insert_resource(AsyncMeshManager::new(worker_count));
+
+    // 预构建 UV 查找表（一次性构建，所有任务共享）
+    let uv_table = UvLookupTable::from_resource_pack(&resource_pack);
+    commands.insert_resource(uv_table);
+
     use crate::camera::CameraController;
     // 摄像机初始位置在地形上方（地形基准高度 16 + 振幅 32 = 最高约 48，留余量）
     let camera_transform = Transform::from_xyz(16.0, 64.0, 16.0);
@@ -159,20 +177,22 @@ pub fn setup_world(
     rebuild_load_queue(center, &mut *loaded);
 }
 
-/// 每帧系统：分帧加载区块 + 卸载远处区块。
+/// 每帧系统：异步网格结果收集 + 分帧任务提交 + 卸载远处区块。
 ///
-/// 工作流程：
-/// 1. 检测玩家是否移动到新区块，若是则重建加载队列（按距离排序）
-/// 2. 从队列头部取出最多 `CHUNKS_PER_FRAME` 个区块进行加载
-/// 3. 卸载超出 `UNLOAD_DISTANCE` 的区块
+/// 工作流程（Phase 0 异步网格生成）：
+/// 1. 收集异步网格生成结果，上传到 GPU（每帧最多 `MESH_UPLOADS_PER_FRAME` 个）
+/// 2. 检测玩家是否移动到新区块，若是则重建加载队列
+/// 3. 从队列头部取出最多 `CHUNKS_PER_FRAME` 个区块，生成地形数据并提交异步任务
+/// 4. 卸载超出 `UNLOAD_DISTANCE` 的区块（同时取消其异步任务）
 pub fn chunk_loader_system(
     mut commands: Commands,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut loaded: ResMut<LoadedChunks>,
+    async_mesh: Res<AsyncMeshManager>,
     camera_query: Query<&Transform, With<Camera3d>>,
-    resource_pack: Res<ResourcePackManager>,
     atlas_handle: Res<AtlasTextureHandle>,
+    uv_table: Res<UvLookupTable>,
 ) {
     let Ok(cam_transform) = camera_query.single() else {
         return;
@@ -184,7 +204,65 @@ pub fn chunk_loader_system(
     loaded.frame_counter += 1;
     let current_frame = loaded.frame_counter;
 
-    // 玩家移动到新区块时，重建加载队列
+    // ── 步骤 1：收集异步结果并上传 GPU ──────────────────────────
+    let results = async_mesh.collect_results(MESH_UPLOADS_PER_FRAME);
+    for result in results {
+        // 检查区块是否已被卸载（在异步生成期间被卸载）
+        if !loaded.entries.contains_key(&result.coord) {
+            // 区块已卸载，丢弃结果
+            continue;
+        }
+
+        // 如果网格为空（全空气区块），跳过 GPU 上传
+        if result.positions.is_empty() {
+            continue;
+        }
+
+        // 获取已存在的实体和旧资源句柄
+        if let Some(entry) = loaded.entries.get(&result.coord) {
+            let entity = entry.entity;
+
+            // 移除旧的 mesh 和 material 资源
+            meshes.remove(&entry.mesh_handle);
+            materials.remove(&entry.material_handle);
+
+            // 创建新 Mesh 并上传到 GPU
+            let mesh_handle = meshes.add(
+                Mesh::new(
+                    bevy::render::render_resource::PrimitiveTopology::TriangleList,
+                    RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+                )
+                .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, result.positions)
+                .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, result.uvs)
+                .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, result.normals)
+                .with_inserted_indices(bevy::mesh::Indices::U32(result.indices)),
+            );
+
+            let mat_handle = materials.add(StandardMaterial {
+                base_color: Color::WHITE,
+                base_color_texture: Some(atlas_handle.handle.clone()),
+                ..default()
+            });
+
+            // 更新实体组件
+            commands.entity(entity).insert((
+                Mesh3d(mesh_handle.clone()),
+                MeshMaterial3d(mat_handle.clone()),
+                ChunkMeshHandle {
+                    mesh: mesh_handle.clone(),
+                    material: mat_handle.clone(),
+                },
+            ));
+
+            // 更新 LoadedChunks 中的句柄
+            if let Some(entry) = loaded.entries.get_mut(&result.coord) {
+                entry.mesh_handle = mesh_handle;
+                entry.material_handle = mat_handle;
+            }
+        }
+    }
+
+    // ── 步骤 2：检测玩家移动，重建加载队列 ──────────────────────
     if loaded.last_player_chunk != Some(player_chunk) {
         loaded.last_player_chunk = Some(player_chunk);
         rebuild_load_queue(player_chunk, &mut *loaded);
@@ -194,6 +272,7 @@ pub fn chunk_loader_system(
             &mut meshes,
             &mut materials,
             &mut *loaded,
+            &*async_mesh,
         );
     }
 
@@ -204,9 +283,10 @@ pub fn chunk_loader_system(
         &mut meshes,
         &mut materials,
         &mut *loaded,
+        &*async_mesh,
     );
 
-    // 分帧加载：每帧最多加载 CHUNKS_PER_FRAME 个区块
+    // ── 步骤 3：分帧提交异步任务 ────────────────────────────────
     let drain_count = CHUNKS_PER_FRAME.min(loaded.load_queue.len());
     let chunks_to_load: Vec<ChunkCoord> = loaded.load_queue.drain(..drain_count).collect();
 
@@ -216,39 +296,69 @@ pub fn chunk_loader_system(
             continue;
         }
 
+        // 跳过已在异步队列中的
+        if async_mesh.is_pending(&coord) {
+            continue;
+        }
+
+        // 生成地形数据（轻量操作，保留在主线程）
         let mut chunk = Chunk::filled(0);
         fill_terrain(&mut chunk, &coord);
 
         // 收集邻居数据用于跨区块面剔除
         let neighbors = collect_neighbors(coord, &*loaded);
 
+        // 创建实体（无 Mesh，等待异步结果）
         let position = coord.to_world_origin();
-        let (entity, mesh_handle, material_handle) = spawn_chunk_entity(
-            &mut commands,
-            &mut materials,
-            &mut meshes,
-            chunk.clone(),
-            position,
-            &resource_pack,
-            &atlas_handle.handle,
-            &neighbors,
-        );
+        let entity = commands
+            .spawn((
+                chunk.clone(),
+                Transform::from_translation(position),
+                Visibility::default(),
+                ChunkAtlasHandle(atlas_handle.handle.clone()),
+                ChunkCoordComponent(coord),
+            ))
+            .id();
+
+        // 创建占位 Mesh 和 Material（避免后续更新时找不到句柄）
+        let placeholder_mesh = meshes.add(Mesh::new(
+            bevy::render::render_resource::PrimitiveTopology::TriangleList,
+            RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+        ));
+        let placeholder_mat = materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            base_color_texture: Some(atlas_handle.handle.clone()),
+            ..default()
+        });
 
         commands.entity(entity).insert((
-            ChunkAtlasHandle(atlas_handle.handle.clone()),
-            ChunkCoordComponent(coord),
+            Mesh3d(placeholder_mesh.clone()),
+            MeshMaterial3d(placeholder_mat.clone()),
+            ChunkMeshHandle {
+                mesh: placeholder_mesh.clone(),
+                material: placeholder_mat.clone(),
+            },
         ));
 
+        // 注册到 LoadedChunks
         loaded.entries.insert(
             coord,
             ChunkEntry {
                 entity,
-                data: chunk,
+                data: chunk.clone(),
                 last_accessed: current_frame,
-                mesh_handle,
-                material_handle,
+                mesh_handle: placeholder_mesh,
+                material_handle: placeholder_mat,
             },
         );
+
+        // 提交异步网格生成任务
+        async_mesh.submit_task(MeshTask::Generate {
+            coord,
+            data: chunk,
+            neighbors,
+            uv_table: uv_table.clone(),
+        });
     }
 }
 
@@ -300,12 +410,14 @@ fn rebuild_load_queue(center: ChunkCoord, loaded: &mut LoadedChunks) {
 /// Y 方向：超出 `Y_UNLOAD_RADIUS` 的区块卸载。
 ///
 /// 卸载前会清理关联的 GPU 资源（mesh + material），避免内存泄漏。
+/// 同时取消该区块的异步网格生成任务。
 fn unload_distant_chunks(
     center: ChunkCoord,
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
     loaded: &mut LoadedChunks,
+    async_mesh: &AsyncMeshManager,
 ) {
     let to_remove: Vec<ChunkCoord> = loaded
         .entries
@@ -320,6 +432,9 @@ fn unload_distant_chunks(
         .collect();
 
     for coord in to_remove {
+        // 取消异步任务（如果还在处理中）
+        async_mesh.cancel_task(coord);
+
         if let Some(entry) = loaded.entries.remove(&coord) {
             // 清理 GPU 资源后再销毁实体
             meshes.remove(&entry.mesh_handle);
@@ -337,12 +452,14 @@ fn unload_distant_chunks(
 /// 3. 每帧最多淘汰 `LRU_UNLOADS_PER_FRAME` 个区块，避免卡顿
 ///
 /// 淘汰前会清理关联的 GPU 资源（mesh + material），避免内存泄漏。
+/// 同时取消该区块的异步网格生成任务。
 fn lru_evict(
     center: ChunkCoord,
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
     loaded: &mut LoadedChunks,
+    async_mesh: &AsyncMeshManager,
 ) {
     if loaded.entries.len() <= MAX_CACHED_CHUNKS {
         return;
@@ -377,6 +494,10 @@ fn lru_evict(
 
     for i in 0..evict_count {
         let coord = candidates[i].0;
+
+        // 取消异步任务（如果还在处理中）
+        async_mesh.cancel_task(coord);
+
         if let Some(entry) = loaded.entries.remove(&coord) {
             // 清理 GPU 资源后再销毁实体
             meshes.remove(&entry.mesh_handle);

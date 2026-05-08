@@ -1,3 +1,4 @@
+mod async_mesh;
 mod block_interaction;
 mod camera;
 mod chunk;
@@ -61,8 +62,8 @@ fn main() {
                 block_interaction::block_interaction_system,
                 hud::update_hud,
                 hud::update_triangle_count,
-                hud::update_chunk_count,
             ),
         )
+        .add_systems(Update, hud::update_chunk_count)
         .run();
 }
