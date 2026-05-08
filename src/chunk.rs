@@ -366,10 +366,16 @@ pub fn generate_chunk_mesh(
     resource_pack: &ResourcePackManager,
     neighbors: &ChunkNeighbors,
 ) -> (Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<[f32; 3]>, Vec<u32>) {
-    let mut positions = Vec::new();
-    let mut uvs = Vec::new();
-    let mut normals = Vec::new();
-    let mut indices = Vec::new();
+    // 全空气区块提前返回，避免进入三重循环
+    if matches!(chunk, ChunkData::Empty | ChunkData::Uniform(0)) {
+        return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    }
+
+    // 预分配容量：32³ 区块最多约 12000 个可见面，每面 4 顶点
+    let mut positions = Vec::with_capacity(48000);
+    let mut uvs = Vec::with_capacity(48000);
+    let mut normals = Vec::with_capacity(48000);
+    let mut indices = Vec::with_capacity(72000);
 
     for z in 0..CHUNK_SIZE {
         for y in 0..CHUNK_SIZE {
