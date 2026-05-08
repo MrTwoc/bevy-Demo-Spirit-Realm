@@ -102,14 +102,19 @@ pub fn rebuild_dirty_chunks(
         let neighbors = collect_neighbors(coord, &loaded);
 
         // 提交异步网格生成任务
-        async_mesh.submit_task(MeshTask::Generate {
+        let submitted = async_mesh.submit_task(MeshTask::Generate {
             coord,
             data: chunk_data.clone(),
             neighbors,
             uv_table: uv_table.clone(),
         });
 
-        // 移除脏标记（异步结果将由 chunk_loader_system 处理）
-        commands.entity(entity).remove::<DirtyChunk>();
+        // 只有任务成功提交时才移除脏标记；
+        // 如果因该区块已有异步任务在处理中而被跳过，保留脏标记以便下帧重试。
+        // 这修复了快速放置+破坏方块时的"幽灵方块"竞态条件：
+        // 旧任务完成后会上传过时网格，但脏标记保留确保会再次重建。
+        if submitted {
+            commands.entity(entity).remove::<DirtyChunk>();
+        }
     }
 }

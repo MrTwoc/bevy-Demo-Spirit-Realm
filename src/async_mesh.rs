@@ -229,18 +229,22 @@ impl AsyncMeshManager {
     /// 提交网格生成任务。
     ///
     /// 将区块数据打包发送到工作线程。如果区块已在处理中（pending），跳过。
-    pub fn submit_task(&self, task: MeshTask) {
+    ///
+    /// 返回 `true` 表示任务已成功提交，`false` 表示因已在处理中而被跳过。
+    /// 调用方可根据返回值决定是否保留脏标记以便下帧重试。
+    pub fn submit_task(&self, task: MeshTask) -> bool {
         if let MeshTask::Generate { coord, .. } = &task {
             let mut pending = self.pending_tasks.lock().unwrap();
             // 如果已经在处理中，跳过
             if pending.contains(coord) {
-                return;
+                return false;
             }
             pending.insert(*coord);
         }
         // 忽略发送失败（通道关闭）
         let sender = self.task_sender.lock().unwrap();
         let _ = sender.send(task);
+        true
     }
 
     /// 请求取消指定区块的网格生成。

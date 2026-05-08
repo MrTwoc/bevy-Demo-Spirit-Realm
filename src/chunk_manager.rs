@@ -19,7 +19,9 @@ use std::collections::HashMap;
 
 use crate::async_mesh::{AsyncMeshManager, MESH_UPLOADS_PER_FRAME, MeshTask, UvLookupTable};
 use crate::chunk::{Chunk, ChunkCoord, ChunkNeighbors, fill_terrain};
-use crate::chunk_dirty::{ChunkAtlasHandle, ChunkCoordComponent, ChunkMeshHandle, is_air_chunk};
+use crate::chunk_dirty::{
+    ChunkAtlasHandle, ChunkCoordComponent, ChunkMeshHandle, DirtyChunk, is_air_chunk,
+};
 use crate::resource_pack::ResourcePackManager;
 
 /// 渲染距离（区块数）。增大此值可以看到更远的世界，但需要更多区块加载。
@@ -193,6 +195,7 @@ pub fn chunk_loader_system(
     camera_query: Query<&Transform, With<Camera3d>>,
     atlas_handle: Res<AtlasTextureHandle>,
     uv_table: Res<UvLookupTable>,
+    dirty_query: Query<&DirtyChunk>,
 ) {
     let Ok(cam_transform) = camera_query.single() else {
         return;
@@ -220,6 +223,11 @@ pub fn chunk_loader_system(
 
         // 获取已存在的实体和旧资源句柄
         if let Some(entry) = loaded.entries.get(&result.coord) {
+            // 如果区块已被标记为脏（在异步生成期间发生了修改），
+            // 丢弃这个过时的结果，避免上传旧网格导致"幽灵方块"。
+            if dirty_query.get(entry.entity).is_ok() {
+                continue;
+            }
             let entity = entry.entity;
 
             // 移除旧的 mesh 和 material 资源

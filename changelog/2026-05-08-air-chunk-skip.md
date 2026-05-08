@@ -1,4 +1,4 @@
-# 分支改动：全空气区块跳过优化
+# 分支改动：全空气区块跳过优化 + 幽灵方块 Bug 修复
 
 > **分支**：`air-chunk-skip`
 > **日期**：2026-05-08
@@ -235,3 +235,99 @@ cargo check → ✅ 通过
 | SuperChunk 合批 | Draw Call 2000+ → ~4 | P1 |
 | 预过滤 Y 范围（方案 3） | 避免生成地形数据后才跳过 | P2 |
 | 全实心区块检测（方案 2） | 跳过地下完全被包围的区块 | P2 |
+
+---
+
+## 8. 附带修复：幽灵方块 Bug
+
+### 8.1 问题描述
+
+在正常区块往上叠方块后，再破坏掉叠加的方块，有的方块有几率变成**无法选中也无法破坏的"幽灵方块"**：
+- 摄像机可以看到这个方块（网格渲染正常）
+- 射线检测不能选中这个方块（`ChunkData` 中已为空气）
+- 线框模式下能正常显示三角面
+
+### 8.2 根因分析
+
+**异步任务竞态条件**：
+
+```
+帧 N:   玩家放置方块 → ChunkData 修改 → 标记 DirtyChunk
+帧 N+1: rebuild_dirty_chunks 提交异步任务 A（包含新方块），移除 DirtyChunk
+帧 N+1: 玩家立即破坏方块 → ChunkData 修改 → 标记 DirtyChunk
+帧 N+2: rebuild_dirty_chunks 尝试提交任务 B（方块已移除）
+         → submit_task 发现 coord 已在 pending 中 → 静默跳过
+         → 仍然移除 DirtyChunk ← 【Bug】
+帧 N+3: 任务 A 完成 → 上传过时网格（仍包含方块）
+         → DirtyChunk 已被移除，不会再次重建
+         → 网格显示方块，但 ChunkData 中已为空气 → 幽灵方块！
+```
+
+### 8.3 修复方案（双保险）
+
+**修复 1：`submit_task()` 返回 `bool`**（[`src/async_mesh.rs`](src/async_mesh.rs:235)）
+
+```diff
+- pub fn submit_task(&self, task: MeshTask) {
++ pub fn submit_task(&self, task: MeshTask) -> bool {
+      if let MeshTask::Generate { coord, .. } = &task {
+          let mut pending = self.pending_tasks.lock().unwrap();
+          if pending.contains(coord) {
+-             return;
++             return false;
+          }
+          pending.insert(*coord);
+      }
+      let sender = self.task_sender.lock().unwrap();
+      let _ = sender.send(task);
++     true
+  }
+```
+
+**修复 2：`rebuild_dirty_chunks()` 保留脏标记**（[`src/chunk_dirty.rs`](src/chunk_dirty.rs:85)）
+
+```diff
+- async_mesh.submit_task(MeshTask::Generate { ... });
+- commands.entity(entity).remove::<DirtyChunk>();
++ let submitted = async_mesh.submit_task(MeshTask::Generate { ... });
++ if submitted {
++     commands.entity(entity).remove::<DirtyChunk>();
++ }
+```
+
+当任务被跳过时保留 `DirtyChunk`，下帧会重新提交任务，确保最终网格与 `ChunkData` 一致。
+
+**修复 3：结果收集时丢弃过时网格**（[`src/chunk_manager.rs`](src/chunk_manager.rs:207)）
+
+```diff
+  if let Some(entry) = loaded.entries.get(&result.coord) {
+      let entity = entry.entity;
++     // 如果区块已被标记为脏，丢弃过时结果
++     if dirty_query.get(entry.entity).is_ok() {
++         continue;
++     }
+      // ... 上传网格 ...
+  }
+```
+
+即使旧任务完成，如果区块已被标记为脏，丢弃其结果避免短暂显示幽灵方块。
+
+### 8.4 修复后的时序
+
+```
+帧 N:   玩家放置方块 → ChunkData 修改 → 标记 DirtyChunk
+帧 N+1: rebuild_dirty_chunks 提交任务 A，移除 DirtyChunk
+帧 N+1: 玩家破坏方块 → ChunkData 修改 → 标记 DirtyChunk
+帧 N+2: rebuild_dirty_chunks 提交任务 B → pending 中 → 返回 false → 保留 DirtyChunk ✅
+帧 N+3: 任务 A 完成 → 检测到 DirtyChunk → 丢弃过时结果 ✅
+帧 N+3: rebuild_dirty_chunks 再次提交任务 B → 任务 A 已完成 → 成功提交 → 移除 DirtyChunk
+帧 N+4: 任务 B 完成 → 上传正确网格（无方块）→ 幽灵方块消失 ✅
+```
+
+### 8.5 修改的文件
+
+| 文件 | 改动 |
+|------|------|
+| [`src/async_mesh.rs`](src/async_mesh.rs) | `submit_task()` 返回 `bool` |
+| [`src/chunk_dirty.rs`](src/chunk_dirty.rs) | `rebuild_dirty_chunks()` 根据返回值决定是否移除 `DirtyChunk` |
+| [`src/chunk_manager.rs`](src/chunk_manager.rs) | 结果收集时检查 `DirtyChunk`，丢弃过时网格 |
