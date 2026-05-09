@@ -77,23 +77,60 @@ fn collect_neighbors(coord: ChunkCoord, loaded: &LoadedChunks) -> ChunkNeighbors
 ///
 /// 工作流程：
 /// 1. 遍历所有带 `DirtyChunk` 组件的实体
-/// 2. 收集邻居数据，提交异步网格生成任务
-/// 3. 移除 `DirtyChunk` 组件（结果将由 `chunk_loader_system` 统一处理）
+/// 2. 全空气区块：清理旧 Mesh/Material 资源，替换为空 Mesh
+/// 3. 非空气区块：收集邻居数据，提交异步网格生成任务
+/// 4. 移除 `DirtyChunk` 组件（结果将由 `chunk_loader_system` 统一处理）
 ///
 /// 异步结果通过 `chunk_loader_system` 中的 `AsyncMeshManager::collect_results()` 收集，
 /// 并根据 `ChunkCoord` 匹配到正确的实体进行 GPU 上传。
 pub fn rebuild_dirty_chunks(
     mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     async_mesh: Res<AsyncMeshManager>,
     uv_table: Res<UvLookupTable>,
-    loaded: Res<LoadedChunks>,
-    dirty_chunks: Query<(Entity, &ChunkData, &ChunkCoordComponent), With<DirtyChunk>>,
+    mut loaded: ResMut<LoadedChunks>,
+    dirty_chunks: Query<
+        (Entity, &ChunkData, &ChunkCoordComponent, &ChunkMeshHandle),
+        With<DirtyChunk>,
+    >,
 ) {
-    for (entity, chunk_data, coord_comp) in &dirty_chunks {
+    for (entity, chunk_data, coord_comp, mesh_handle) in &dirty_chunks {
         let coord = coord_comp.0;
 
-        // 全空气区块直接移除脏标记，不需要网格
+        // 全空气区块：清理旧 Mesh/Material 资源，替换为空 Mesh
         if is_air_chunk(chunk_data) {
+            // 移除旧的 GPU 资源
+            meshes.remove(&mesh_handle.mesh);
+            materials.remove(&mesh_handle.material);
+
+            // 创建空 Mesh（无顶点数据，不渲染任何内容）
+            let empty_mesh = meshes.add(Mesh::new(
+                bevy::render::render_resource::PrimitiveTopology::TriangleList,
+                bevy::asset::RenderAssetUsages::MAIN_WORLD
+                    | bevy::asset::RenderAssetUsages::RENDER_WORLD,
+            ));
+            let empty_mat = materials.add(StandardMaterial {
+                base_color: Color::WHITE,
+                ..default()
+            });
+
+            // 更新实体组件
+            commands.entity(entity).insert((
+                Mesh3d(empty_mesh.clone()),
+                MeshMaterial3d(empty_mat.clone()),
+                ChunkMeshHandle {
+                    mesh: empty_mesh.clone(),
+                    material: empty_mat.clone(),
+                },
+            ));
+
+            // 更新 LoadedChunks 中的句柄
+            if let Some(entry) = loaded.entries.get_mut(&coord) {
+                entry.mesh_handle = empty_mesh;
+                entry.material_handle = empty_mat;
+            }
+
             commands.entity(entity).remove::<DirtyChunk>();
             continue;
         }

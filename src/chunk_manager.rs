@@ -216,11 +216,6 @@ pub fn chunk_loader_system(
             continue;
         }
 
-        // 如果网格为空（全空气区块），跳过 GPU 上传
-        if result.positions.is_empty() {
-            continue;
-        }
-
         // 获取已存在的实体和旧资源句柄
         if let Some(entry) = loaded.entries.get(&result.coord) {
             // 如果区块已被标记为脏（在异步生成期间发生了修改），
@@ -235,6 +230,7 @@ pub fn chunk_loader_system(
             materials.remove(&entry.material_handle);
 
             // 创建新 Mesh 并上传到 GPU
+            // 即使网格为空（全空气区块），也需要替换旧 Mesh 以清除"幽灵方块"
             let mesh_handle = meshes.add(
                 Mesh::new(
                     bevy::render::render_resource::PrimitiveTopology::TriangleList,
@@ -372,6 +368,24 @@ pub fn chunk_loader_system(
             neighbors,
             uv_table: uv_table.clone(),
         });
+
+        // 标记邻居区块为脏，使其重新生成网格以正确剔除与新区块的接触面。
+        // 当区块A先加载时，其边界面上的方块面被保留（因为邻居还未加载）。
+        // 后来区块B加载后，区块A需要重新生成网格才能剔除接触面。
+        for (dx, dy, dz) in NEIGHBOR_OFFSETS.iter() {
+            let neighbor_coord = ChunkCoord {
+                cx: coord.cx + dx,
+                cy: coord.cy + dy,
+                cz: coord.cz + dz,
+            };
+            if let Some(neighbor_entry) = loaded.entries.get(&neighbor_coord) {
+                // 跳过全空气区块（无需重建网格）
+                if is_air_chunk(&neighbor_entry.data) {
+                    continue;
+                }
+                commands.entity(neighbor_entry.entity).insert(DirtyChunk);
+            }
+        }
     }
 }
 

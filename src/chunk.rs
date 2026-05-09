@@ -130,9 +130,21 @@ impl PalettedChunkData {
         self.palette.len()
     }
 
-    /// 检查是否为空气区块
+    /// 检查是否为空气区块（所有体素都是空气）。
+    ///
+    /// 当最后一个非空气方块被破坏后，调色板可能仍保留旧方块 ID，
+    /// 但所有索引都指向空气。此时需要遍历索引确认。
     pub fn is_empty(&self) -> bool {
-        self.palette.len() == 1 && self.palette[0] == 0
+        // 快速路径：调色板只有空气
+        if self.palette.len() == 1 && self.palette[0] == 0 {
+            return true;
+        }
+        // 慢速路径：检查所有索引是否都指向空气调色板条目
+        if let Some(&air_index) = self.reverse_palette.get(&0) {
+            self.indices.iter().all(|&idx| idx == air_index)
+        } else {
+            false
+        }
     }
 
     /// 检查是否为单一方块类型
