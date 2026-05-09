@@ -13,7 +13,7 @@ use crate::chunk_wire_frame::WireframeMode;
 // ---------------------------------------------------------------------------
 
 /// 射线最大检测距离（方块数）
-const MAX_RAY_DISTANCE: f32 = 64.0;
+const MAX_RAY_DISTANCE: f32 = 16.0;
 
 /// 高亮方块颜色（半透明黄色）
 const HIGHLIGHT_COLOR: Color = Color::srgba(1.0, 1.0, 0.0, 0.3);
