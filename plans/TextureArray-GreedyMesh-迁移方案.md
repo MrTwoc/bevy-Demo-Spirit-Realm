@@ -1,4 +1,10 @@
 # Texture Array 迁移 + Greedy Meshing 启用方案
+参考文档：
+/Democode/Array Texture-wgsl.md
+/Democode/Array Texture-Demo.md
+在线演示：https://bevy.org/examples/shaders/array-texture/
+官方API：https://docs.rs/bevy/latest/bevy/
+当前Bevy 版本：0.18.1(不可更改)
 
 ## 一、问题分析
 
