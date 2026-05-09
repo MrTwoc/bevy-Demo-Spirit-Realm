@@ -6,6 +6,7 @@ mod chunk_dirty;
 mod chunk_manager;
 mod chunk_wire_frame;
 mod fps_overlay;
+mod greedy_mesh;
 mod hud;
 mod input;
 mod lighting;
