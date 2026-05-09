@@ -10,6 +10,7 @@ use bevy::prelude::*;
 use crate::async_mesh::{AsyncMeshManager, MeshTask, UvLookupTable};
 use crate::chunk::{ChunkCoord, ChunkData, ChunkNeighbors};
 use crate::chunk_manager::LoadedChunks;
+use crate::resource_pack::VoxelMaterial;
 
 /// Tag component: chunk needs mesh rebuild.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
@@ -27,7 +28,7 @@ pub struct ChunkCoordComponent(pub ChunkCoord);
 #[derive(Component, Clone)]
 pub struct ChunkMeshHandle {
     pub mesh: Handle<Mesh>,
-    pub material: Handle<StandardMaterial>,
+    pub material: Handle<VoxelMaterial>,
 }
 
 /// Mark a chunk entity as needing mesh rebuild.
@@ -86,7 +87,7 @@ fn collect_neighbors(coord: ChunkCoord, loaded: &LoadedChunks) -> ChunkNeighbors
 pub fn rebuild_dirty_chunks(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<VoxelMaterial>>,
     async_mesh: Res<AsyncMeshManager>,
     uv_table: Res<UvLookupTable>,
     mut loaded: ResMut<LoadedChunks>,
@@ -94,6 +95,7 @@ pub fn rebuild_dirty_chunks(
         (Entity, &ChunkData, &ChunkCoordComponent, &ChunkMeshHandle),
         With<DirtyChunk>,
     >,
+    atlas_handle: Res<crate::chunk_manager::AtlasTextureHandle>,
 ) {
     for (entity, chunk_data, coord_comp, mesh_handle) in &dirty_chunks {
         let coord = coord_comp.0;
@@ -110,9 +112,8 @@ pub fn rebuild_dirty_chunks(
                 bevy::asset::RenderAssetUsages::MAIN_WORLD
                     | bevy::asset::RenderAssetUsages::RENDER_WORLD,
             ));
-            let empty_mat = materials.add(StandardMaterial {
-                base_color: Color::WHITE,
-                ..default()
+            let empty_mat = materials.add(VoxelMaterial {
+                array_texture: atlas_handle.handle.clone(),
             });
 
             // 更新实体组件

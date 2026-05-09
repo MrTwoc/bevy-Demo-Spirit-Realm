@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::hash::Hash;
 
 use crate::chunk_dirty::ChunkMeshHandle;
-use crate::resource_pack::ResourcePackManager;
+use crate::resource_pack::{ResourcePackManager, VoxelMaterial};
 
 /// Size of one dimension of a chunk (32³ blocks per chunk).
 pub const CHUNK_SIZE: usize = 32;
@@ -585,23 +585,23 @@ pub fn fill_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
 
 /// Spawns a single chunk entity with texture-mapped mesh.
 ///
-/// 返回 `(Entity, Handle<Mesh>, Handle<StandardMaterial>)`。
+/// 返回 `(Entity, Handle<Mesh>, Handle<VoxelMaterial>)`。
 /// - `Entity` 用于 ECS 组件插入
-/// - `Handle<Mesh>` 和 `Handle<StandardMaterial>` 用于在卸载/淘汰时从 `Assets` 中移除，
+/// - `Handle<Mesh>` 和 `Handle<VoxelMaterial>` 用于在卸载/淘汰时从 `Assets` 中移除，
 ///   避免 GPU 内存泄漏（P0 #1 修复）
 ///
 /// mesh 和 material handle 同时通过 `ChunkMeshHandle` 组件存储在实体上，
 /// 用于脏块重建时移除旧资源。
 pub fn spawn_chunk_entity(
     commands: &mut Commands,
-    materials: &mut Assets<StandardMaterial>,
+    materials: &mut Assets<VoxelMaterial>,
     meshes: &mut Assets<Mesh>,
     chunk: Chunk,
     position: Vec3,
     resource_pack: &ResourcePackManager,
-    atlas_texture: &Handle<Image>,
+    array_texture: &Handle<Image>,
     neighbors: &ChunkNeighbors,
-) -> (Entity, Handle<Mesh>, Handle<StandardMaterial>) {
+) -> (Entity, Handle<Mesh>, Handle<VoxelMaterial>) {
     let (positions, uvs, normals, indices) = generate_chunk_mesh(&chunk, resource_pack, neighbors);
 
     let mesh_handle = meshes.add(
@@ -615,10 +615,8 @@ pub fn spawn_chunk_entity(
         .with_inserted_indices(Indices::U32(indices)),
     );
 
-    let mat_handle = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        base_color_texture: Some(atlas_texture.clone()),
-        ..default()
+    let mat_handle = materials.add(VoxelMaterial {
+        array_texture: array_texture.clone(),
     });
 
     let entity = commands
@@ -631,9 +629,6 @@ pub fn spawn_chunk_entity(
                 material: mat_handle.clone(),
             },
             Transform::from_translation(position),
-            // Visibility::default() 会启用 Bevy 的视锥剔除（Frustum Culling）。
-            // Bevy 的 calculate_bounds 系统会自动为 Mesh3d 实体计算 Aabb，
-            // 从而启用视锥剔除和遮挡剔除。
             Visibility::default(),
         ))
         .id();

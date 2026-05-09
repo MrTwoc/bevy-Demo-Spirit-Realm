@@ -19,6 +19,7 @@ use bevy::{
     diagnostic::FrameTimeDiagnosticsPlugin, pbr::wireframe::WireframePlugin, prelude::*,
     render::diagnostic::RenderDiagnosticsPlugin,
 };
+use resource_pack::VoxelMaterial;
 
 fn main() {
     App::new()
@@ -38,6 +39,7 @@ fn main() {
             fps_overlay::FpsOverlayPlugin,
             perf_logger::PerfLoggerPlugin,
             resource_pack::ResourcePackPlugin,
+            MaterialPlugin::<VoxelMaterial>::default(),
         ))
         .add_systems(
             Startup,

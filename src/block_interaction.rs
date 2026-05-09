@@ -14,6 +14,7 @@ use crate::chunk_dirty::{
 };
 use crate::chunk_manager::{AtlasTextureHandle, LoadedChunks};
 use crate::raycast::RayHitState;
+use crate::resource_pack::VoxelMaterial;
 
 /// The block type to place when right-clicking.
 /// Default: grass (1). Can be changed later with a hotbar system.
@@ -84,7 +85,7 @@ pub fn block_interaction_system(
     cursor_options: Single<&bevy::window::CursorOptions>,
     atlas_handle: Res<AtlasTextureHandle>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<VoxelMaterial>>,
 ) {
     // Only interact when cursor is locked (player is in game mode)
     if cursor_options.grab_mode != bevy::window::CursorGrabMode::Locked {
@@ -174,7 +175,7 @@ fn place_block(
     loaded: &mut LoadedChunks,
     atlas_handle: &AtlasTextureHandle,
     meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
+    materials: &mut Assets<VoxelMaterial>,
 ) {
     // The new block goes at hit_pos + normal
     let place_pos = BlockPos {
@@ -228,10 +229,8 @@ fn place_block(
             bevy::render::render_resource::PrimitiveTopology::TriangleList,
             RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
         ));
-        let placeholder_mat = materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            base_color_texture: Some(atlas_handle.handle.clone()),
-            ..default()
+        let placeholder_mat = materials.add(VoxelMaterial {
+            array_texture: atlas_handle.handle.clone(),
         });
 
         let entity = commands

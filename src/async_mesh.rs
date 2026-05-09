@@ -53,9 +53,13 @@ pub fn default_worker_count() -> usize {
 ///
 /// 这是一个纯数据结构，不包含任何 Bevy 资源引用，可以安全地跨线程发送。
 /// 在提交网格生成任务时一次性构建，所有任务共享同一份（通过 Arc 共享）。
+///
+/// Texture Array 模式下，UV 编码为 (layer_index + u, v)，
+/// 其中 layer_index 是 Texture Array 的层索引，u/v 是 [0,1] 范围的纹理坐标。
 #[derive(Resource, Clone, Debug)]
 pub struct UvLookupTable {
     /// (block_id, face_name) -> (u_min, u_max, v_min, v_max)
+    /// Texture Array 模式：u_min = layer_index, u_max = layer_index + 1, v_min = 0, v_max = 1
     pub block_uv_map: HashMap<(u8, String), (f32, f32, f32, f32)>,
 }
 
@@ -63,6 +67,7 @@ impl UvLookupTable {
     /// 从 ResourcePackManager 构建 UV 查找表。
     ///
     /// 遍历 `block_texture_map`，查找每个 (block_id, face) 对应的纹理在 Atlas 中的 UV 坐标。
+    /// Texture Array 模式下 UV 编码为 (layer_index + u, v)。
     pub fn from_resource_pack(rp: &crate::resource_pack::ResourcePackManager) -> Self {
         let mut block_uv_map = HashMap::new();
 
@@ -77,7 +82,8 @@ impl UvLookupTable {
         Self { block_uv_map }
     }
 
-    /// 获取指定方块和面的 UV 坐标。如果找不到，返回默认全白 UV。
+    /// 获取指定方块和面的 UV 坐标。如果找不到，返回默认 UV。
+    /// Texture Array 模式下返回 (0.0, 1.0, 0.0, 1.0) 表示第 0 层完整纹理。
     pub fn get_uv(&self, block_id: u8, face_name: &str) -> (f32, f32, f32, f32) {
         self.block_uv_map
             .get(&(block_id, face_name.to_string()))

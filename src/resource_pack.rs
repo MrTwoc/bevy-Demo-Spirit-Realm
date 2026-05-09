@@ -56,6 +56,9 @@
 //! 参见: `docs/动态Atlas材质包系统.md`
 
 use bevy::prelude::*;
+use bevy::reflect::TypePath;
+use bevy::render::render_resource::AsBindGroup;
+use bevy::shader::ShaderRef;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -83,7 +86,10 @@ pub const RESOURCE_PACKS_DIR: &str = "assets/resourcepacks";
 pub struct TextureInfo {
     pub position: (u32, u32),
     pub size: (u32, u32),
+    /// UV 坐标。Texture Array 模式下编码为 (layer, layer+1, 0.0, 1.0)
     pub uv: (f32, f32, f32, f32),
+    /// Texture Array 层索引
+    pub layer_index: u32,
 }
 
 /// 动态 Atlas 图集
@@ -94,6 +100,31 @@ pub struct TextureAtlas {
     pub height: u32,
     pub textures: HashMap<String, TextureInfo>,
     pub size: (u32, u32),
+    /// Texture Array 像素数据（所有纹理按层排列）
+    pub array_pixels: Vec<u8>,
+    /// Texture Array 层数
+    pub array_layers: u32,
+    /// 纹理名称 → 层索引映射
+    pub texture_index_map: HashMap<String, u32>,
+    /// 单个纹理的统一尺寸（Texture Array 中每层的宽高）
+    pub tex_size: u32,
+}
+
+/// 自定义体素材质，使用 Texture Array 存储方块纹理。
+///
+/// UV 编码方式：UV.x = texture_layer_index + actual_u, UV.y = actual_v
+/// 着色器解码：layer = floor(UV.x), sample_uv = fract(UV.x), UV.y
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
+pub struct VoxelMaterial {
+    #[texture(0, dimension = "2d_array")]
+    #[sampler(1)]
+    pub array_texture: Handle<Image>,
+}
+
+impl Material for VoxelMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/voxel.wgsl".into()
+    }
 }
 
 /// 资源包管理器
@@ -402,7 +433,7 @@ impl ResourcePackManager {
         Ok(())
     }
 
-    /// 构建动态 Atlas 图集
+    /// 构建动态 Atlas 图集（同时构建 Texture Array 数据）
     fn build_atlas(&mut self) -> Result<(), String> {
         if self.texture_cache.is_empty() {
             return Err("No textures loaded".to_string());
@@ -413,6 +444,42 @@ impl ResourcePackManager {
         // 创建 Atlas 图像（RGBA 像素数据）
         let mut atlas_pixels = vec![0u8; (atlas_width * atlas_height * 4) as usize];
         let mut texture_infos = HashMap::new();
+
+        // 构建 Texture Array 数据
+        let mut texture_index_map = HashMap::new();
+        let mut sorted_names: Vec<&String> = self.texture_cache.keys().collect();
+        sorted_names.sort();
+        let array_layers = sorted_names.len() as u32;
+
+        // 确定统一的纹理尺寸（使用最大尺寸）
+        let tex_size = self
+            .texture_cache
+            .values()
+            .map(|(_, w, h)| (*w).max(*h))
+            .max()
+            .unwrap_or(16);
+
+        let mut array_pixels = vec![0u8; (tex_size * tex_size * 4 * array_layers) as usize];
+
+        for (layer_idx, name) in sorted_names.iter().enumerate() {
+            texture_index_map.insert(name.to_string(), layer_idx as u32);
+
+            if let Some((src_pixels, src_w, src_h)) = self.texture_cache.get(*name) {
+                // 复制到 Texture Array 层
+                for py in 0..*src_h {
+                    for px in 0..*src_w {
+                        let src_idx = ((py * src_w + px) * 4) as usize;
+                        let dst_idx =
+                            ((layer_idx as u32 * tex_size * tex_size + py * tex_size + px) * 4)
+                                as usize;
+                        if src_idx + 3 < src_pixels.len() && dst_idx + 3 < array_pixels.len() {
+                            array_pixels[dst_idx..dst_idx + 4]
+                                .copy_from_slice(&src_pixels[src_idx..src_idx + 4]);
+                        }
+                    }
+                }
+            }
+        }
 
         for (texture_name, (x, y, _width, _height)) in &placements {
             if let Some((src_pixels, src_w, src_h)) = self.texture_cache.get(texture_name) {
@@ -430,10 +497,12 @@ impl ResourcePackManager {
                     }
                 }
 
-                let u_min = *x as f32 / atlas_width as f32;
-                let u_max = (*x + *src_w) as f32 / atlas_width as f32;
-                let v_min = *y as f32 / atlas_height as f32;
-                let v_max = (*y + *src_h) as f32 / atlas_height as f32;
+                let layer = *texture_index_map.get(texture_name).unwrap_or(&0) as f32;
+                // Texture Array UV: x = layer_index + u, y = v
+                let u_min = layer;
+                let u_max = layer + 1.0;
+                let v_min = 0.0;
+                let v_max = 1.0;
 
                 texture_infos.insert(
                     texture_name.clone(),
@@ -441,6 +510,7 @@ impl ResourcePackManager {
                         position: (*x, *y),
                         size: (*src_w, *src_h),
                         uv: (u_min, u_max, v_min, v_max),
+                        layer_index: *texture_index_map.get(texture_name).unwrap_or(&0),
                     },
                 );
             }
@@ -452,6 +522,10 @@ impl ResourcePackManager {
             height: atlas_height,
             textures: texture_infos,
             size: (atlas_width, atlas_height),
+            array_pixels,
+            array_layers,
+            texture_index_map,
+            tex_size,
         });
 
         Ok(())

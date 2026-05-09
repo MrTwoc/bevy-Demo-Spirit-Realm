@@ -22,7 +22,7 @@ use crate::chunk::{Chunk, ChunkCoord, ChunkNeighbors, fill_terrain};
 use crate::chunk_dirty::{
     ChunkAtlasHandle, ChunkCoordComponent, ChunkMeshHandle, DirtyChunk, is_air_chunk,
 };
-use crate::resource_pack::ResourcePackManager;
+use crate::resource_pack::{ResourcePackManager, VoxelMaterial};
 
 /// 渲染距离（区块数）。增大此值可以看到更远的世界，但需要更多区块加载。
 pub const RENDER_DISTANCE: i32 = 8;
@@ -47,8 +47,8 @@ pub struct ChunkEntry {
     pub last_accessed: u64,
     /// 区块网格的 Mesh 句柄，卸载时需要从 Assets 中移除
     pub mesh_handle: Handle<Mesh>,
-    /// 区块材质的 StandardMaterial 句柄，卸载时需要从 Assets 中移除
-    pub material_handle: Handle<StandardMaterial>,
+    /// 区块材质的 VoxelMaterial 句柄，卸载时需要从 Assets 中移除
+    pub material_handle: Handle<VoxelMaterial>,
 }
 
 #[derive(Resource)]
@@ -123,17 +123,22 @@ pub fn setup_world(
     resource_pack: Res<ResourcePackManager>,
     mut images: ResMut<Assets<Image>>,
 ) {
-    // 从资源包创建 Atlas 纹理
+    // 从资源包创建 Texture Array 纹理
     let atlas_handle = if let Some(atlas) = &resource_pack.atlas {
         let size = Extent3d {
-            width: atlas.size.0,
-            height: atlas.size.1,
-            depth_or_array_layers: 1,
+            width: atlas.tex_size,
+            height: atlas.tex_size,
+            depth_or_array_layers: atlas.array_layers.max(1),
+        };
+        let pixel_data = if atlas.array_layers > 0 {
+            atlas.array_pixels.clone()
+        } else {
+            atlas.image.clone()
         };
         let mut bevy_image = Image::new(
             size,
             TextureDimension::D2,
-            atlas.image.clone(),
+            pixel_data,
             TextureFormat::Rgba8UnormSrgb,
             RenderAssetUsages::default(),
         );
@@ -188,7 +193,7 @@ pub fn setup_world(
 /// 4. 卸载超出 `UNLOAD_DISTANCE` 的区块（同时取消其异步任务）
 pub fn chunk_loader_system(
     mut commands: Commands,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<VoxelMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut loaded: ResMut<LoadedChunks>,
     async_mesh: Res<AsyncMeshManager>,
@@ -242,10 +247,8 @@ pub fn chunk_loader_system(
                 .with_inserted_indices(bevy::mesh::Indices::U32(result.indices)),
             );
 
-            let mat_handle = materials.add(StandardMaterial {
-                base_color: Color::WHITE,
-                base_color_texture: Some(atlas_handle.handle.clone()),
-                ..default()
+            let mat_handle = materials.add(VoxelMaterial {
+                array_texture: atlas_handle.handle.clone(),
             });
 
             // 更新实体组件
@@ -334,10 +337,8 @@ pub fn chunk_loader_system(
             bevy::render::render_resource::PrimitiveTopology::TriangleList,
             RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
         ));
-        let placeholder_mat = materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            base_color_texture: Some(atlas_handle.handle.clone()),
-            ..default()
+        let placeholder_mat = materials.add(VoxelMaterial {
+            array_texture: atlas_handle.handle.clone(),
         });
 
         commands.entity(entity).insert((
@@ -442,7 +443,7 @@ fn unload_distant_chunks(
     center: ChunkCoord,
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
+    materials: &mut Assets<VoxelMaterial>,
     loaded: &mut LoadedChunks,
     async_mesh: &AsyncMeshManager,
 ) {
@@ -484,7 +485,7 @@ fn lru_evict(
     center: ChunkCoord,
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
+    materials: &mut Assets<VoxelMaterial>,
     loaded: &mut LoadedChunks,
     async_mesh: &AsyncMeshManager,
 ) {
