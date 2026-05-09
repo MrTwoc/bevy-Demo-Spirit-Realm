@@ -9,7 +9,10 @@
 > - [优化建议总结.md](优化建议总结.md) — 性能基线与优化建议
 >
 > **已移除方案**：
-> - ~~SuperChunk 合批~~ — 结构性缺陷（Y 尺寸不匹配、刚性合并条件、重建卡顿），实现复杂度高，收益可通过 LOD + Greedy Meshing 替代
+> - ~~SuperChunk 合批~~ — 结构性缺陷（Y 尺寸不匹配、刚性合并条件、重建卡顿），实现复杂度高，收益可通过 LOD 替代
+>
+> **备选方案**：
+> - Greedy Meshing — Voxy 项目实际未使用此技术，其核心是 GPU Compute Shader 面剔除 + MultiDrawIndirect。Greedy Meshing 作为 CPU 端优化手段保留为备选，当 LOD + GPU 面剔除仍无法满足性能需求时可考虑启用
 
 ---
 
@@ -35,7 +38,7 @@
 | 特性 | Voxy 实现 | 当前项目状态 | 优化优先级 |
 |------|-----------|--------------|------------|
 | **异步网格生成** | 后台线程 + 通道回传 | 同步生成（阻塞主线程） | P0 |
-| **Greedy Meshing** | 面合并减少顶点 | 逐面生成，顶点冗余 | P0 |
+| ~~Greedy Meshing~~ | ~~面合并减少顶点~~ | ~~逐面生成~~ | **备选**（Voxy 未使用） |
 | **LOD 系统** | 4 级 LOD，距离阈值 | 无 LOD | P1 |
 | **GPU 面剔除** | Compute Shader | CPU 逐面检查 | P1 |
 | **多级空间索引** | 层次化 Chunk 管理 | 单层 HashMap | P2 |
@@ -242,7 +245,7 @@ pub fn chunk_loader_system(
 
 ---
 
-### 3.2 Phase 1：Greedy Meshing + 网格优化（借鉴 GPU噪声迁移方案 §10）
+### 3.2 ~~Phase 1~~：Greedy Meshing + 网格优化（备选方案）
 
 > 来源：[GPU噪声迁移方案.md](GPU噪声迁移方案.md) §10.2
 
@@ -255,7 +258,7 @@ pub fn chunk_loader_system(
 | **Vec 动态扩容** | 使用 `Vec::new()` + `Vec::extend()` | 多次 reallocation，浪费 CPU 周期 |
 | **无法合并相邻面** | 每个面生成 4 个独立顶点 | 相邻同材质方块的面可以被合并为更大的四边形 |
 
-#### 3.2.2 Greedy Meshing 算法
+#### 3.2.2 Greedy Meshing 算法（备选）
 
 **原理**：将相邻的同材质方块面合并为更大的四边形，大幅减少顶点数。
 
@@ -564,17 +567,17 @@ impl MeshBufferPool {
 ```
 Phase 0: 异步网格生成 (P0) ← 最高优先级，消除加载尖峰
     ↓
-Phase 1: Greedy Meshing + 网格优化 (P0) ← 低投入高回报
+Phase 1: LOD 系统 (P1) ← 大幅降低远景 GPU 负载
     ↓
-Phase 2: LOD 系统 (P1) ← 大幅降低远景 GPU 负载
+Phase 2: GPU 面剔除 (P1) ← 将 CPU 密集计算转移到 GPU（Voxy 核心）
     ↓
-Phase 3: GPU 面剔除 (P1) ← 将 CPU 密集计算转移到 GPU
+Phase 3: GPU 噪声计算 (P2) ← 等待 3D 噪声需求
     ↓
-Phase 4: GPU 噪声计算 (P2) ← 等待 3D 噪声需求
+Phase 4: 多级空间索引 (P2) ← 优化内存和查找效率
     ↓
-Phase 5: 多级空间索引 (P2) ← 优化内存和查找效率
+Phase 5: 内存池优化 (P2) ← 减少内存分配开销
     ↓
-Phase 6: 内存池优化 (P2) ← 减少内存分配开销
+[备选] Greedy Meshing + 网格优化 ← Voxy 未使用，当 LOD + GPU 面剔除不足时启用
 ```
 
 ### 4.2 时间估算
@@ -582,12 +585,12 @@ Phase 6: 内存池优化 (P2) ← 减少内存分配开销
 | Phase | 任务 | 预估时间 | 依赖 |
 |-------|------|----------|------|
 | 0 | 异步网格生成 | 2-3 天 | 无 |
-| 1 | Greedy Meshing + 网格优化 | 3-4 天 | 无 |
-| 2 | LOD 系统 | 3-4 天 | Phase 0 |
-| 3 | GPU 面剔除 | 5-7 天 | Phase 0 |
-| 4 | GPU 噪声计算 | 3-5 天 | 等待需求 |
-| 5 | 多级空间索引 | 2-3 天 | 无 |
-| 6 | 内存池优化 | 1-2 天 | Phase 0 |
+| 1 | LOD 系统 | 3-4 天 | Phase 0 |
+| 2 | GPU 面剔除 | 5-7 天 | Phase 0 |
+| 3 | GPU 噪声计算 | 3-5 天 | 等待需求 |
+| 4 | 多级空间索引 | 2-3 天 | 无 |
+| 5 | 内存池优化 | 1-2 天 | Phase 0 |
+| 备选 | Greedy Meshing + 网格优化 | 3-4 天 | 无 |
 
 ### 4.3 里程碑
 
@@ -607,7 +610,7 @@ Phase 6: 内存池优化 (P2) ← 减少内存分配开销
 | 模块 | 修改内容 | 影响范围 |
 |------|----------|----------|
 | [`chunk_manager.rs`](../src/chunk_manager.rs) | 集成异步网格生成 | 高 |
-| [`chunk.rs`](../src/chunk.rs) | 添加 Greedy Meshing + LOD 网格生成 | 中 |
+| [`chunk.rs`](../src/chunk.rs) | 添加 LOD 网格生成（Greedy Meshing 备选） | 中 |
 | [`chunk_dirty.rs`](../src/chunk_dirty.rs) | 支持异步重建 | 中 |
 | [`main.rs`](../src/main.rs) | 注册新系统和资源 | 低 |
 
@@ -649,12 +652,12 @@ Phase 6: 内存池优化 (P2) ← 减少内存分配开销
 ### 7.1 核心优化点
 
 1. **异步网格生成**：消除加载尖峰，提升用户体验
-2. **Greedy Meshing**：大幅减少顶点数，降低 CPU 和 GPU 负载
-3. **LOD 系统**：大幅降低远景 GPU 负载
-4. **GPU 面剔除**：将 CPU 密集型计算转移到 GPU
-5. **GPU 噪声**：等待 3D 噪声需求时启动
-6. **多级空间索引**：优化内存使用和查找效率
-7. **内存池**：减少内存分配开销
+2. **LOD 系统**：大幅降低远景 GPU 负载
+3. **GPU 面剔除**：将 CPU 密集型计算转移到 GPU（Voxy 核心）
+4. **GPU 噪声**：等待 3D 噪声需求时启动
+5. **多级空间索引**：优化内存使用和查找效率
+6. **内存池**：减少内存分配开销
+7. **[备选] Greedy Meshing**：大幅减少顶点数，Voxy 未使用，保留为后备方案
 
 ### 7.2 预期最终效果
 
@@ -663,15 +666,15 @@ Phase 6: 内存池优化 (P2) ← 减少内存分配开销
 | 视距 | 8 chunks | 128+ chunks |
 | FPS（稳态） | ~170 | >60 |
 | FPS（加载时） | ~58 | >100 |
-| Draw Call | ~2,200+ | <100（LOD + Greedy Meshing 自然减少） |
+| Draw Call | ~2,200+ | <100（LOD + GPU 面剔除自然减少） |
 | 内存占用 | ~200MB | ~500MB（更大视距） |
 | 加载尖峰 | ~21.8ms | <8ms |
 
 ### 7.3 下一步行动
 
-1. **立即开始**：Phase 0（异步网格生成）+ Phase 1（Greedy Meshing）
-2. **并行探索**：Phase 5（多级空间索引）
-3. **持续评估**：Phase 3（GPU 面剔除）的 Bevy 支持情况
+1. **立即开始**：Phase 0（异步网格生成）已完成，下一步 Phase 1（LOD 系统）
+2. **并行探索**：Phase 4（多级空间索引）
+3. **持续评估**：Phase 2（GPU 面剔除）的 Bevy 支持情况
 
 ---
 
@@ -681,7 +684,7 @@ Phase 6: 内存池优化 (P2) ← 减少内存分配开销
 |----------|------|------|
 | [GPU噪声迁移方案.md](GPU噪声迁移方案.md) | 已整合 | GPU 噪声 + 网格优化分析 |
 | [优化建议总结.md](优化建议总结.md) | 已整合 | 性能基线与优化建议 |
-| [Phase1-SuperChunk合批方案.md](Phase1-SuperChunk合批方案.md) | **已废弃** | 结构性缺陷，已被 LOD + Greedy Meshing 替代 |
+| [Phase1-SuperChunk合批方案.md](Phase1-SuperChunk合批方案.md) | **已废弃** | 结构性缺陷，已被 LOD 替代 |
 | [架构总纲.md](../docs/架构总纲.md) | 参考 | 项目整体架构设计 |
 
 ---
