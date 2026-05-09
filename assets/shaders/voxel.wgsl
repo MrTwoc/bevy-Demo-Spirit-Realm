@@ -20,14 +20,18 @@ fn fragment(
     @builtin(front_facing) is_front: bool,
     mesh: VertexOutput,
 ) -> @location(0) vec4<f32> {
+    var pbr_input: PbrInput = pbr_input_new();
+
+#ifdef VERTEX_UVS
     // 从 UV.x 解码纹理层索引（整数部分）和实际 UV（小数部分）
     let layer = u32(floor(mesh.uv.x));
     let sample_uv = vec2<f32>(fract(mesh.uv.x), mesh.uv.y);
-
-    var pbr_input: PbrInput = pbr_input_new();
     pbr_input.material.base_color = textureSample(
         voxel_array_texture, voxel_array_texture_sampler, sample_uv, layer
     );
+#else
+    pbr_input.material.base_color = vec4<f32>(1.0, 0.0, 1.0, 1.0); // missing texture magenta
+#endif
 
     let double_sided = (pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_DOUBLE_SIDED_BIT) != 0u;
     pbr_input.frag_coord = mesh.position;
