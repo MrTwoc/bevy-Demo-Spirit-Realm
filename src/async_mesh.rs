@@ -28,9 +28,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::mpsc;
 use std::thread;
 
-use crate::chunk::{ChunkCoord, ChunkData, ChunkNeighbors};
+use crate::chunk::{CHUNK_SIZE, ChunkCoord, ChunkData, ChunkNeighbors};
 use crate::chunk_dirty::is_air_chunk;
-use crate::greedy_mesh;
 
 /// 每帧最多从异步结果中收集并上传 GPU 的网格数。
 /// 限制 GPU 上传速率，避免帧时间尖峰。
@@ -209,15 +208,8 @@ impl AsyncMeshManager {
                         continue;
                     }
 
-                    let result = greedy_mesh::generate_greedy_mesh(
-                        &data,
-                        &neighbors,
-                        |block_id, face_name| uv_table.get_uv(block_id, face_name),
-                    );
-                    let positions = result.positions;
-                    let uvs = result.uvs;
-                    let normals = result.normals;
-                    let indices = result.indices;
+                    let (positions, uvs, normals, indices) =
+                        generate_chunk_mesh_async(&data, &uv_table, &neighbors);
 
                     let _ = sender.send(MeshResult {
                         coord,
@@ -307,7 +299,214 @@ impl AsyncMeshManager {
     }
 }
 
-// 注意：网格生成逻辑已迁移到 `greedy_mesh` 模块（Greedy Meshing 算法）。
-// 工作线程通过 `greedy_mesh::generate_greedy_mesh()` 生成网格，
-// 消除了此前 `generate_chunk_mesh_async` / `is_face_visible_async` / `face_quad_async`
-// 与 `chunk.rs` 中同步版本的代码重复。
+// ---------------------------------------------------------------------------
+// 异步网格生成函数（在工作线程中执行）
+// ---------------------------------------------------------------------------
+
+/// 面方向定义，与 chunk.rs 中 FACES 一致。
+const FACES_ASYNC: [(FaceAsync, [i32; 3]); 6] = [
+    (FaceAsync::Right, [1, 0, 0]),
+    (FaceAsync::Left, [-1, 0, 0]),
+    (FaceAsync::Top, [0, 1, 0]),
+    (FaceAsync::Bottom, [0, -1, 0]),
+    (FaceAsync::Front, [0, 0, 1]),
+    (FaceAsync::Back, [0, 0, -1]),
+];
+
+/// 面方向枚举（工作线程本地副本，避免依赖 Bevy）
+#[derive(Clone, Copy)]
+enum FaceAsync {
+    Top,
+    Bottom,
+    Right,
+    Left,
+    Front,
+    Back,
+}
+
+impl FaceAsync {
+    fn to_face_name(&self) -> &'static str {
+        match self {
+            FaceAsync::Top => "top",
+            FaceAsync::Bottom => "bottom",
+            _ => "side",
+        }
+    }
+}
+
+/// 异步版本的网格生成函数。
+///
+/// 与 `chunk::generate_chunk_mesh()` 逻辑完全一致，但：
+/// - 使用 `UvLookupTable` 替代 `ResourcePackManager`（可跨线程）
+/// - 不依赖任何 Bevy 类型
+fn generate_chunk_mesh_async(
+    chunk: &ChunkData,
+    uv_table: &UvLookupTable,
+    neighbors: &ChunkNeighbors,
+) -> (Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<[f32; 3]>, Vec<u32>) {
+    // 全空气区块提前返回
+    if matches!(chunk, ChunkData::Empty | ChunkData::Uniform(0)) {
+        return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    }
+
+    // 预分配容量
+    let mut positions = Vec::with_capacity(48000);
+    let mut uvs = Vec::with_capacity(48000);
+    let mut normals = Vec::with_capacity(48000);
+    let mut indices = Vec::with_capacity(72000);
+
+    for z in 0..CHUNK_SIZE {
+        for y in 0..CHUNK_SIZE {
+            for x in 0..CHUNK_SIZE {
+                let block_id = chunk.get(x, y, z);
+                if block_id == 0 {
+                    continue;
+                }
+
+                for (face_index, (face, offset)) in FACES_ASYNC.iter().cloned().enumerate() {
+                    if !is_face_visible_async(chunk, x, y, z, &offset, face_index, neighbors) {
+                        continue;
+                    }
+
+                    let base_index = positions.len() as u32;
+                    let face_name = face.to_face_name();
+
+                    // 从 UV 查找表获取坐标
+                    let uv = uv_table.get_uv(block_id, face_name);
+
+                    let (face_verts, face_uvs, face_normal) = face_quad_async(x, y, z, face, uv);
+                    positions.extend(face_verts);
+                    uvs.extend(face_uvs);
+                    normals.extend([face_normal; 4]);
+                    indices.extend([
+                        base_index,
+                        base_index + 2,
+                        base_index + 1,
+                        base_index,
+                        base_index + 3,
+                        base_index + 2,
+                    ]);
+                }
+            }
+        }
+    }
+
+    (positions, uvs, normals, indices)
+}
+
+/// 异步版本的面可见性检查。
+///
+/// 逻辑与 `ChunkData::is_face_visible()` 完全一致。
+fn is_face_visible_async(
+    chunk: &ChunkData,
+    x: usize,
+    y: usize,
+    z: usize,
+    face: &[i32; 3],
+    face_index: usize,
+    neighbors: &ChunkNeighbors,
+) -> bool {
+    let nx = x as i32 + face[0];
+    let ny = y as i32 + face[1];
+    let nz = z as i32 + face[2];
+
+    let current_id = chunk.get(x, y, z);
+
+    // 邻居在区块边界内
+    if nx >= 0
+        && ny >= 0
+        && nz >= 0
+        && nx < CHUNK_SIZE as i32
+        && ny < CHUNK_SIZE as i32
+        && nz < CHUNK_SIZE as i32
+    {
+        return chunk.get(nx as usize, ny as usize, nz as usize) != current_id;
+    }
+
+    // 邻居在区块边界外
+    let neighbor_x = nx.rem_euclid(CHUNK_SIZE as i32) as usize;
+    let neighbor_y = ny.rem_euclid(CHUNK_SIZE as i32) as usize;
+    let neighbor_z = nz.rem_euclid(CHUNK_SIZE as i32) as usize;
+
+    let neighbor_id = neighbors.get_neighbor_block(face_index, neighbor_x, neighbor_y, neighbor_z);
+    neighbor_id != current_id
+}
+
+/// 异步版本的面四边形生成。
+///
+/// 逻辑与 `chunk::face_quad()` 完全一致。
+fn face_quad_async(
+    x: usize,
+    y: usize,
+    z: usize,
+    face: FaceAsync,
+    uv: (f32, f32, f32, f32),
+) -> ([[f32; 3]; 4], [[f32; 2]; 4], [f32; 3]) {
+    let (verts, normal) = match face {
+        FaceAsync::Top => (
+            [
+                [x as f32, y as f32 + 1.0, z as f32],
+                [x as f32 + 1.0, y as f32 + 1.0, z as f32],
+                [x as f32 + 1.0, y as f32 + 1.0, z as f32 + 1.0],
+                [x as f32, y as f32 + 1.0, z as f32 + 1.0],
+            ],
+            [0.0, 1.0, 0.0],
+        ),
+        FaceAsync::Bottom => (
+            [
+                [x as f32, y as f32, z as f32 + 1.0],
+                [x as f32 + 1.0, y as f32, z as f32 + 1.0],
+                [x as f32 + 1.0, y as f32, z as f32],
+                [x as f32, y as f32, z as f32],
+            ],
+            [0.0, -1.0, 0.0],
+        ),
+        FaceAsync::Right => (
+            [
+                [x as f32 + 1.0, y as f32, z as f32],
+                [x as f32 + 1.0, y as f32, z as f32 + 1.0],
+                [x as f32 + 1.0, y as f32 + 1.0, z as f32 + 1.0],
+                [x as f32 + 1.0, y as f32 + 1.0, z as f32],
+            ],
+            [1.0, 0.0, 0.0],
+        ),
+        FaceAsync::Left => (
+            [
+                [x as f32, y as f32, z as f32 + 1.0],
+                [x as f32, y as f32, z as f32],
+                [x as f32, y as f32 + 1.0, z as f32],
+                [x as f32, y as f32 + 1.0, z as f32 + 1.0],
+            ],
+            [-1.0, 0.0, 0.0],
+        ),
+        FaceAsync::Front => (
+            [
+                [x as f32 + 1.0, y as f32, z as f32 + 1.0],
+                [x as f32, y as f32, z as f32 + 1.0],
+                [x as f32, y as f32 + 1.0, z as f32 + 1.0],
+                [x as f32 + 1.0, y as f32 + 1.0, z as f32 + 1.0],
+            ],
+            [0.0, 0.0, 1.0],
+        ),
+        FaceAsync::Back => (
+            [
+                [x as f32, y as f32, z as f32],
+                [x as f32 + 1.0, y as f32, z as f32],
+                [x as f32 + 1.0, y as f32 + 1.0, z as f32],
+                [x as f32, y as f32 + 1.0, z as f32],
+            ],
+            [0.0, 0.0, -1.0],
+        ),
+    };
+
+    let (u_min, u_max, v_min, v_max) = uv;
+    let eps = 0.016;
+    let face_uvs = [
+        [u_min + eps, v_max - eps],
+        [u_max - eps, v_max - eps],
+        [u_max - eps, v_min + eps],
+        [u_min + eps, v_min + eps],
+    ];
+
+    (verts, face_uvs, normal)
+}

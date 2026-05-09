@@ -56,6 +56,23 @@
 
 ---
 
+## 优化方案（实施记录）
+
+### [Voxy借鉴优化方案.md](./Voxy借鉴优化方案.md)
+**统一优化路线图**，基于 Voxy 核心技术的 7 阶段优化计划。
+- Phase 0：异步网格生成（✅ 已实施）
+- Phase 1：Greedy Meshing + 网格优化
+- Phase 2~6：LOD、GPU 面剔除、GPU 噪声、多级空间索引、内存池
+
+### [Greedy-Meshing实现记录.md](./Greedy-Meshing实现记录.md)
+**Greedy Meshing 算法实现记录**，已实现但因 Texture Atlas UV 平铺问题暂未启用。
+- 算法：逐层扫描 → 2D 掩码 → 贪心合并同材质面 → 生成大四边形
+- 模块：`src/greedy_mesh.rs`（纯数据，无 Bevy 依赖）
+- 问题：Texture Atlas 下 UV 无法正确平铺，需迁移到 Texture Array
+- 状态：保留模块，等待 Texture Array 迁移后启用
+
+---
+
 ## 文档关系图
 
 ```

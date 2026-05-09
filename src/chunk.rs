@@ -13,7 +13,6 @@ use std::collections::HashMap;
 use std::hash::Hash;
 
 use crate::chunk_dirty::ChunkMeshHandle;
-use crate::greedy_mesh;
 use crate::resource_pack::ResourcePackManager;
 
 /// Size of one dimension of a chunk (32³ blocks per chunk).
@@ -163,6 +162,38 @@ impl PalettedChunkData {
     }
 }
 
+/// Face direction on a block.
+#[derive(Clone, Copy)]
+pub enum Face {
+    Top,
+    Bottom,
+    Right,
+    Left,
+    Front,
+    Back,
+}
+
+impl Face {
+    /// 将 Face 转换为资源包映射表中的面名称
+    pub fn to_face_name(&self) -> &'static str {
+        match self {
+            Face::Top => "top",
+            Face::Bottom => "bottom",
+            _ => "side", // Right, Left, Front, Back 都用 "side"
+        }
+    }
+}
+
+/// All 6 faces of a block in order: +X, -X, +Y, -Y, +Z, -Z
+const FACES: [(Face, [i32; 3]); 6] = [
+    (Face::Right, [1, 0, 0]),
+    (Face::Left, [-1, 0, 0]),
+    (Face::Top, [0, 1, 0]),
+    (Face::Bottom, [0, -1, 0]),
+    (Face::Front, [0, 0, 1]),
+    (Face::Back, [0, 0, -1]),
+];
+
 /// 6 个方向的邻居区块数据，用于跨区块面剔除。
 ///
 /// 索引顺序与 FACES 一致：[+X, -X, +Y, -Y, +Z, -Z]。
@@ -275,6 +306,46 @@ impl ChunkData {
         }
     }
 
+    /// 判断指定面是否可见（需要渲染）。
+    ///
+    /// 当邻居在区块边界内时，直接查询本区块数据。
+    /// 当邻居在区块边界外时，通过 `neighbors` 查询邻居区块数据。
+    pub fn is_face_visible(
+        &self,
+        x: usize,
+        y: usize,
+        z: usize,
+        face: &[i32; 3],
+        face_index: usize,
+        neighbors: &ChunkNeighbors,
+    ) -> bool {
+        let nx = x as i32 + face[0];
+        let ny = y as i32 + face[1];
+        let nz = z as i32 + face[2];
+
+        let current_id = self.get(x, y, z);
+
+        // 邻居在区块边界内，直接查询本区块
+        if nx >= 0
+            && ny >= 0
+            && nz >= 0
+            && nx < CHUNK_SIZE as i32
+            && ny < CHUNK_SIZE as i32
+            && nz < CHUNK_SIZE as i32
+        {
+            return self.get(nx as usize, ny as usize, nz as usize) != current_id;
+        }
+
+        // 邻居在区块边界外，查询邻居区块数据
+        let neighbor_x = nx.rem_euclid(CHUNK_SIZE as i32) as usize;
+        let neighbor_y = ny.rem_euclid(CHUNK_SIZE as i32) as usize;
+        let neighbor_z = nz.rem_euclid(CHUNK_SIZE as i32) as usize;
+
+        let neighbor_id =
+            neighbors.get_neighbor_block(face_index, neighbor_x, neighbor_y, neighbor_z);
+        neighbor_id != current_id
+    }
+
     /// 获取内存占用估算（字节）
     pub fn memory_usage(&self) -> usize {
         match self {
@@ -295,6 +366,146 @@ impl Default for ChunkData {
 }
 
 pub type Chunk = ChunkData;
+
+/// Generates a face-culled mesh for the chunk.
+/// Returns (positions, uvs, normals, indices).
+/// UV 坐标从 ResourcePackManager 的动态 Atlas 中查找。
+///
+/// `neighbors` 提供 6 个方向的邻居区块数据，用于跨区块面剔除。
+/// 当邻居不存在时，边界面上的方块面会被保留（视为空气）。
+pub fn generate_chunk_mesh(
+    chunk: &Chunk,
+    resource_pack: &ResourcePackManager,
+    neighbors: &ChunkNeighbors,
+) -> (Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<[f32; 3]>, Vec<u32>) {
+    // 全空气区块提前返回，避免进入三重循环
+    if matches!(chunk, ChunkData::Empty | ChunkData::Uniform(0)) {
+        return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    }
+
+    // 预分配容量：32³ 区块最多约 12000 个可见面，每面 4 顶点
+    let mut positions = Vec::with_capacity(48000);
+    let mut uvs = Vec::with_capacity(48000);
+    let mut normals = Vec::with_capacity(48000);
+    let mut indices = Vec::with_capacity(72000);
+
+    for z in 0..CHUNK_SIZE {
+        for y in 0..CHUNK_SIZE {
+            for x in 0..CHUNK_SIZE {
+                let block_id = chunk.get(x, y, z);
+                if block_id == 0 {
+                    continue;
+                }
+
+                for (face_index, (face, offset)) in FACES.iter().cloned().enumerate() {
+                    if !chunk.is_face_visible(x, y, z, &offset, face_index, neighbors) {
+                        continue;
+                    }
+
+                    let base_index = positions.len() as u32;
+                    let face_name = face.to_face_name();
+
+                    // 从资源包查找 UV 坐标
+                    let uv = resource_pack
+                        .get_block_uv(block_id, face_name)
+                        .unwrap_or((0.0, 1.0, 0.0, 1.0));
+
+                    let (face_verts, face_uvs, face_normal) = face_quad(x, y, z, face, uv);
+                    positions.extend(face_verts);
+                    uvs.extend(face_uvs);
+                    normals.extend([face_normal; 4]);
+                    indices.extend([
+                        base_index,
+                        base_index + 2,
+                        base_index + 1,
+                        base_index,
+                        base_index + 3,
+                        base_index + 2,
+                    ]);
+                }
+            }
+        }
+    }
+
+    (positions, uvs, normals, indices)
+}
+
+/// Returns the 4 vertices, UVs, and normal for a single face.
+fn face_quad(
+    x: usize,
+    y: usize,
+    z: usize,
+    face: Face,
+    uv: (f32, f32, f32, f32),
+) -> ([[f32; 3]; 4], [[f32; 2]; 4], [f32; 3]) {
+    let (verts, normal) = match face {
+        Face::Top => (
+            [
+                [x as f32, y as f32 + 1.0, z as f32],
+                [x as f32 + 1.0, y as f32 + 1.0, z as f32],
+                [x as f32 + 1.0, y as f32 + 1.0, z as f32 + 1.0],
+                [x as f32, y as f32 + 1.0, z as f32 + 1.0],
+            ],
+            [0.0, 1.0, 0.0],
+        ),
+        Face::Bottom => (
+            [
+                [x as f32, y as f32, z as f32 + 1.0],
+                [x as f32 + 1.0, y as f32, z as f32 + 1.0],
+                [x as f32 + 1.0, y as f32, z as f32],
+                [x as f32, y as f32, z as f32],
+            ],
+            [0.0, -1.0, 0.0],
+        ),
+        Face::Right => (
+            [
+                [x as f32 + 1.0, y as f32, z as f32],
+                [x as f32 + 1.0, y as f32, z as f32 + 1.0],
+                [x as f32 + 1.0, y as f32 + 1.0, z as f32 + 1.0],
+                [x as f32 + 1.0, y as f32 + 1.0, z as f32],
+            ],
+            [1.0, 0.0, 0.0],
+        ),
+        Face::Left => (
+            [
+                [x as f32, y as f32, z as f32 + 1.0],
+                [x as f32, y as f32, z as f32],
+                [x as f32, y as f32 + 1.0, z as f32],
+                [x as f32, y as f32 + 1.0, z as f32 + 1.0],
+            ],
+            [-1.0, 0.0, 0.0],
+        ),
+        Face::Front => (
+            [
+                [x as f32 + 1.0, y as f32, z as f32 + 1.0],
+                [x as f32, y as f32, z as f32 + 1.0],
+                [x as f32, y as f32 + 1.0, z as f32 + 1.0],
+                [x as f32 + 1.0, y as f32 + 1.0, z as f32 + 1.0],
+            ],
+            [0.0, 0.0, 1.0],
+        ),
+        Face::Back => (
+            [
+                [x as f32, y as f32, z as f32],
+                [x as f32 + 1.0, y as f32, z as f32],
+                [x as f32 + 1.0, y as f32 + 1.0, z as f32],
+                [x as f32, y as f32 + 1.0, z as f32],
+            ],
+            [0.0, 0.0, -1.0],
+        ),
+    };
+
+    let (u_min, u_max, v_min, v_max) = uv;
+    let eps = 0.016; // UV 收缩量，防止双线性插值边缘渗色（约 0.5px / 32px）
+    let face_uvs = [
+        [u_min + eps, v_max - eps],
+        [u_max - eps, v_max - eps],
+        [u_max - eps, v_min + eps],
+        [u_min + eps, v_min + eps],
+    ];
+
+    (verts, face_uvs, normal)
+}
 
 // --------------------------------------------------------------------------
 // Terrain helpers
@@ -391,15 +602,7 @@ pub fn spawn_chunk_entity(
     atlas_texture: &Handle<Image>,
     neighbors: &ChunkNeighbors,
 ) -> (Entity, Handle<Mesh>, Handle<StandardMaterial>) {
-    let result = greedy_mesh::generate_greedy_mesh(&chunk, neighbors, |block_id, face_name| {
-        resource_pack
-            .get_block_uv(block_id, face_name)
-            .unwrap_or((0.0, 1.0, 0.0, 1.0))
-    });
-    let positions = result.positions;
-    let uvs = result.uvs;
-    let normals = result.normals;
-    let indices = result.indices;
+    let (positions, uvs, normals, indices) = generate_chunk_mesh(&chunk, resource_pack, neighbors);
 
     let mesh_handle = meshes.add(
         Mesh::new(
