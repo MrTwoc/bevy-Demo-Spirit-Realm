@@ -182,6 +182,18 @@ impl Face {
             _ => "side", // Right, Left, Front, Back 都用 "side"
         }
     }
+
+    /// 将 Face 转换为 UV 数组索引，避免热路径中的 String 分配。
+    /// - 0 = "top"
+    /// - 1 = "bottom"
+    /// - 2 = "side"
+    pub const fn face_index(&self) -> usize {
+        match self {
+            Face::Top => 0,
+            Face::Bottom => 1,
+            _ => 2,
+        }
+    }
 }
 
 /// All 6 faces of a block in order: +X, -X, +Y, -Y, +Z, -Z
@@ -193,6 +205,10 @@ const FACES: [(Face, [i32; 3]); 6] = [
     (Face::Front, [0, 0, 1]),
     (Face::Back, [0, 0, -1]),
 ];
+
+/// 面方向到 UV 数组索引的映射，与 FACES 顺序一致。
+/// 0=top, 1=bottom, 2=side
+const FACE_UV_INDICES: [usize; 6] = [2, 2, 0, 1, 2, 2];
 
 /// 6 个方向的邻居区块数据，用于跨区块面剔除。
 ///
@@ -403,12 +419,10 @@ pub fn generate_chunk_mesh(
                     }
 
                     let base_index = positions.len() as u32;
-                    let face_name = face.to_face_name();
+                    let uv_idx = FACE_UV_INDICES[face_index];
 
-                    // 从资源包查找 UV 坐标
-                    let uv = resource_pack
-                        .get_block_uv(block_id, face_name)
-                        .unwrap_or((0.0, 1.0, 0.0, 1.0));
+                    // 从资源包查找 UV 坐标（O(1) 数组索引）
+                    let uv = resource_pack.get_block_uv_by_index(block_id, uv_idx);
 
                     let (face_verts, face_uvs, face_normal) = face_quad(x, y, z, face, uv);
                     positions.extend(face_verts);

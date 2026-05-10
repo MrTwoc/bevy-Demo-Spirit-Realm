@@ -168,6 +168,12 @@ pub struct ResourcePackManager {
     /// 2. 加载 `models/*.json` 获取模型→纹理映射
     /// 3. 解析 `#variable` 引用（如 `#side` → `block/grass_side`）
     pub block_texture_map: HashMap<(u8, String), String>,
+    /// 预构建的 UV 数组缓存，用于主线程网格生成的 O(1) 零分配查找。
+    ///
+    /// `[block_id][face_index]` -> UV 坐标
+    /// face_index: 0=top, 1=bottom, 2=side
+    /// 在 `build_atlas()` 时自动构建。
+    block_uv_array: [[Option<(f32, f32, f32, f32)>; 3]; 256],
 }
 
 impl Default for ResourcePackManager {
@@ -180,6 +186,7 @@ impl Default for ResourcePackManager {
             texture_cache: HashMap::new(),
             atlas: None,
             block_texture_map: Self::default_block_texture_map(),
+            block_uv_array: [[None; 3]; 256],
         }
     }
 }
@@ -528,6 +535,9 @@ impl ResourcePackManager {
             tex_size,
         });
 
+        // 预构建 UV 数组缓存，用于主线程网格生成的 O(1) 零分配查找
+        self.build_uv_array();
+
         Ok(())
     }
 
@@ -563,12 +573,37 @@ impl ResourcePackManager {
         Ok((atlas_width, atlas_height, placements))
     }
 
-    /// 获取方块指定面的纹理 UV 坐标
+    /// 获取方块指定面的纹理 UV 坐标（通过面名称字符串，保留兼容性）。
     pub fn get_block_uv(&self, block_id: u8, face: &str) -> Option<(f32, f32, f32, f32)> {
         let texture_name = self.block_texture_map.get(&(block_id, face.to_string()))?;
         let atlas = self.atlas.as_ref()?;
         let texture_info = atlas.textures.get(texture_name)?;
         Some(texture_info.uv)
+    }
+
+    /// 获取方块指定面的纹理 UV 坐标（通过 face index，O(1) 零分配查找）。
+    ///
+    /// face_index: 0=top, 1=bottom, 2=side
+    /// 用于网格生成热路径，避免 HashMap 查找和 String 分配。
+    #[inline]
+    pub fn get_block_uv_by_index(&self, block_id: u8, face_index: usize) -> (f32, f32, f32, f32) {
+        self.block_uv_array[block_id as usize][face_index].unwrap_or((0.0, 1.0, 0.0, 1.0))
+    }
+
+    /// 构建 UV 数组缓存。
+    ///
+    /// 遍历 `block_texture_map`，将 HashMap 查找结果预填充到 `block_uv_array` 二维数组中。
+    /// 在 `build_atlas()` 完成后调用。
+    fn build_uv_array(&mut self) {
+        self.block_uv_array = [[None; 3]; 256];
+        if let Some(atlas) = &self.atlas {
+            for ((block_id, face), texture_name) in &self.block_texture_map {
+                if let Some(tex_info) = atlas.textures.get(texture_name) {
+                    let fi = crate::async_mesh::face_name_to_index(face);
+                    self.block_uv_array[*block_id as usize][fi] = Some(tex_info.uv);
+                }
+            }
+        }
     }
 
     /// 生成默认纹理（当材质包目录为空时）

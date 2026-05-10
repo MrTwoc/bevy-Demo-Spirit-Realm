@@ -24,7 +24,7 @@
 //!    避免 GPU 上传尖峰。
 
 use bevy::prelude::*;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::sync::{Arc, mpsc};
 use std::thread;
 
@@ -49,7 +49,36 @@ pub fn default_worker_count() -> usize {
 // UV 查找表（可跨线程发送）
 // ---------------------------------------------------------------------------
 
+/// UV 类型别名：(u_min, u_max, v_min, v_max)
+/// Texture Array 模式下：u_min = layer_index, u_max = layer_index + 1, v_min = 0, v_max = 1
+pub type UvCoord = (f32, f32, f32, f32);
+
+/// 默认 UV 坐标：映射到 Texture Array 第 0 层完整纹理
+const DEFAULT_UV: UvCoord = (0.0, 1.0, 0.0, 1.0);
+
+/// 面名称到索引的映射。
+///
+/// 面名称只有 3 种："top"(0)、"bottom"(1)、"side"(2)。
+/// 使用 `usize` 索引替代 `&str` 查找，避免热路径中的 String 分配。
+pub const fn face_name_to_index(face_name: &str) -> usize {
+    // 使用字节比较，避免哈希开销
+    let bytes = face_name.as_bytes();
+    if bytes.len() == 3 && bytes[0] == b't' && bytes[1] == b'o' && bytes[2] == b'p' {
+        0 // "top"
+    } else if bytes.len() == 6 && bytes[0] == b'b' && bytes[1] == b'o' {
+        1 // "bottom"
+    } else {
+        2 // "side"
+    }
+}
+
 /// 从 ResourcePackManager 预提取的 UV 查找表。
+///
+/// 使用 `[[Option<UV>; 3]; 256]` 二维数组替代 `HashMap<(u8, String), UV>`，
+/// 实现 O(1) 零堆分配查找。
+///
+/// - 第一维：block_id（0-255）
+/// - 第二维：face_index（0=top, 1=bottom, 2=side）
 ///
 /// 这是一个纯数据结构，不包含任何 Bevy 资源引用，可以安全地跨线程发送。
 /// 在提交网格生成任务时一次性构建，所有任务共享同一份（通过 Arc 共享）。
@@ -58,37 +87,38 @@ pub fn default_worker_count() -> usize {
 /// 其中 layer_index 是 Texture Array 的层索引，u/v 是 [0,1] 范围的纹理坐标。
 #[derive(Resource, Clone, Debug)]
 pub struct UvLookupTable {
-    /// (block_id, face_name) -> (u_min, u_max, v_min, v_max)
-    /// Texture Array 模式：u_min = layer_index, u_max = layer_index + 1, v_min = 0, v_max = 1
-    pub block_uv_map: HashMap<(u8, String), (f32, f32, f32, f32)>,
+    /// `[block_id][face_index]` -> UV 坐标
+    /// face_index: 0=top, 1=bottom, 2=side
+    uv_array: [[Option<UvCoord>; 3]; 256],
 }
 
 impl UvLookupTable {
     /// 从 ResourcePackManager 构建 UV 查找表。
     ///
-    /// 遍历 `block_texture_map`，查找每个 (block_id, face) 对应的纹理在 Atlas 中的 UV 坐标。
-    /// Texture Array 模式下 UV 编码为 (layer_index + u, v)。
+    /// 遍历 `block_texture_map`，查找每个 (block_id, face) 对应的纹理在 Atlas 中的 UV 坐标，
+    /// 填充到二维数组中。Texture Array 模式下 UV 编码为 (layer_index + u, v)。
     pub fn from_resource_pack(rp: &crate::resource_pack::ResourcePackManager) -> Self {
-        let mut block_uv_map = HashMap::new();
+        let mut uv_array = [[None; 3]; 256];
 
         if let Some(atlas) = &rp.atlas {
             for ((block_id, face), texture_name) in &rp.block_texture_map {
                 if let Some(tex_info) = atlas.textures.get(texture_name) {
-                    block_uv_map.insert((*block_id, face.clone()), tex_info.uv);
+                    let fi = face_name_to_index(face);
+                    uv_array[*block_id as usize][fi] = Some(tex_info.uv);
                 }
             }
         }
 
-        Self { block_uv_map }
+        Self { uv_array }
     }
 
-    /// 获取指定方块和面的 UV 坐标。如果找不到，返回默认 UV。
-    /// Texture Array 模式下返回 (0.0, 1.0, 0.0, 1.0) 表示第 0 层完整纹理。
-    pub fn get_uv(&self, block_id: u8, face_name: &str) -> (f32, f32, f32, f32) {
-        self.block_uv_map
-            .get(&(block_id, face_name.to_string()))
-            .copied()
-            .unwrap_or((0.0, 1.0, 0.0, 1.0))
+    /// 获取指定方块和面的 UV 坐标（通过 face index）。
+    ///
+    /// O(1) 数组索引，零堆分配。如果未映射，返回默认 UV。
+    /// Texture Array 模式下默认 UV 为 (0.0, 1.0, 0.0, 1.0) 表示第 0 层完整纹理。
+    #[inline]
+    pub fn get_uv(&self, block_id: u8, face_index: usize) -> UvCoord {
+        self.uv_array[block_id as usize][face_index].unwrap_or(DEFAULT_UV)
     }
 }
 
@@ -315,13 +345,15 @@ impl AsyncMeshManager {
 // ---------------------------------------------------------------------------
 
 /// 面方向定义，与 chunk.rs 中 FACES 一致。
-const FACES_ASYNC: [(FaceAsync, [i32; 3]); 6] = [
-    (FaceAsync::Right, [1, 0, 0]),
-    (FaceAsync::Left, [-1, 0, 0]),
-    (FaceAsync::Top, [0, 1, 0]),
-    (FaceAsync::Bottom, [0, -1, 0]),
-    (FaceAsync::Front, [0, 0, 1]),
-    (FaceAsync::Back, [0, 0, -1]),
+/// 元组格式：(面方向, 法线偏移, UV 数组索引)
+/// UV 数组索引：0=top, 1=bottom, 2=side
+const FACES_ASYNC: [(FaceAsync, [i32; 3], usize); 6] = [
+    (FaceAsync::Right, [1, 0, 0], 2),   // side
+    (FaceAsync::Left, [-1, 0, 0], 2),   // side
+    (FaceAsync::Top, [0, 1, 0], 0),     // top
+    (FaceAsync::Bottom, [0, -1, 0], 1), // bottom
+    (FaceAsync::Front, [0, 0, 1], 2),   // side
+    (FaceAsync::Back, [0, 0, -1], 2),   // side
 ];
 
 /// 面方向枚举（工作线程本地副本，避免依赖 Bevy）
@@ -333,16 +365,6 @@ enum FaceAsync {
     Left,
     Front,
     Back,
-}
-
-impl FaceAsync {
-    fn to_face_name(&self) -> &'static str {
-        match self {
-            FaceAsync::Top => "top",
-            FaceAsync::Bottom => "bottom",
-            _ => "side",
-        }
-    }
 }
 
 /// 异步版本的网格生成函数。
@@ -374,16 +396,16 @@ fn generate_chunk_mesh_async(
                     continue;
                 }
 
-                for (face_index, (face, offset)) in FACES_ASYNC.iter().cloned().enumerate() {
+                for (face_index, (face, offset, uv_idx)) in FACES_ASYNC.iter().cloned().enumerate()
+                {
                     if !is_face_visible_async(chunk, x, y, z, &offset, face_index, neighbors) {
                         continue;
                     }
 
                     let base_index = positions.len() as u32;
-                    let face_name = face.to_face_name();
 
-                    // 从 UV 查找表获取坐标
-                    let uv = uv_table.get_uv(block_id, face_name);
+                    // 从 UV 查找表获取坐标（O(1) 数组索引，零堆分配）
+                    let uv = uv_table.get_uv(block_id, uv_idx);
 
                     let (face_verts, face_uvs, face_normal) = face_quad_async(x, y, z, face, uv);
                     positions.extend(face_verts);
