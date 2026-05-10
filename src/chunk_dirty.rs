@@ -7,7 +7,7 @@
 
 use bevy::prelude::*;
 
-use crate::async_mesh::{AsyncMeshManager, MeshTask, UvLookupTable};
+use crate::async_mesh::{AsyncMeshManager, MeshTask};
 use crate::chunk::{ChunkCoord, ChunkData, ChunkNeighbors};
 use crate::chunk_manager::LoadedChunks;
 use crate::resource_pack::VoxelMaterial;
@@ -89,7 +89,6 @@ pub fn rebuild_dirty_chunks(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<VoxelMaterial>>,
     async_mesh: Res<AsyncMeshManager>,
-    uv_table: Res<UvLookupTable>,
     mut loaded: ResMut<LoadedChunks>,
     dirty_chunks: Query<
         (Entity, &ChunkData, &ChunkCoordComponent, &ChunkMeshHandle),
@@ -144,7 +143,6 @@ pub fn rebuild_dirty_chunks(
             coord,
             data: chunk_data.clone(),
             neighbors,
-            uv_table: uv_table.clone(),
         });
 
         // 只有任务成功提交时才移除脏标记；

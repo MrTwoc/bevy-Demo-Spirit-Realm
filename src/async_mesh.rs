@@ -25,7 +25,7 @@
 
 use bevy::prelude::*;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::thread;
 
 use crate::chunk::{CHUNK_SIZE, ChunkCoord, ChunkData, ChunkNeighbors};
@@ -99,11 +99,12 @@ impl UvLookupTable {
 /// 发送到工作线程的网格生成任务。
 pub enum MeshTask {
     /// 生成指定区块的网格。
+    /// 地形数据在主线程生成（保证邻居数据完整性），
+    /// 网格计算（CPU 密集）在工作线程执行。
     Generate {
         coord: ChunkCoord,
         data: ChunkData,
         neighbors: ChunkNeighbors,
-        uv_table: UvLookupTable,
     },
     /// 取消指定区块的网格生成（区块已被卸载）。
     Cancel(ChunkCoord),
@@ -142,6 +143,8 @@ pub struct AsyncMeshManager {
     pending_tasks: std::sync::Mutex<HashSet<ChunkCoord>>,
     /// 等待发送取消信号的坐标（在下一次 submit 时批量发送）
     cancel_queue: std::sync::Mutex<VecDeque<ChunkCoord>>,
+    /// 共享的 UV 查找表（所有工作线程只读访问，避免每任务克隆）
+    uv_table: Arc<UvLookupTable>,
 }
 
 // 手动实现 Resource（因为 derive 宏要求所有字段 Sync，而 Mutex<Receiver> 满足）
@@ -151,18 +154,20 @@ impl AsyncMeshManager {
     /// 创建异步网格管理器并启动工作线程。
     ///
     /// `worker_count` 指定工作线程数量。建议使用 `default_worker_count()`。
-    pub fn new(worker_count: usize) -> Self {
+    pub fn new(worker_count: usize, uv_table: UvLookupTable) -> Self {
         let (task_tx, task_rx) = mpsc::channel::<MeshTask>();
         let (result_tx, result_rx) = mpsc::channel::<MeshResult>();
 
         // task_rx 需要被多个工作线程共享，使用 Arc<Mutex<>> 包装
-        let task_rx = std::sync::Arc::new(std::sync::Mutex::new(task_rx));
+        let task_rx = Arc::new(std::sync::Mutex::new(task_rx));
+        let uv_table = Arc::new(uv_table);
 
         for _ in 0..worker_count {
             let rx = task_rx.clone();
             let tx = result_tx.clone();
+            let uv = uv_table.clone();
             thread::spawn(move || {
-                Self::worker_loop(rx, tx);
+                Self::worker_loop(rx, tx, uv);
             });
         }
 
@@ -171,6 +176,7 @@ impl AsyncMeshManager {
             result_receiver: std::sync::Mutex::new(result_rx),
             pending_tasks: std::sync::Mutex::new(HashSet::new()),
             cancel_queue: std::sync::Mutex::new(VecDeque::new()),
+            uv_table,
         }
     }
 
@@ -179,8 +185,9 @@ impl AsyncMeshManager {
     /// 持续从任务通道接收任务，执行网格生成，将结果发送回主线程。
     /// 遇到 `Cancel` 任务时跳过对应坐标（如果还在处理中）。
     fn worker_loop(
-        receiver: std::sync::Arc<std::sync::Mutex<mpsc::Receiver<MeshTask>>>,
+        receiver: Arc<std::sync::Mutex<mpsc::Receiver<MeshTask>>>,
         sender: mpsc::Sender<MeshResult>,
+        uv_table: Arc<UvLookupTable>,
     ) {
         loop {
             // 从共享接收器获取任务
@@ -199,11 +206,9 @@ impl AsyncMeshManager {
                     coord,
                     data,
                     neighbors,
-                    uv_table,
                 } => {
                     // 全空气区块跳过网格生成
                     if is_air_chunk(&data) {
-                        // 发送空结果，让主线程知道任务完成
                         let _ = sender.send(MeshResult {
                             coord,
                             positions: Vec::new(),

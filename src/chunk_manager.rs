@@ -17,7 +17,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use std::collections::HashMap;
 
-use crate::async_mesh::{AsyncMeshManager, MESH_UPLOADS_PER_FRAME, MeshTask, UvLookupTable};
+use crate::async_mesh::{AsyncMeshManager, MESH_UPLOADS_PER_FRAME, MeshTask};
 use crate::chunk::{Chunk, ChunkCoord, ChunkNeighbors, fill_terrain};
 use crate::chunk_dirty::{
     ChunkAtlasHandle, ChunkCoordComponent, ChunkMeshHandle, DirtyChunk, is_air_chunk,
@@ -153,13 +153,10 @@ pub fn setup_world(
         handle: atlas_handle.clone(),
     });
 
-    // 初始化异步网格管理器
+    // 初始化异步网格管理器（UV 查找表内置于管理器中，通过 Arc 共享给所有工作线程）
     let worker_count = crate::async_mesh::default_worker_count();
-    commands.insert_resource(AsyncMeshManager::new(worker_count));
-
-    // 预构建 UV 查找表（一次性构建，所有任务共享）
-    let uv_table = UvLookupTable::from_resource_pack(&resource_pack);
-    commands.insert_resource(uv_table);
+    let uv_table = crate::async_mesh::UvLookupTable::from_resource_pack(&resource_pack);
+    commands.insert_resource(AsyncMeshManager::new(worker_count, uv_table));
 
     use crate::camera::CameraController;
     // 摄像机初始位置在地形上方（地形基准高度 16 + 振幅 32 = 最高约 48，留余量）
@@ -199,7 +196,6 @@ pub fn chunk_loader_system(
     async_mesh: Res<AsyncMeshManager>,
     camera_query: Query<&Transform, With<Camera3d>>,
     atlas_handle: Res<AtlasTextureHandle>,
-    uv_table: Res<UvLookupTable>,
     dirty_query: Query<&DirtyChunk>,
 ) {
     let Ok(cam_transform) = camera_query.single() else {
@@ -362,12 +358,11 @@ pub fn chunk_loader_system(
             },
         );
 
-        // 提交异步网格生成任务
+        // 提交异步网格生成任务（网格计算在工作线程中执行）
         async_mesh.submit_task(MeshTask::Generate {
             coord,
             data: chunk,
             neighbors,
-            uv_table: uv_table.clone(),
         });
 
         // 标记邻居区块为脏，使其重新生成网格以正确剔除与新区块的接触面。
