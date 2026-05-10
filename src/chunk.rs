@@ -22,6 +22,11 @@ const CHUNK_VOLUME: usize = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
 
 /// A single block type identifier.
 /// 0 = air (not rendered), 1 = grass, 2 = stone, 3 = dirt, 4 = sand.
+///
+/// TODO: 如果需要兼容社区模组（方块种类可能超过 256），将此处改为 `u16`。
+/// 同步修改：PalettedChunkData 索引宽度、UvLookupTable 数组维度、
+/// ResourcePackManager::block_uv_array 维度、block_texture_map 键类型。
+/// u16 可支持 65536 种方块，UV 数组约 3MB，仍在可接受范围内。
 pub type BlockId = u8;
 
 /// 调色板压缩的区块数据。
