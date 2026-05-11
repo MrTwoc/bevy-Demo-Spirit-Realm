@@ -39,14 +39,11 @@ struct PerfLoggerState {
     timer: Timer,
     start_time: Instant,
     frame_count: u64,
+    /// 是否已打印诊断路径（首次记录时打印一次用于调试）
+    diagnostics_printed: bool,
+    /// 自动发现的三角面诊断路径
+    triangle_paths: Vec<DiagnosticPath>,
 }
-
-/// 已知的渲染三角形诊断路径（与 hud.rs 保持一致）。
-const KNOWN_TRIANGLE_PATHS: &[&str] = &[
-    "render_pass/main_opaque_pass_3d/triangles_primitives_in",
-    "render_pass/main_transparent_pass_3d/triangles_primitives_in",
-    "render_pass/shadows/triangles_primitives_in",
-];
 
 /// 性能记录插件。
 pub struct PerfLoggerPlugin;
@@ -176,7 +173,27 @@ fn init_perf_logger(mut commands: Commands, config: Res<PerfLoggerConfig>) {
         timer: Timer::from_seconds(config.interval_secs, TimerMode::Repeating),
         start_time: Instant::now(),
         frame_count: 0,
+        diagnostics_printed: false,
+        triangle_paths: Vec::new(),
     });
+}
+
+/// 自动发现包含三角面信息的诊断路径。
+/// 通过遍历 DiagnosticsStore 中所有已注册的诊断，查找路径中包含 "triangle" 的条目。
+fn discover_triangle_diagnostics(diagnostics: &DiagnosticsStore) -> Vec<DiagnosticPath> {
+    let mut triangle_paths = Vec::new();
+
+    // 遍历所有已注册的诊断（iter() 返回 impl Iterator<Item = &Diagnostic>）
+    for diag in diagnostics.iter() {
+        let path = diag.path();
+        let path_str = path.as_str();
+        // 查找路径中包含 "triangle" 的诊断
+        if path_str.to_lowercase().contains("triangle") {
+            triangle_paths.push(path.clone());
+        }
+    }
+
+    triangle_paths
 }
 
 /// 定期记录性能指标到 CSV 文件。
@@ -222,11 +239,52 @@ fn record_perf_metrics(
     // 获取区块数量
     let chunk_count = loaded_chunks.entries.len();
 
-    // 获取 GPU 三角形数
+    // 首次运行时自动发现三角面诊断路径
+    if !state.diagnostics_printed {
+        state.diagnostics_printed = true;
+
+        info!("=== GPU 三角面诊断自动发现 ===");
+
+        // 自动发现三角面诊断路径
+        let discovered = discover_triangle_diagnostics(&diagnostics);
+        state.triangle_paths = discovered;
+
+        if state.triangle_paths.is_empty() {
+            info!("  ❌ 未找到任何三角面诊断路径。");
+            info!("  可能原因：");
+            info!("    1. GPU 不支持 PIPELINE_STATISTICS_QUERIES 特性");
+            info!("    2. RenderDiagnosticsPlugin 未正确注册");
+            info!("    3. Bevy 0.18.1 的诊断系统尚未生成三角面数据");
+            info!("  当前将使用 CPU 端 Mesh 统计作为回退方案。");
+
+            // 打印所有已注册的诊断路径（用于调试）
+            info!("  已注册的诊断路径：");
+            for diag in diagnostics.iter() {
+                info!("    - {}", diag.path().as_str());
+            }
+        } else {
+            info!(
+                "  ✅ 发现 {} 个三角面诊断路径：",
+                state.triangle_paths.len()
+            );
+            for path in &state.triangle_paths {
+                if let Some(diag) = diagnostics.get(path) {
+                    if let Some(value) = diag.smoothed() {
+                        info!("    - {} = {:.0}", path.as_str(), value);
+                    } else {
+                        info!("    - {} (无数据)", path.as_str());
+                    }
+                }
+            }
+        }
+
+        info!("========================");
+    }
+
+    // 获取 GPU 三角形数（使用自动发现的路径）
     let mut gpu_triangles: Option<f64> = None;
-    for path_str in KNOWN_TRIANGLE_PATHS {
-        let path = DiagnosticPath::new(*path_str);
-        if let Some(diag) = diagnostics.get(&path) {
+    for path in &state.triangle_paths {
+        if let Some(diag) = diagnostics.get(path) {
             if let Some(value) = diag.smoothed() {
                 *gpu_triangles.get_or_insert(0.0) += value;
             }

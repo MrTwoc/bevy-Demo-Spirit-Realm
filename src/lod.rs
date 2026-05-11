@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 
 use crate::async_mesh::UvLookupTable;
-use crate::chunk::{CHUNK_SIZE, ChunkCoord, ChunkData, ChunkNeighbors};
+use crate::chunk::{BlockId, CHUNK_SIZE, ChunkCoord, ChunkData, ChunkNeighbors};
 use bevy::prelude::Resource;
 
 // ============================================================================
@@ -318,7 +318,10 @@ pub fn generate_lod_mesh(
                 let y = sy * step;
                 let z = sz * step;
 
-                let block_id = chunk.get(x, y, z);
+                // 在 step³ 子体素块中扫描，取最高非空气方块作为采样结果。
+                // 这样可以保留地表层（草方块/沙子），避免降采样时跳过只有
+                // 1 层厚的草方块而直接采样到下方的泥土层。
+                let block_id = sample_dominant_block(chunk, x, y, z, step);
                 if block_id == 0 {
                     continue;
                 }
@@ -332,7 +335,16 @@ pub fn generate_lod_mesh(
                         offset[2] * step as i32,
                     ];
 
-                    if !is_face_visible_lod(chunk, x, y, z, &lod_offset, face_index, neighbors) {
+                    if !is_face_visible_lod(
+                        chunk,
+                        x,
+                        y,
+                        z,
+                        block_id,
+                        &lod_offset,
+                        face_index,
+                        neighbors,
+                    ) {
                         continue;
                     }
 
@@ -364,15 +376,48 @@ pub fn generate_lod_mesh(
     (positions, uvs, normals, indices)
 }
 
+/// 在 step³ 子体素块中采样"最高非空气方块"。
+///
+/// 从子体素块的顶部向下扫描，返回第一个遇到的非空气方块 ID。
+/// 这确保地表层（草方块/沙子等 1 层厚的方块）不会被降采样跳过。
+///
+/// # 参数
+/// - `chunk`: 区块数据
+/// - `base_x, base_y, base_z`: 子体素块在区块中的起始坐标
+/// - `step`: 子体素块边长
+fn sample_dominant_block(
+    chunk: &ChunkData,
+    base_x: usize,
+    base_y: usize,
+    base_z: usize,
+    step: usize,
+) -> BlockId {
+    // 从顶部向下扫描，找到最高层的非空气方块
+    for dy in (0..step).rev() {
+        for dz in 0..step {
+            for dx in 0..step {
+                let id = chunk.get(base_x + dx, base_y + dy, base_z + dz);
+                if id != 0 {
+                    return id;
+                }
+            }
+        }
+    }
+    0 // 全部是空气
+}
+
 /// LOD 版本的面可见性检查
 ///
 /// 与标准版本的区别：
 /// 1. 法线偏移已乘以 step（用于降采样后的体素）
 /// 2. 邻居查询时使用 rem_euclid 处理区块边界
+/// 3. `current_id` 由外部传入（来自 `sample_dominant_block`），
+///    而非直接 `chunk.get(x, y, z)`，确保面剔除使用正确的采样方块 ID
 ///
 /// # 参数
 /// - `chunk`: 区块数据
 /// - `x, y, z`: 采样点坐标（降采样后的坐标）
+/// - `current_id`: 当前采样点的方块 ID（由 `sample_dominant_block` 返回）
 /// - `lod_offset`: 法线偏移量（已乘以 step）
 /// - `face_index`: 面索引（0-5）
 /// - `neighbors`: 邻居数据
@@ -381,6 +426,7 @@ fn is_face_visible_lod(
     x: usize,
     y: usize,
     z: usize,
+    current_id: BlockId,
     lod_offset: &[i32; 3],
     face_index: usize,
     neighbors: &ChunkNeighbors,
@@ -388,8 +434,6 @@ fn is_face_visible_lod(
     let nx = x as i32 + lod_offset[0];
     let ny = y as i32 + lod_offset[1];
     let nz = z as i32 + lod_offset[2];
-
-    let current_id = chunk.get(x, y, z);
 
     // 邻居在区块边界内
     if nx >= 0
