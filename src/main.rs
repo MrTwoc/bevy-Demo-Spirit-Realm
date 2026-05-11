@@ -28,7 +28,7 @@ fn main() {
         .init_resource::<raycast::RayHitState>()
         .init_resource::<chunk_manager::LoadedChunks>()
         .insert_resource(hud::TriangleUpdateTimer(Timer::from_seconds(
-            1.0,
+            5.0,
             TimerMode::Repeating,
         )))
         .add_plugins((
