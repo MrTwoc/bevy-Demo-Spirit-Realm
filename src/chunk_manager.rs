@@ -35,6 +35,9 @@ pub const CHUNKS_PER_FRAME: usize = 4;
 pub const MAX_CACHED_CHUNKS: usize = 2000;
 /// LRU淘汰时每帧最多卸载的区块数。避免一帧内卸载太多导致卡顿。
 pub const LRU_UNLOADS_PER_FRAME: usize = 8;
+/// 每帧最多标记邻居为脏的数量。限制脏标记速率，避免级联重建风暴。
+/// 移动时每个新区块会标记最多6个邻居，限制数量可以避免每帧大量重建。
+pub const NEIGHBOR_DIRTY_PER_FRAME: usize = 8;
 
 /// 已加载区块的条目，包含实体、区块数据、GPU 资源句柄和 LRU 访问信息。
 ///
@@ -85,6 +88,17 @@ pub struct AtlasTextureHandle {
     pub handle: Handle<Image>,
 }
 
+/// 全局共享的 VoxelMaterial 实例。
+///
+/// 所有区块共享同一个材质实例，Bevy 可以自动合批（MultiDrawIndirect），
+/// 大幅减少 Draw Call 数量（从 ~2000 降低到数十个）。
+///
+/// 注意：由于共享材质，卸载区块时不应调用 `materials.remove()` 移除共享材质。
+#[derive(Resource, Clone)]
+pub struct SharedVoxelMaterial {
+    pub handle: Handle<VoxelMaterial>,
+}
+
 /// 6 个方向的偏移量，与 chunk.rs 中 FACES 顺序一致：[+X, -X, +Y, -Y, +Z, -Z]
 const NEIGHBOR_OFFSETS: [(i32, i32, i32); 6] = [
     (1, 0, 0),  // +X (Right)
@@ -122,6 +136,7 @@ pub fn setup_world(
     mut loaded: ResMut<LoadedChunks>,
     resource_pack: Res<ResourcePackManager>,
     mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<VoxelMaterial>>,
 ) {
     // 从资源包创建 Texture Array 纹理
     let atlas_handle = if let Some(atlas) = &resource_pack.atlas {
@@ -151,6 +166,14 @@ pub fn setup_world(
 
     commands.insert_resource(AtlasTextureHandle {
         handle: atlas_handle.clone(),
+    });
+
+    // 创建全局共享材质实例（所有区块共享同一个材质，Bevy 可自动合批）
+    let shared_material = materials.add(VoxelMaterial {
+        array_texture: atlas_handle.clone(),
+    });
+    commands.insert_resource(SharedVoxelMaterial {
+        handle: shared_material,
     });
 
     // 初始化异步网格管理器（UV 查找表内置于管理器中，通过 Arc 共享给所有工作线程）
@@ -190,12 +213,12 @@ pub fn setup_world(
 /// 4. 卸载超出 `UNLOAD_DISTANCE` 的区块（同时取消其异步任务）
 pub fn chunk_loader_system(
     mut commands: Commands,
-    mut materials: ResMut<Assets<VoxelMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut loaded: ResMut<LoadedChunks>,
     async_mesh: Res<AsyncMeshManager>,
     camera_query: Query<&Transform, With<Camera3d>>,
     atlas_handle: Res<AtlasTextureHandle>,
+    shared_material: Res<SharedVoxelMaterial>,
     dirty_query: Query<&DirtyChunk>,
 ) {
     let Ok(cam_transform) = camera_query.single() else {
@@ -226,9 +249,8 @@ pub fn chunk_loader_system(
             }
             let entity = entry.entity;
 
-            // 移除旧的 mesh 和 material 资源
+            // 移除旧的 mesh 资源（材质使用全局共享实例，不单独移除）
             meshes.remove(&entry.mesh_handle);
-            materials.remove(&entry.material_handle);
 
             // 创建新 Mesh 并上传到 GPU
             // 即使网格为空（全空气区块），也需要替换旧 Mesh 以清除"幽灵方块"
@@ -243,9 +265,8 @@ pub fn chunk_loader_system(
                 .with_inserted_indices(bevy::mesh::Indices::U32(result.indices)),
             );
 
-            let mat_handle = materials.add(VoxelMaterial {
-                array_texture: atlas_handle.handle.clone(),
-            });
+            // 使用全局共享材质实例（Bevy 可自动合批，减少 Draw Call）
+            let mat_handle = shared_material.handle.clone();
 
             // 更新实体组件
             commands.entity(entity).insert((
@@ -273,7 +294,6 @@ pub fn chunk_loader_system(
             player_chunk,
             &mut commands,
             &mut meshes,
-            &mut materials,
             &mut *loaded,
             &*async_mesh,
         );
@@ -284,7 +304,6 @@ pub fn chunk_loader_system(
         player_chunk,
         &mut commands,
         &mut meshes,
-        &mut materials,
         &mut *loaded,
         &*async_mesh,
     );
@@ -292,6 +311,9 @@ pub fn chunk_loader_system(
     // ── 步骤 3：分帧提交异步任务 ────────────────────────────────
     let drain_count = CHUNKS_PER_FRAME.min(loaded.load_queue.len());
     let chunks_to_load: Vec<ChunkCoord> = loaded.load_queue.drain(..drain_count).collect();
+
+    // 每帧允许标记邻居脏的最大数量（限制级联重建风暴）
+    let mut neighbor_dirty_remaining = NEIGHBOR_DIRTY_PER_FRAME;
 
     for coord in chunks_to_load {
         // 跳过已加载的（可能在队列重建前已被加载）
@@ -328,14 +350,12 @@ pub fn chunk_loader_system(
             ))
             .id();
 
-        // 创建占位 Mesh 和 Material（避免后续更新时找不到句柄）
+        // 创建占位 Mesh（材质使用全局共享实例）
         let placeholder_mesh = meshes.add(Mesh::new(
             bevy::render::render_resource::PrimitiveTopology::TriangleList,
             RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
         ));
-        let placeholder_mat = materials.add(VoxelMaterial {
-            array_texture: atlas_handle.handle.clone(),
-        });
+        let placeholder_mat = shared_material.handle.clone();
 
         commands.entity(entity).insert((
             Mesh3d(placeholder_mesh.clone()),
@@ -368,7 +388,11 @@ pub fn chunk_loader_system(
         // 标记邻居区块为脏，使其重新生成网格以正确剔除与新区块的接触面。
         // 当区块A先加载时，其边界面上的方块面被保留（因为邻居还未加载）。
         // 后来区块B加载后，区块A需要重新生成网格才能剔除接触面。
+        // 限制每帧脏标记数量，避免级联重建风暴。
         for (dx, dy, dz) in NEIGHBOR_OFFSETS.iter() {
+            if neighbor_dirty_remaining == 0 {
+                break;
+            }
             let neighbor_coord = ChunkCoord {
                 cx: coord.cx + dx,
                 cy: coord.cy + dy,
@@ -380,6 +404,7 @@ pub fn chunk_loader_system(
                     continue;
                 }
                 commands.entity(neighbor_entry.entity).insert(DirtyChunk);
+                neighbor_dirty_remaining -= 1;
             }
         }
     }
@@ -438,7 +463,6 @@ fn unload_distant_chunks(
     center: ChunkCoord,
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<VoxelMaterial>,
     loaded: &mut LoadedChunks,
     async_mesh: &AsyncMeshManager,
 ) {
@@ -459,9 +483,8 @@ fn unload_distant_chunks(
         async_mesh.cancel_task(coord);
 
         if let Some(entry) = loaded.entries.remove(&coord) {
-            // 清理 GPU 资源后再销毁实体
+            // 清理 mesh 资源（材质使用全局共享实例，不单独移除）
             meshes.remove(&entry.mesh_handle);
-            materials.remove(&entry.material_handle);
             commands.entity(entry.entity).despawn();
         }
     }
@@ -480,7 +503,6 @@ fn lru_evict(
     center: ChunkCoord,
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<VoxelMaterial>,
     loaded: &mut LoadedChunks,
     async_mesh: &AsyncMeshManager,
 ) {
@@ -522,9 +544,8 @@ fn lru_evict(
         async_mesh.cancel_task(coord);
 
         if let Some(entry) = loaded.entries.remove(&coord) {
-            // 清理 GPU 资源后再销毁实体
+            // 清理 mesh 资源（材质使用全局共享实例，不单独移除）
             meshes.remove(&entry.mesh_handle);
-            materials.remove(&entry.material_handle);
             commands.entity(entry.entity).despawn();
         }
     }

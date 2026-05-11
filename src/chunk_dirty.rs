@@ -87,23 +87,21 @@ fn collect_neighbors(coord: ChunkCoord, loaded: &LoadedChunks) -> ChunkNeighbors
 pub fn rebuild_dirty_chunks(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<VoxelMaterial>>,
     async_mesh: Res<AsyncMeshManager>,
     mut loaded: ResMut<LoadedChunks>,
     dirty_chunks: Query<
         (Entity, &ChunkData, &ChunkCoordComponent, &ChunkMeshHandle),
         With<DirtyChunk>,
     >,
-    atlas_handle: Res<crate::chunk_manager::AtlasTextureHandle>,
+    shared_material: Res<crate::chunk_manager::SharedVoxelMaterial>,
 ) {
     for (entity, chunk_data, coord_comp, mesh_handle) in &dirty_chunks {
         let coord = coord_comp.0;
 
-        // 全空气区块：清理旧 Mesh/Material 资源，替换为空 Mesh
+        // 全空气区块：清理旧 Mesh 资源，替换为空 Mesh
         if is_air_chunk(chunk_data) {
-            // 移除旧的 GPU 资源
+            // 移除旧的 mesh 资源（材质使用全局共享实例，不单独移除）
             meshes.remove(&mesh_handle.mesh);
-            materials.remove(&mesh_handle.material);
 
             // 创建空 Mesh（无顶点数据，不渲染任何内容）
             let empty_mesh = meshes.add(Mesh::new(
@@ -111,9 +109,8 @@ pub fn rebuild_dirty_chunks(
                 bevy::asset::RenderAssetUsages::MAIN_WORLD
                     | bevy::asset::RenderAssetUsages::RENDER_WORLD,
             ));
-            let empty_mat = materials.add(VoxelMaterial {
-                array_texture: atlas_handle.handle.clone(),
-            });
+            // 使用全局共享材质实例
+            let empty_mat = shared_material.handle.clone();
 
             // 更新实体组件
             commands.entity(entity).insert((

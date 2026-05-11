@@ -12,9 +12,8 @@ use crate::chunk::{BlockId, BlockPos, CHUNK_SIZE, ChunkCoord, ChunkData, world_t
 use crate::chunk_dirty::{
     ChunkAtlasHandle, ChunkCoordComponent, ChunkMeshHandle, DirtyChunk, mark_chunk_dirty,
 };
-use crate::chunk_manager::{AtlasTextureHandle, LoadedChunks};
+use crate::chunk_manager::{LoadedChunks, SharedVoxelMaterial};
 use crate::raycast::RayHitState;
-use crate::resource_pack::VoxelMaterial;
 
 /// The block type to place when right-clicking.
 /// Default: grass (1). Can be changed later with a hotbar system.
@@ -83,9 +82,8 @@ pub fn block_interaction_system(
     mut commands: Commands,
     mut loaded: ResMut<LoadedChunks>,
     cursor_options: Single<&bevy::window::CursorOptions>,
-    atlas_handle: Res<AtlasTextureHandle>,
+    shared_material: Res<SharedVoxelMaterial>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<VoxelMaterial>>,
 ) {
     // Only interact when cursor is locked (player is in game mode)
     if cursor_options.grab_mode != bevy::window::CursorGrabMode::Locked {
@@ -110,9 +108,8 @@ pub fn block_interaction_system(
                 &mut chunk_query,
                 &mut commands,
                 &mut loaded,
-                &atlas_handle,
+                &shared_material,
                 &mut meshes,
-                &mut materials,
             );
         }
     }
@@ -173,9 +170,8 @@ fn place_block(
     chunk_query: &mut Query<(Entity, &mut ChunkData, &Transform, &ChunkCoordComponent)>,
     commands: &mut Commands,
     loaded: &mut LoadedChunks,
-    atlas_handle: &AtlasTextureHandle,
+    shared_material: &SharedVoxelMaterial,
     meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<VoxelMaterial>,
 ) {
     // The new block goes at hit_pos + normal
     let place_pos = BlockPos {
@@ -224,21 +220,18 @@ fn place_block(
 
         let position = coord.to_world_origin();
 
-        // 创建占位 Mesh 和 Material
+        // 创建占位 Mesh（材质使用全局共享实例）
         let placeholder_mesh = meshes.add(Mesh::new(
             bevy::render::render_resource::PrimitiveTopology::TriangleList,
             RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
         ));
-        let placeholder_mat = materials.add(VoxelMaterial {
-            array_texture: atlas_handle.handle.clone(),
-        });
+        let placeholder_mat = shared_material.handle.clone();
 
         let entity = commands
             .spawn((
                 chunk.clone(),
                 Transform::from_translation(position),
                 Visibility::default(),
-                ChunkAtlasHandle(atlas_handle.handle.clone()),
                 ChunkCoordComponent(coord),
                 Mesh3d(placeholder_mesh.clone()),
                 MeshMaterial3d(placeholder_mat.clone()),
