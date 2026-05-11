@@ -30,6 +30,7 @@ use std::thread;
 
 use crate::chunk::{CHUNK_SIZE, ChunkCoord, ChunkData, ChunkNeighbors};
 use crate::chunk_dirty::is_air_chunk;
+use crate::lod::{LodLevel, generate_lod_mesh};
 
 /// 每帧最多从异步结果中收集并上传 GPU 的网格数。
 /// 限制 GPU 上传速率，避免帧时间尖峰。
@@ -135,6 +136,8 @@ pub enum MeshTask {
         coord: ChunkCoord,
         data: ChunkData,
         neighbors: ChunkNeighbors,
+        /// LOD 级别：None = LOD0（全精度），Some = 指定 LOD 级别
+        lod_level: Option<LodLevel>,
     },
     /// 取消指定区块的网格生成（区块已被卸载）。
     Cancel(ChunkCoord),
@@ -236,6 +239,7 @@ impl AsyncMeshManager {
                     coord,
                     data,
                     neighbors,
+                    lod_level,
                 } => {
                     // 全空气区块跳过网格生成
                     if is_air_chunk(&data) {
@@ -249,8 +253,16 @@ impl AsyncMeshManager {
                         continue;
                     }
 
-                    let (positions, uvs, normals, indices) =
-                        generate_chunk_mesh_async(&data, &uv_table, &neighbors);
+                    let (positions, uvs, normals, indices) = match lod_level {
+                        Some(LodLevel::Lod0) | None => {
+                            // LOD0 或未指定：使用标准网格生成
+                            generate_chunk_mesh_async(&data, uv_table.as_ref(), &neighbors)
+                        }
+                        Some(lod) => {
+                            // LOD1-3：使用降采样网格生成
+                            generate_lod_mesh(&data, uv_table.as_ref(), &neighbors, lod)
+                        }
+                    };
 
                     let _ = sender.send(MeshResult {
                         coord,

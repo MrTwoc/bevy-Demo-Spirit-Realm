@@ -22,10 +22,11 @@ use crate::chunk::{Chunk, ChunkCoord, ChunkNeighbors, fill_terrain};
 use crate::chunk_dirty::{
     ChunkAtlasHandle, ChunkCoordComponent, ChunkMeshHandle, DirtyChunk, is_air_chunk,
 };
+use crate::lod::{LodLevel, LodManager};
 use crate::resource_pack::{ResourcePackManager, VoxelMaterial};
 
 /// 渲染距离（区块数）。增大此值可以看到更远的世界，但需要更多区块加载。
-pub const RENDER_DISTANCE: i32 = 8;
+pub const RENDER_DISTANCE: i32 = 32;
 /// 卸载距离：超过此距离的区块会被卸载。比渲染距离大 1 避免边界闪烁。
 pub const UNLOAD_DISTANCE: i32 = RENDER_DISTANCE + 1;
 /// 每帧最多提交到异步队列的区块数。控制任务提交速率，避免工作线程积压。
@@ -52,6 +53,8 @@ pub struct ChunkEntry {
     pub mesh_handle: Handle<Mesh>,
     /// 区块材质的 VoxelMaterial 句柄，卸载时需要从 Assets 中移除
     pub material_handle: Handle<VoxelMaterial>,
+    /// 当前 LOD 级别
+    pub lod_level: LodLevel,
 }
 
 #[derive(Resource)]
@@ -204,13 +207,16 @@ pub fn setup_world(
     rebuild_load_queue(center, &mut *loaded);
 }
 
-/// 每帧系统：异步网格结果收集 + 分帧任务提交 + 卸载远处区块。
+/// 每帧系统：异步网格结果收集 + 分帧任务提交 + 卸载远处区块 + LOD 更新。
 ///
-/// 工作流程（Phase 0 异步网格生成）：
+/// 工作流程（Phase 1 LOD 系统）：
 /// 1. 收集异步网格生成结果，上传到 GPU（每帧最多 `MESH_UPLOADS_PER_FRAME` 个）
-/// 2. 检测玩家是否移动到新区块，若是则重建加载队列
-/// 3. 从队列头部取出最多 `CHUNKS_PER_FRAME` 个区块，生成地形数据并提交异步任务
-/// 4. 卸载超出 `UNLOAD_DISTANCE` 的区块（同时取消其异步任务）
+/// 2. 检测玩家是否移动到新区块，若是则：
+///    - 重建加载队列
+///    - 卸载超出范围的区块
+///    - 更新 LOD 管理器的区块 LOD 级别
+/// 3. 从队列头部取出最多 `CHUNKS_PER_FRAME` 个区块，生成地形数据并提交异步任务（携带 LOD 级别）
+/// 4. LRU 淘汰超出缓存上限的区块
 pub fn chunk_loader_system(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -220,6 +226,7 @@ pub fn chunk_loader_system(
     atlas_handle: Res<AtlasTextureHandle>,
     shared_material: Res<SharedVoxelMaterial>,
     dirty_query: Query<&DirtyChunk>,
+    mut lod_manager: ResMut<LodManager>,
 ) {
     let Ok(cam_transform) = camera_query.single() else {
         return;
@@ -296,7 +303,21 @@ pub fn chunk_loader_system(
             &mut meshes,
             &mut *loaded,
             &*async_mesh,
+            &mut *lod_manager,
         );
+    }
+
+    // ── 步骤 2.5：更新 LOD 管理器 ─────────────────────────────
+    // 检测需要切换 LOD 的区块，标记为脏以便重建
+    let to_rebuild = lod_manager.update(player_chunk, &*loaded);
+    for (coord, new_lod) in to_rebuild {
+        if let Some(entry) = loaded.entries.get(&coord) {
+            commands.entity(entry.entity).insert(DirtyChunk);
+            // 更新 ChunkEntry 中的 lod_level
+            if let Some(entry) = loaded.entries.get_mut(&coord) {
+                entry.lod_level = new_lod;
+            }
+        }
     }
 
     // LRU 淘汰：当缓存区块数超过上限时，淘汰最久未访问且距离较远的区块
@@ -306,6 +327,7 @@ pub fn chunk_loader_system(
         &mut meshes,
         &mut *loaded,
         &*async_mesh,
+        &mut *lod_manager,
     );
 
     // ── 步骤 3：分帧提交异步任务 ────────────────────────────────
@@ -367,6 +389,13 @@ pub fn chunk_loader_system(
         ));
 
         // 注册到 LoadedChunks
+        // 计算该区块的 LOD 级别（基于与玩家的距离）
+        let dist = (((coord.cx - player_chunk.cx).pow(2)
+            + (coord.cy - player_chunk.cy).pow(2)
+            + (coord.cz - player_chunk.cz).pow(2)) as f32)
+            .sqrt();
+        let lod_level = LodLevel::from_chunk_distance(dist);
+
         loaded.entries.insert(
             coord,
             ChunkEntry {
@@ -375,14 +404,19 @@ pub fn chunk_loader_system(
                 last_accessed: current_frame,
                 mesh_handle: placeholder_mesh,
                 material_handle: placeholder_mat,
+                lod_level,
             },
         );
 
-        // 提交异步网格生成任务（网格计算在工作线程中执行）
+        // 同时注册到 LodManager
+        lod_manager.set_lod(coord, lod_level);
+
+        // 提交异步网格生成任务（携带 LOD 级别）
         async_mesh.submit_task(MeshTask::Generate {
             coord,
             data: chunk,
             neighbors,
+            lod_level: Some(lod_level),
         });
 
         // 标记邻居区块为脏，使其重新生成网格以正确剔除与新区块的接触面。
@@ -458,13 +492,14 @@ fn rebuild_load_queue(center: ChunkCoord, loaded: &mut LoadedChunks) {
 /// Y 方向：超出 `Y_UNLOAD_RADIUS` 的区块卸载。
 ///
 /// 卸载前会清理关联的 GPU 资源（mesh + material），避免内存泄漏。
-/// 同时取消该区块的异步网格生成任务。
+/// 同时取消该区块的异步网格生成任务，并从 LodManager 中移除记录。
 fn unload_distant_chunks(
     center: ChunkCoord,
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     loaded: &mut LoadedChunks,
     async_mesh: &AsyncMeshManager,
+    lod_manager: &mut LodManager,
 ) {
     let to_remove: Vec<ChunkCoord> = loaded
         .entries
@@ -482,6 +517,9 @@ fn unload_distant_chunks(
         // 取消异步任务（如果还在处理中）
         async_mesh.cancel_task(coord);
 
+        // 从 LodManager 中移除记录
+        lod_manager.remove(&coord);
+
         if let Some(entry) = loaded.entries.remove(&coord) {
             // 清理 mesh 资源（材质使用全局共享实例，不单独移除）
             meshes.remove(&entry.mesh_handle);
@@ -498,13 +536,14 @@ fn unload_distant_chunks(
 /// 3. 每帧最多淘汰 `LRU_UNLOADS_PER_FRAME` 个区块，避免卡顿
 ///
 /// 淘汰前会清理关联的 GPU 资源（mesh + material），避免内存泄漏。
-/// 同时取消该区块的异步网格生成任务。
+/// 同时取消该区块的异步网格生成任务，并从 LodManager 中移除记录。
 fn lru_evict(
     center: ChunkCoord,
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     loaded: &mut LoadedChunks,
     async_mesh: &AsyncMeshManager,
+    lod_manager: &mut LodManager,
 ) {
     if loaded.entries.len() <= MAX_CACHED_CHUNKS {
         return;
@@ -542,6 +581,9 @@ fn lru_evict(
 
         // 取消异步任务（如果还在处理中）
         async_mesh.cancel_task(coord);
+
+        // 从 LodManager 中移除记录
+        lod_manager.remove(&coord);
 
         if let Some(entry) = loaded.entries.remove(&coord) {
             // 清理 mesh 资源（材质使用全局共享实例，不单独移除）

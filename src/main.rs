@@ -10,6 +10,7 @@ mod greedy_mesh;
 mod hud;
 mod input;
 mod lighting;
+mod lod;
 mod perf_logger;
 mod raycast;
 mod resource_pack;
@@ -27,6 +28,7 @@ fn main() {
         .init_resource::<WireframeMode>()
         .init_resource::<raycast::RayHitState>()
         .init_resource::<chunk_manager::LoadedChunks>()
+        .init_resource::<lod::LodManager>()
         .insert_resource(hud::TriangleUpdateTimer(Timer::from_seconds(
             5.0,
             TimerMode::Repeating,

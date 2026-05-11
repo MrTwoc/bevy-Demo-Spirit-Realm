@@ -10,6 +10,7 @@ use bevy::prelude::*;
 use crate::async_mesh::{AsyncMeshManager, MeshTask};
 use crate::chunk::{ChunkCoord, ChunkData, ChunkNeighbors};
 use crate::chunk_manager::LoadedChunks;
+use crate::lod::{LodLevel, LodManager};
 use crate::resource_pack::VoxelMaterial;
 
 /// Tag component: chunk needs mesh rebuild.
@@ -79,7 +80,7 @@ fn collect_neighbors(coord: ChunkCoord, loaded: &LoadedChunks) -> ChunkNeighbors
 /// 工作流程：
 /// 1. 遍历所有带 `DirtyChunk` 组件的实体
 /// 2. 全空气区块：清理旧 Mesh/Material 资源，替换为空 Mesh
-/// 3. 非空气区块：收集邻居数据，提交异步网格生成任务
+/// 3. 非空气区块：收集邻居数据，提交异步网格生成任务（携带 LOD 级别）
 /// 4. 移除 `DirtyChunk` 组件（结果将由 `chunk_loader_system` 统一处理）
 ///
 /// 异步结果通过 `chunk_loader_system` 中的 `AsyncMeshManager::collect_results()` 收集，
@@ -94,6 +95,7 @@ pub fn rebuild_dirty_chunks(
         With<DirtyChunk>,
     >,
     shared_material: Res<crate::chunk_manager::SharedVoxelMaterial>,
+    lod_manager: Res<LodManager>,
 ) {
     for (entity, chunk_data, coord_comp, mesh_handle) in &dirty_chunks {
         let coord = coord_comp.0;
@@ -132,14 +134,18 @@ pub fn rebuild_dirty_chunks(
             continue;
         }
 
+        // 获取该区块的当前 LOD 级别
+        let lod_level = lod_manager.get_lod(&coord);
+
         // 收集邻居数据用于跨区块面剔除
         let neighbors = collect_neighbors(coord, &loaded);
 
-        // 提交异步网格生成任务
+        // 提交异步网格生成任务（携带 LOD 级别）
         let submitted = async_mesh.submit_task(MeshTask::Generate {
             coord,
             data: chunk_data.clone(),
             neighbors,
+            lod_level: Some(lod_level),
         });
 
         // 只有任务成功提交时才移除脏标记；

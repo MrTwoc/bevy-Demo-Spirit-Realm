@@ -244,6 +244,7 @@ fn place_block(
             .id();
 
         // 注册到 LoadedChunks
+        // 注意：新创建的区块默认使用 LOD0，由 chunk_loader_system 根据距离更新
         loaded.entries.insert(
             coord,
             crate::chunk_manager::ChunkEntry {
@@ -252,6 +253,7 @@ fn place_block(
                 last_accessed: loaded.frame_counter,
                 mesh_handle: placeholder_mesh,
                 material_handle: placeholder_mat,
+                lod_level: crate::lod::LodLevel::Lod0,
             },
         );
     }
