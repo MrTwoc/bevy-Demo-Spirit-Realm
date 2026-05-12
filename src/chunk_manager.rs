@@ -243,17 +243,17 @@ pub fn chunk_loader_system(
     let current_frame = loaded.frame_counter;
 
     // // ── 调试：每 300 帧输出一次 LOD 分布统计（已验证，注释掉）─────
-    // if current_frame % 300 == 0 {
-    //     let mut lod_counts = [0u32; 4]; // LOD0, LOD1, LOD2, LOD3
-    //     for (_, entry) in &loaded.entries {
-    //         lod_counts[entry.lod_level as usize] += 1;
-    //     }
-    //     let total = loaded.entries.len();
-    //     eprintln!(
-    //         "[LOD Stats] frame={} total_chunks={} LOD0={} LOD1={} LOD2={} LOD3={}",
-    //         current_frame, total, lod_counts[0], lod_counts[1], lod_counts[2], lod_counts[3]
-    //     );
-    // }
+    if current_frame % 300 == 0 {
+        let mut lod_counts = [0u32; 4]; // LOD0, LOD1, LOD2, LOD3
+        for (_, entry) in &loaded.entries {
+            lod_counts[entry.lod_level as usize] += 1;
+        }
+        let total = loaded.entries.len();
+        eprintln!(
+            "[LOD Stats] frame={} total_chunks={} LOD0={} LOD1={} LOD2={} LOD3={}",
+            current_frame, total, lod_counts[0], lod_counts[1], lod_counts[2], lod_counts[3]
+        );
+    }
 
     // ── 步骤 1：收集异步结果并上传 GPU ──────────────────────────
     let results = async_mesh.collect_results(MESH_UPLOADS_PER_FRAME);
