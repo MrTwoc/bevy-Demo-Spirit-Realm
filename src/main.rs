@@ -29,8 +29,13 @@ fn main() {
         .init_resource::<raycast::RayHitState>()
         .init_resource::<chunk_manager::LoadedChunks>()
         .init_resource::<lod::LodManager>()
+        .init_resource::<hud::HardwareInfo>()
         .insert_resource(hud::TriangleUpdateTimer(Timer::from_seconds(
             5.0,
+            TimerMode::Repeating,
+        )))
+        .insert_resource(hud::HardwareInfoTimer(Timer::from_seconds(
+            2.0,
             TimerMode::Repeating,
         )))
         .add_plugins((
@@ -68,6 +73,7 @@ fn main() {
                 block_interaction::block_interaction_system,
                 hud::update_hud,
                 hud::update_triangle_count,
+                hud::update_hardware_info,
             ),
         )
         .add_systems(Update, hud::update_chunk_count)

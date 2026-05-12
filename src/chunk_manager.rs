@@ -199,6 +199,7 @@ pub fn setup_world(
         .id();
 
     crate::hud::setup_hud(&mut commands, camera_entity);
+    crate::hud::setup_hardware_info_hud(&mut commands, camera_entity);
 
     // 将初始区块加入加载队列（不立即加载，由 chunk_loader_system 分帧处理）
     let center = ChunkCoord {
