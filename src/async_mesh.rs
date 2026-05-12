@@ -260,6 +260,15 @@ impl AsyncMeshManager {
                         }
                         Some(lod) => {
                             // LOD1-3：使用降采样网格生成
+                            // // 调试日志（已验证，注释掉）
+                            // let result =
+                            //     generate_lod_mesh(&data, uv_table.as_ref(), &neighbors, lod);
+                            // let face_count = result.0.len() / 4;
+                            // eprintln!(
+                            //     "[LOD] {:?} chunk ({},{},{}) → {} faces (triangles: {})",
+                            //     lod, coord.cx, coord.cy, coord.cz, face_count, result.3.len() / 3
+                            // );
+                            // result
                             generate_lod_mesh(&data, uv_table.as_ref(), &neighbors, lod)
                         }
                     };

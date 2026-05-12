@@ -344,6 +344,7 @@ pub fn generate_lod_mesh(
                         &lod_offset,
                         face_index,
                         neighbors,
+                        step,
                     ) {
                         continue;
                     }
@@ -408,19 +409,23 @@ fn sample_dominant_block(
 
 /// LOD 版本的面可见性检查
 ///
-/// 与标准版本的区别：
-/// 1. 法线偏移已乘以 step（用于降采样后的体素）
-/// 2. 邻居查询时使用 rem_euclid 处理区块边界
-/// 3. `current_id` 由外部传入（来自 `sample_dominant_block`），
+/// 与标准版本的关键区别：
+/// 1. **邻居采样使用 `sample_dominant_block()`**：不是检查单个体素，
+///    而是对邻居 LOD 单元的 step³ 空间进行主导方块采样。
+///    这确保相邻 LOD 单元（如两个都是草方块）之间的内部面被正确剔除。
+/// 2. 法线偏移已乘以 step（用于降采样后的体素）
+/// 3. 邻居查询时使用 rem_euclid 处理区块边界
+/// 4. `current_id` 由外部传入（来自 `sample_dominant_block`），
 ///    而非直接 `chunk.get(x, y, z)`，确保面剔除使用正确的采样方块 ID
 ///
 /// # 参数
 /// - `chunk`: 区块数据
-/// - `x, y, z`: 采样点坐标（降采样后的坐标）
+/// - `x, y, z`: 采样点坐标（降采样后的坐标，在 0..sample_size 范围内）
 /// - `current_id`: 当前采样点的方块 ID（由 `sample_dominant_block` 返回）
-/// - `lod_offset`: 法线偏移量（已乘以 step）
+/// - `lod_offset`: 法线偏移量（已乘以 step，如 step=2 时为 [2,0,0]）
 /// - `face_index`: 面索引（0-5）
 /// - `neighbors`: 邻居数据
+/// - `step`: LOD 降采样步长
 fn is_face_visible_lod(
     chunk: &ChunkData,
     x: usize,
@@ -430,30 +435,81 @@ fn is_face_visible_lod(
     lod_offset: &[i32; 3],
     face_index: usize,
     neighbors: &ChunkNeighbors,
+    step: usize,
 ) -> bool {
     let nx = x as i32 + lod_offset[0];
     let ny = y as i32 + lod_offset[1];
     let nz = z as i32 + lod_offset[2];
 
-    // 邻居在区块边界内
+    // 邻居在区块边界内：使用 sample_dominant_block 获取邻居 LOD 单元的主导方块
     if nx >= 0
         && ny >= 0
         && nz >= 0
-        && nx < CHUNK_SIZE as i32
-        && ny < CHUNK_SIZE as i32
-        && nz < CHUNK_SIZE as i32
+        && nx + step as i32 <= CHUNK_SIZE as i32
+        && ny + step as i32 <= CHUNK_SIZE as i32
+        && nz + step as i32 <= CHUNK_SIZE as i32
     {
-        return chunk.get(nx as usize, ny as usize, nz as usize) != current_id;
+        let neighbor_id = sample_dominant_block(chunk, nx as usize, ny as usize, nz as usize, step);
+        return neighbor_id != current_id;
     }
 
     // 邻居在区块边界外：使用 rem_euclid 处理环绕
-    // 这确保了跨区块的面可见性检查正确工作
+    // 对邻居区块的对应位置也使用 sample_dominant_block 采样
     let neighbor_x = nx.rem_euclid(CHUNK_SIZE as i32) as usize;
     let neighbor_y = ny.rem_euclid(CHUNK_SIZE as i32) as usize;
     let neighbor_z = nz.rem_euclid(CHUNK_SIZE as i32) as usize;
 
+    // 检查邻居单元是否完全在邻居区块内（可以使用 sample_dominant_block）
+    if neighbor_x + step <= CHUNK_SIZE
+        && neighbor_y + step <= CHUNK_SIZE
+        && neighbor_z + step <= CHUNK_SIZE
+    {
+        if let Some(neighbor_id) = sample_dominant_block_from_neighbors(
+            neighbors, face_index, neighbor_x, neighbor_y, neighbor_z, step,
+        ) {
+            return neighbor_id != current_id;
+        }
+    }
+
+    // 回退：使用单体素检查（当采样跨越边界时）
     let neighbor_id = neighbors.get_neighbor_block(face_index, neighbor_x, neighbor_y, neighbor_z);
     neighbor_id != current_id
+}
+
+/// 从邻居区块数据中采样主导方块。
+///
+/// 与 `sample_dominant_block` 相同的逻辑，但数据来源是邻居区块的 `Arc<Vec<BlockId>>`。
+/// 如果邻居不存在或采样范围超出边界，返回 `None`。
+fn sample_dominant_block_from_neighbors(
+    neighbors: &ChunkNeighbors,
+    face_index: usize,
+    base_x: usize,
+    base_y: usize,
+    base_z: usize,
+    step: usize,
+) -> Option<BlockId> {
+    if let Some(ref data) = neighbors.neighbor_data[face_index] {
+        // 从顶部向下扫描，找到最高层的非空气方块
+        for dy in (0..step).rev() {
+            for dz in 0..step {
+                for dx in 0..step {
+                    let x = base_x + dx;
+                    let y = base_y + dy;
+                    let z = base_z + dz;
+                    if x < CHUNK_SIZE && y < CHUNK_SIZE && z < CHUNK_SIZE {
+                        let idx = z * CHUNK_SIZE * CHUNK_SIZE + y * CHUNK_SIZE + x;
+                        let id = data[idx];
+                        if id != 0 {
+                            return Some(id);
+                        }
+                    }
+                }
+            }
+        }
+        Some(0) // 全部是空气
+    } else {
+        None // 没有邻居数据
+    }
 }
 
 /// LOD 版本的面四边形生成

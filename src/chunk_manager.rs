@@ -26,7 +26,7 @@ use crate::lod::{LodLevel, LodManager};
 use crate::resource_pack::{ResourcePackManager, VoxelMaterial};
 
 /// 渲染距离（区块数）。增大此值可以看到更远的世界，但需要更多区块加载。
-pub const RENDER_DISTANCE: i32 = 16;
+pub const RENDER_DISTANCE: i32 = 32;
 /// 卸载距离：超过此距离的区块会被卸载。比渲染距离大 1 避免边界闪烁。
 pub const UNLOAD_DISTANCE: i32 = RENDER_DISTANCE + 1;
 /// 每帧最多提交到异步队列的区块数。控制任务提交速率，避免工作线程积压。
@@ -35,10 +35,10 @@ pub const CHUNKS_PER_FRAME: usize = 32;
 /// 默认值：渲染距离内约 8*8*π*9 ≈ 1800 个区块，设置为 2000 留有余量。
 pub const MAX_CACHED_CHUNKS: usize = 2000;
 /// LRU淘汰时每帧最多卸载的区块数。避免一帧内卸载太多导致卡顿。
-pub const LRU_UNLOADS_PER_FRAME: usize = 16;
+pub const LRU_UNLOADS_PER_FRAME: usize = 32;
 /// 每帧最多标记邻居为脏的数量。限制脏标记速率，避免级联重建风暴。
 /// 移动时每个新区块会标记最多6个邻居，限制数量可以避免每帧大量重建。
-pub const NEIGHBOR_DIRTY_PER_FRAME: usize = 8;
+pub const NEIGHBOR_DIRTY_PER_FRAME: usize = 16;
 
 /// 已加载区块的条目，包含实体、区块数据、GPU 资源句柄和 LRU 访问信息。
 ///
@@ -241,6 +241,19 @@ pub fn chunk_loader_system(
     // 递增帧计数器
     loaded.frame_counter += 1;
     let current_frame = loaded.frame_counter;
+
+    // // ── 调试：每 300 帧输出一次 LOD 分布统计（已验证，注释掉）─────
+    // if current_frame % 300 == 0 {
+    //     let mut lod_counts = [0u32; 4]; // LOD0, LOD1, LOD2, LOD3
+    //     for (_, entry) in &loaded.entries {
+    //         lod_counts[entry.lod_level as usize] += 1;
+    //     }
+    //     let total = loaded.entries.len();
+    //     eprintln!(
+    //         "[LOD Stats] frame={} total_chunks={} LOD0={} LOD1={} LOD2={} LOD3={}",
+    //         current_frame, total, lod_counts[0], lod_counts[1], lod_counts[2], lod_counts[3]
+    //     );
+    // }
 
     // ── 步骤 1：收集异步结果并上传 GPU ──────────────────────────
     let results = async_mesh.collect_results(MESH_UPLOADS_PER_FRAME);
