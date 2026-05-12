@@ -17,7 +17,7 @@
 use bevy::prelude::*;
 
 use crate::chunk::{BlockId, BlockPos, CHUNK_SIZE, ChunkCoord, ChunkData};
-use crate::chunk_dirty::DirtyChunk;
+use crate::chunk_dirty::{ChunkCoordComponent, ChunkMeshHandle, DirtyChunk};
 use crate::chunk_manager::LoadedChunks;
 use crate::raycast::RayHitState;
 
@@ -219,11 +219,20 @@ fn place_block(
 
         let position = coord.to_world_origin();
 
+        // 创建占位 Mesh（rebuild_dirty_chunks 需要 ChunkMeshHandle 组件）
+        let placeholder_mesh = Handle::default();
+        let placeholder_mat = Handle::default();
+
         let entity = commands
             .spawn((
                 chunk.clone(),
                 Transform::from_translation(position),
                 Visibility::default(),
+                ChunkCoordComponent(coord),
+                ChunkMeshHandle {
+                    mesh: placeholder_mesh.clone(),
+                    material: placeholder_mat.clone(),
+                },
                 DirtyChunk,
             ))
             .id();
@@ -235,8 +244,8 @@ fn place_block(
                 entity,
                 data: chunk,
                 last_accessed: loaded.frame_counter,
-                mesh_handle: Handle::default(),
-                material_handle: Handle::default(),
+                mesh_handle: placeholder_mesh,
+                material_handle: placeholder_mat,
                 lod_level: crate::lod::LodLevel::Lod0,
             },
         );
