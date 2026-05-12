@@ -5,10 +5,14 @@
 //! When a block at a chunk boundary is modified, neighbor chunks are also
 //! marked dirty so their meshes can re-evaluate cross-boundary face culling.
 //!
-//! # 性能优化
+//! # 双副本同步
 //!
-//! 使用 `LoadedChunks` HashMap 进行 O(1) 区块查找，替代原来的
-//! 遍历所有实体做线性扫描的方式。
+//! `ChunkData` 存在两份副本：
+//! 1. `LoadedChunks.entries[coord].data` — 用于射线检测（O(1) HashMap 查找）
+//! 2. ECS 实体上的 `ChunkData` 组件 — 用于脏块重建时读取数据生成网格
+//!
+//! 修改方块时必须**同时更新两份副本**，否则射线检测和网格生成会看到不同的数据，
+//! 导致"方块已被破坏但贴图仍在"的幽灵方块问题。
 
 use bevy::prelude::*;
 
@@ -79,12 +83,15 @@ fn boundary_neighbor_coords(
 ///
 /// 使用 `LoadedChunks` HashMap 进行 O(1) 区块查找，
 /// 替代原来遍历所有实体的 O(N) 线性扫描。
+///
+/// 同时查询 ECS `ChunkData` 组件，确保破坏/放置方块时两份副本同步更新。
 pub fn block_interaction_system(
     mouse: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     hit_state: Res<RayHitState>,
     mut commands: Commands,
     mut loaded: ResMut<LoadedChunks>,
+    mut chunk_query: Query<&mut ChunkData>,
     cursor_options: Single<&bevy::window::CursorOptions>,
 ) {
     // Only interact when cursor is locked (player is in game mode)
@@ -98,21 +105,33 @@ pub fn block_interaction_system(
 
     // Left-click or left Ctrl + left-click → destroy block
     if mouse.just_pressed(MouseButton::Left) && !keys.pressed(KeyCode::ControlLeft) {
-        destroy_block(hit_pos, &mut commands, &mut loaded);
+        destroy_block(hit_pos, &mut commands, &mut loaded, &mut chunk_query);
     }
 
     // Right-click → place block
     if mouse.just_pressed(MouseButton::Right) {
         if let Some(normal) = &hit_state.hit_normal {
-            place_block(hit_pos, normal, &mut commands, &mut loaded);
+            place_block(
+                hit_pos,
+                normal,
+                &mut commands,
+                &mut loaded,
+                &mut chunk_query,
+            );
         }
     }
 }
 
 /// Destroys the block at the given world position (sets it to air).
 ///
-/// 使用 HashMap 查找替代实体遍历，O(1) 复杂度。
-fn destroy_block(block_pos: &BlockPos, commands: &mut Commands, loaded: &mut LoadedChunks) {
+/// 同时更新 `LoadedChunks` HashMap 和 ECS `ChunkData` 组件，
+/// 确保射线检测和网格重建使用一致的数据。
+fn destroy_block(
+    block_pos: &BlockPos,
+    commands: &mut Commands,
+    loaded: &mut LoadedChunks,
+    chunk_query: &mut Query<&mut ChunkData>,
+) {
     let coord = ChunkCoord {
         cx: block_pos.x.div_euclid(CHUNK_SIZE as i32),
         cy: block_pos.y.div_euclid(CHUNK_SIZE as i32),
@@ -123,13 +142,21 @@ fn destroy_block(block_pos: &BlockPos, commands: &mut Commands, loaded: &mut Loa
     let ly = block_pos.y.rem_euclid(CHUNK_SIZE as i32) as usize;
     let lz = block_pos.z.rem_euclid(CHUNK_SIZE as i32) as usize;
 
-    // O(1) HashMap 查找目标区块
-    if let Some(entry) = loaded.entries.get_mut(&coord) {
-        // Set to air
-        entry.data.set(lx, ly, lz, 0);
+    // O(1) HashMap 查找目标区块，同时获取 entity 用于后续 ECS 更新
+    let target_entity = loaded.entries.get(&coord).map(|e| e.entity);
 
+    if let Some(entry) = loaded.entries.get_mut(&coord) {
+        // Set to air in LoadedChunks copy
+        entry.data.set(lx, ly, lz, 0);
+    }
+
+    // 同步更新 ECS ChunkData 组件（脏块重建时从此处读取数据）
+    if let Some(entity) = target_entity {
+        if let Ok(mut chunk_data) = chunk_query.get_mut(entity) {
+            chunk_data.set(lx, ly, lz, 0);
+        }
         // 标记为脏
-        commands.entity(entry.entity).insert(DirtyChunk);
+        commands.entity(entity).insert(DirtyChunk);
     }
 
     // 标记边界邻居为脏
@@ -142,13 +169,14 @@ fn destroy_block(block_pos: &BlockPos, commands: &mut Commands, loaded: &mut Loa
 
 /// Places a block adjacent to the hit face.
 ///
-/// 使用 HashMap 查找替代实体遍历，O(1) 复杂度。
+/// 同时更新 `LoadedChunks` HashMap 和 ECS `ChunkData` 组件。
 /// 如果目标区块不存在（被全空气跳过优化跳过），会按需创建该区块实体。
 fn place_block(
     block_pos: &BlockPos,
     normal: &IVec3,
     commands: &mut Commands,
     loaded: &mut LoadedChunks,
+    chunk_query: &mut Query<&mut ChunkData>,
 ) {
     // The new block goes at hit_pos + normal
     let place_pos = BlockPos {
@@ -171,10 +199,18 @@ fn place_block(
     if let Some(entry) = loaded.entries.get_mut(&coord) {
         // Only place if the target position is currently air
         if entry.data.get(lx, ly, lz) == 0 {
+            // 更新 LoadedChunks 副本
             entry.data.set(lx, ly, lz, PLACE_BLOCK_ID);
 
+            let entity = entry.entity;
+
+            // 同步更新 ECS ChunkData 组件
+            if let Ok(mut chunk_data) = chunk_query.get_mut(entity) {
+                chunk_data.set(lx, ly, lz, PLACE_BLOCK_ID);
+            }
+
             // 标记为脏
-            commands.entity(entry.entity).insert(DirtyChunk);
+            commands.entity(entity).insert(DirtyChunk);
         }
     } else {
         // 目标区块不存在（被全空气跳过优化跳过），按需创建

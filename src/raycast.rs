@@ -294,9 +294,12 @@ pub fn raycast_highlight_system(
             );
 
             // 复用已有的高亮实体（只更新 Transform），而非每帧创建/销毁
-            if let Some((_, mut transform)) = highlight_query.iter_mut().next() {
+            if let Some((entity, mut transform)) = highlight_query.iter_mut().next() {
                 transform.translation = highlight_pos;
-                // 确保可见
+                // 确保可见（覆盖线框模式设置的 Visibility::Hidden）
+                // 注意：不能用 remove::<Visibility>()，因为 Visibility 是 Bevy 必需组件，
+                // 移除后行为未定义，会导致高亮方块永久不可见。
+                commands.entity(entity).insert(Visibility::Visible);
             } else if let Some(res) = &highlight_res {
                 // 首次创建高亮实体，使用预创建的 Mesh 和 Material
                 commands.spawn((
