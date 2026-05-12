@@ -39,6 +39,9 @@ pub const LRU_UNLOADS_PER_FRAME: usize = 32;
 /// 每帧最多标记邻居为脏的数量。限制脏标记速率，避免级联重建风暴。
 /// 移动时每个新区块会标记最多6个邻居，限制数量可以避免每帧大量重建。
 pub const NEIGHBOR_DIRTY_PER_FRAME: usize = 16;
+/// 每帧最多处理的删除数量。控制分帧删除速率，避免大量删除操作阻塞主线程。
+/// 当需要卸载大量区块时，删除操作会分散到多帧执行。
+pub const DELETIONS_PER_FRAME: usize = 16;
 
 /// 已加载区块的条目，包含实体、区块数据、GPU 资源句柄和 LRU 访问信息。
 ///
@@ -57,6 +60,15 @@ pub struct ChunkEntry {
     pub lod_level: LodLevel,
 }
 
+/// 待删除区块的信息，用于分帧删除策略。
+///
+/// 当区块需要卸载时，先将信息放入此队列，每帧处理固定数量，
+/// 避免大量删除操作集中在单帧造成卡顿。
+struct PendingDeletion {
+    entity: Entity,
+    mesh_handle: Handle<Mesh>,
+}
+
 #[derive(Resource)]
 pub struct LoadedChunks {
     pub entries: HashMap<ChunkCoord, ChunkEntry>,
@@ -66,6 +78,8 @@ pub struct LoadedChunks {
     pub last_player_chunk: Option<ChunkCoord>,
     /// 当前帧号，用于LRU时间戳
     pub frame_counter: u64,
+    /// 分帧删除队列：待删除的区块信息
+    pending_deletions: Vec<PendingDeletion>,
 }
 
 impl Default for LoadedChunks {
@@ -75,6 +89,7 @@ impl Default for LoadedChunks {
             load_queue: Vec::new(),
             last_player_chunk: None,
             frame_counter: 0,
+            pending_deletions: Vec::new(),
         }
     }
 }
@@ -215,12 +230,13 @@ pub fn setup_world(
 ///
 /// 工作流程（Phase 1 LOD 系统）：
 /// 1. 收集异步网格生成结果，上传到 GPU（每帧最多 `MESH_UPLOADS_PER_FRAME` 个）
-/// 2. 检测玩家是否移动到新区块，若是则：
+/// 2. 处理分帧删除队列（每帧最多 `DELETIONS_PER_FRAME` 个），避免大量删除阻塞主线程
+/// 3. 检测玩家是否移动到新区块，若是则：
 ///    - 重建加载队列
-///    - 卸载超出范围的区块
+///    - 卸载超出范围的区块（放入 pending_deletions 队列）
 ///    - 更新 LOD 管理器的区块 LOD 级别
-/// 3. 从队列头部取出最多 `CHUNKS_PER_FRAME` 个区块，生成地形数据并提交异步任务（携带 LOD 级别）
-/// 4. LRU 淘汰超出缓存上限的区块
+/// 4. 从队列头部取出最多 `CHUNKS_PER_FRAME` 个区块，生成地形数据并提交异步任务（携带 LOD 级别）
+/// 5. LRU 淘汰超出缓存上限的区块（放入 pending_deletions 队列）
 pub fn chunk_loader_system(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -310,18 +326,23 @@ pub fn chunk_loader_system(
         }
     }
 
+    // ── 步骤 1.5：分帧删除处理 ────────────────────────────────
+    // 每帧只处理固定数量的删除操作，避免大量删除集中在单帧造成卡顿
+    // 删除操作包括：meshes.remove() 和 commands.entity().despawn()
+    let delete_count = DELETIONS_PER_FRAME.min(loaded.pending_deletions.len());
+    let deletions_this_frame = loaded.pending_deletions.drain(..delete_count);
+    for deletion in deletions_this_frame {
+        // 清理 mesh 资源（材质使用全局共享实例，不单独移除）
+        meshes.remove(&deletion.mesh_handle);
+        // 延迟删除实体（Bevy Commands 延迟执行）
+        commands.entity(deletion.entity).despawn();
+    }
+
     // ── 步骤 2：检测玩家移动，重建加载队列 ──────────────────────
     if loaded.last_player_chunk != Some(player_chunk) {
         loaded.last_player_chunk = Some(player_chunk);
         rebuild_load_queue(player_chunk, &mut *loaded);
-        unload_distant_chunks(
-            player_chunk,
-            &mut commands,
-            &mut meshes,
-            &mut *loaded,
-            &*async_mesh,
-            &mut *lod_manager,
-        );
+        unload_distant_chunks(player_chunk, &mut *loaded, &*async_mesh, &mut *lod_manager);
     }
 
     // ── 步骤 2.5：更新 LOD 管理器 ─────────────────────────────
@@ -338,14 +359,7 @@ pub fn chunk_loader_system(
     }
 
     // LRU 淘汰：当缓存区块数超过上限时，淘汰最久未访问且距离较远的区块
-    lru_evict(
-        player_chunk,
-        &mut commands,
-        &mut meshes,
-        &mut *loaded,
-        &*async_mesh,
-        &mut *lod_manager,
-    );
+    lru_evict(player_chunk, &mut *loaded, &*async_mesh, &mut *lod_manager);
 
     // ── 步骤 3：分帧提交异步任务 ────────────────────────────────
     let drain_count = CHUNKS_PER_FRAME.min(loaded.load_queue.len());
@@ -507,12 +521,11 @@ fn rebuild_load_queue(center: ChunkCoord, loaded: &mut LoadedChunks) {
 /// XZ 方向：超出 `UNLOAD_DISTANCE` 的区块卸载。
 /// Y 方向：超出 `Y_UNLOAD_RADIUS` 的区块卸载。
 ///
-/// 卸载前会清理关联的 GPU 资源（mesh + material），避免内存泄漏。
+/// 卸载操作会被分帧执行：区块信息先加入 `pending_deletions` 队列，
+/// 每帧通过 `DELETIONS_PER_FRAME` 限制删除数量，避免大量操作阻塞主线程。
 /// 同时取消该区块的异步网格生成任务，并从 LodManager 中移除记录。
 fn unload_distant_chunks(
     center: ChunkCoord,
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
     loaded: &mut LoadedChunks,
     async_mesh: &AsyncMeshManager,
     lod_manager: &mut LodManager,
@@ -536,10 +549,12 @@ fn unload_distant_chunks(
         // 从 LodManager 中移除记录
         lod_manager.remove(&coord);
 
+        // 将删除信息加入 pending_deletions 队列，等待分帧删除
         if let Some(entry) = loaded.entries.remove(&coord) {
-            // 清理 mesh 资源（材质使用全局共享实例，不单独移除）
-            meshes.remove(&entry.mesh_handle);
-            commands.entity(entry.entity).despawn();
+            loaded.pending_deletions.push(PendingDeletion {
+                entity: entry.entity,
+                mesh_handle: entry.mesh_handle,
+            });
         }
     }
 }
@@ -551,12 +566,11 @@ fn unload_distant_chunks(
 /// 2. 按 (last_accessed, distance) 排序，最久未访问 + 最远的优先淘汰
 /// 3. 每帧最多淘汰 `LRU_UNLOADS_PER_FRAME` 个区块，避免卡顿
 ///
-/// 淘汰前会清理关联的 GPU 资源（mesh + material），避免内存泄漏。
+/// 淘汰操作会被分帧执行：区块信息先加入 `pending_deletions` 队列，
+/// 每帧通过 `DELETIONS_PER_FRAME` 限制删除数量，避免大量删除操作阻塞主线程。
 /// 同时取消该区块的异步网格生成任务，并从 LodManager 中移除记录。
 fn lru_evict(
     center: ChunkCoord,
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
     loaded: &mut LoadedChunks,
     async_mesh: &AsyncMeshManager,
     lod_manager: &mut LodManager,
@@ -601,10 +615,12 @@ fn lru_evict(
         // 从 LodManager 中移除记录
         lod_manager.remove(&coord);
 
+        // 将删除信息加入 pending_deletions 队列，等待分帧删除
         if let Some(entry) = loaded.entries.remove(&coord) {
-            // 清理 mesh 资源（材质使用全局共享实例，不单独移除）
-            meshes.remove(&entry.mesh_handle);
-            commands.entity(entry.entity).despawn();
+            loaded.pending_deletions.push(PendingDeletion {
+                entity: entry.entity,
+                mesh_handle: entry.mesh_handle,
+            });
         }
     }
 }
