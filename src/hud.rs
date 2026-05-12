@@ -239,7 +239,7 @@ pub(crate) struct CpuInfoText;
 #[derive(Component)]
 pub(crate) struct CpuUsageText;
 
-/// 标记 GPU 信息文本的组件。
+/// 标记 GPU 型号文本的组件。
 #[derive(Component)]
 pub(crate) struct GpuInfoText;
 
@@ -275,8 +275,8 @@ impl Default for HardwareInfo {
             .map(|cpu| cpu.brand().to_string())
             .unwrap_or_else(|| "Unknown CPU".to_string());
 
-        // GPU 名称（sysinfo 不直接提供 GPU 信息，使用占位符）
-        let gpu_name = "Detecting...".to_string();
+        // GPU 名称通过系统命令获取
+        let gpu_name = Self::detect_gpu_name();
 
         Self {
             system,
@@ -284,6 +284,45 @@ impl Default for HardwareInfo {
             cpu_name,
             gpu_name,
         }
+    }
+}
+
+impl HardwareInfo {
+    /// 通过系统命令获取 GPU 名称（轻量方案，无额外依赖）。
+    #[cfg(target_os = "windows")]
+    fn detect_gpu_name() -> String {
+        std::process::Command::new("wmic")
+            .args(["path", "win32_VideoController", "get", "name"])
+            .output()
+            .ok()
+            .and_then(|output| {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                // wmic 输出第一行是标题 "Name"，第二行起是实际 GPU 名称
+                stdout
+                    .lines()
+                    .map(|l| l.trim())
+                    .find(|l| !l.is_empty() && *l != "Name")
+                    .map(|s| s.to_string())
+            })
+            .unwrap_or_else(|| "Unknown GPU".to_string())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn detect_gpu_name() -> String {
+        // Linux/macOS: 尝试通过 lspci 获取
+        std::process::Command::new("sh")
+            .args([
+                "-c",
+                "lspci 2>/dev/null | grep -i 'vga\\|3d\\|display' | head -1 | sed 's/.*: //'",
+            ])
+            .output()
+            .ok()
+            .and_then(|output| {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let name = stdout.trim().to_string();
+                if name.is_empty() { None } else { Some(name) }
+            })
+            .unwrap_or_else(|| "Unknown GPU".to_string())
     }
 }
 
@@ -422,7 +461,7 @@ pub fn update_hardware_info(
         **text = format!("Process CPU: {:.1}%", proc_cpu);
     }
 
-    // GPU 信息（静态）
+    // GPU 型号（静态）
     if let Ok(mut text) = gpu_query.single_mut() {
         **text = format!("GPU: {}", hw_info.gpu_name);
     }
