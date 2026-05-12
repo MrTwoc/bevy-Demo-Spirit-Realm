@@ -4,15 +4,17 @@
 //! looking at, then modifies the chunk data and marks it dirty for rebuild.
 //! When a block at a chunk boundary is modified, neighbor chunks are also
 //! marked dirty so their meshes can re-evaluate cross-boundary face culling.
+//!
+//! # 性能优化
+//!
+//! 使用 `LoadedChunks` HashMap 进行 O(1) 区块查找，替代原来的
+//! 遍历所有实体做线性扫描的方式。
 
-use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
 
-use crate::chunk::{BlockId, BlockPos, CHUNK_SIZE, ChunkCoord, ChunkData, world_to_chunk};
-use crate::chunk_dirty::{
-    ChunkAtlasHandle, ChunkCoordComponent, ChunkMeshHandle, DirtyChunk, mark_chunk_dirty,
-};
-use crate::chunk_manager::{LoadedChunks, SharedVoxelMaterial};
+use crate::chunk::{BlockId, BlockPos, CHUNK_SIZE, ChunkCoord, ChunkData};
+use crate::chunk_dirty::DirtyChunk;
+use crate::chunk_manager::LoadedChunks;
 use crate::raycast::RayHitState;
 
 /// The block type to place when right-clicking.
@@ -74,16 +76,16 @@ fn boundary_neighbor_coords(
 }
 
 /// Handles left-click (destroy) and right-click (place) block interactions.
+///
+/// 使用 `LoadedChunks` HashMap 进行 O(1) 区块查找，
+/// 替代原来遍历所有实体的 O(N) 线性扫描。
 pub fn block_interaction_system(
     mouse: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     hit_state: Res<RayHitState>,
-    mut chunk_query: Query<(Entity, &mut ChunkData, &Transform, &ChunkCoordComponent)>,
     mut commands: Commands,
     mut loaded: ResMut<LoadedChunks>,
     cursor_options: Single<&bevy::window::CursorOptions>,
-    shared_material: Res<SharedVoxelMaterial>,
-    mut meshes: ResMut<Assets<Mesh>>,
 ) {
     // Only interact when cursor is locked (player is in game mode)
     if cursor_options.grab_mode != bevy::window::CursorGrabMode::Locked {
@@ -96,82 +98,57 @@ pub fn block_interaction_system(
 
     // Left-click or left Ctrl + left-click → destroy block
     if mouse.just_pressed(MouseButton::Left) && !keys.pressed(KeyCode::ControlLeft) {
-        destroy_block(hit_pos, &mut chunk_query, &mut commands, &mut loaded);
+        destroy_block(hit_pos, &mut commands, &mut loaded);
     }
 
     // Right-click → place block
     if mouse.just_pressed(MouseButton::Right) {
         if let Some(normal) = &hit_state.hit_normal {
-            place_block(
-                hit_pos,
-                normal,
-                &mut chunk_query,
-                &mut commands,
-                &mut loaded,
-                &shared_material,
-                &mut meshes,
-            );
+            place_block(hit_pos, normal, &mut commands, &mut loaded);
         }
     }
 }
 
 /// Destroys the block at the given world position (sets it to air).
-fn destroy_block(
-    block_pos: &BlockPos,
-    chunk_query: &mut Query<(Entity, &mut ChunkData, &Transform, &ChunkCoordComponent)>,
-    commands: &mut Commands,
-    loaded: &mut LoadedChunks,
-) {
-    let Some((coord, _)) = world_to_chunk(*block_pos) else {
-        return;
+///
+/// 使用 HashMap 查找替代实体遍历，O(1) 复杂度。
+fn destroy_block(block_pos: &BlockPos, commands: &mut Commands, loaded: &mut LoadedChunks) {
+    let coord = ChunkCoord {
+        cx: block_pos.x.div_euclid(CHUNK_SIZE as i32),
+        cy: block_pos.y.div_euclid(CHUNK_SIZE as i32),
+        cz: block_pos.z.div_euclid(CHUNK_SIZE as i32),
     };
 
-    // 先收集需要标记脏的邻居坐标（在 mut 遍历之前计算）
     let lx = block_pos.x.rem_euclid(CHUNK_SIZE as i32) as usize;
     let ly = block_pos.y.rem_euclid(CHUNK_SIZE as i32) as usize;
     let lz = block_pos.z.rem_euclid(CHUNK_SIZE as i32) as usize;
-    let neighbor_coords = boundary_neighbor_coords(coord, (lx, ly, lz));
 
-    // Find the chunk entity that contains this block
-    for (entity, mut chunk_data, _transform, coord_comp) in chunk_query.iter_mut() {
-        if coord_comp.0 != coord {
-            continue;
-        }
-
+    // O(1) HashMap 查找目标区块
+    if let Some(entry) = loaded.entries.get_mut(&coord) {
         // Set to air
-        chunk_data.set(lx, ly, lz, 0);
+        entry.data.set(lx, ly, lz, 0);
 
-        // 同步更新 LoadedChunks 中存储的区块数据
-        if let Some(entry) = loaded.entries.get_mut(&coord) {
-            entry.data.set(lx, ly, lz, 0);
-        }
-
-        mark_chunk_dirty(commands, entity);
-        break;
+        // 标记为脏
+        commands.entity(entry.entity).insert(DirtyChunk);
     }
 
-    // 在 mut 遍历结束后，标记边界邻居为脏
-    for nc in &neighbor_coords {
-        for (entity, _, _, coord_comp) in chunk_query.iter() {
-            if coord_comp.0 == *nc {
-                mark_chunk_dirty(commands, entity);
-                break;
-            }
+    // 标记边界邻居为脏
+    for nc in boundary_neighbor_coords(coord, (lx, ly, lz)) {
+        if let Some(neighbor_entry) = loaded.entries.get(&nc) {
+            commands.entity(neighbor_entry.entity).insert(DirtyChunk);
         }
     }
 }
 
 /// Places a block adjacent to the hit face.
 ///
+/// 使用 HashMap 查找替代实体遍历，O(1) 复杂度。
 /// 如果目标区块不存在（被全空气跳过优化跳过），会按需创建该区块实体。
 fn place_block(
     block_pos: &BlockPos,
     normal: &IVec3,
-    chunk_query: &mut Query<(Entity, &mut ChunkData, &Transform, &ChunkCoordComponent)>,
     commands: &mut Commands,
     loaded: &mut LoadedChunks,
-    shared_material: &SharedVoxelMaterial,
-    meshes: &mut Assets<Mesh>,
 ) {
     // The new block goes at hit_pos + normal
     let place_pos = BlockPos {
@@ -180,91 +157,59 @@ fn place_block(
         z: block_pos.z + normal.z,
     };
 
-    let Some((coord, _)) = world_to_chunk(place_pos) else {
-        return;
+    let coord = ChunkCoord {
+        cx: place_pos.x.div_euclid(CHUNK_SIZE as i32),
+        cy: place_pos.y.div_euclid(CHUNK_SIZE as i32),
+        cz: place_pos.z.div_euclid(CHUNK_SIZE as i32),
     };
 
     let lx = place_pos.x.rem_euclid(CHUNK_SIZE as i32) as usize;
     let ly = place_pos.y.rem_euclid(CHUNK_SIZE as i32) as usize;
     let lz = place_pos.z.rem_euclid(CHUNK_SIZE as i32) as usize;
 
-    // 先收集需要标记脏的邻居坐标
-    let neighbor_coords = boundary_neighbor_coords(coord, (lx, ly, lz));
-
-    // 查找目标区块实体
-    let mut found = false;
-    for (entity, mut chunk_data, _transform, coord_comp) in chunk_query.iter_mut() {
-        if coord_comp.0 != coord {
-            continue;
-        }
-        found = true;
-
+    // O(1) HashMap 查找目标区块
+    if let Some(entry) = loaded.entries.get_mut(&coord) {
         // Only place if the target position is currently air
-        if chunk_data.get(lx, ly, lz) == 0 {
-            chunk_data.set(lx, ly, lz, PLACE_BLOCK_ID);
+        if entry.data.get(lx, ly, lz) == 0 {
+            entry.data.set(lx, ly, lz, PLACE_BLOCK_ID);
 
-            // 同步更新 LoadedChunks 中存储的区块数据
-            if let Some(entry) = loaded.entries.get_mut(&coord) {
-                entry.data.set(lx, ly, lz, PLACE_BLOCK_ID);
-            }
-
-            mark_chunk_dirty(commands, entity);
+            // 标记为脏
+            commands.entity(entry.entity).insert(DirtyChunk);
         }
-        break;
-    }
-
-    // 目标区块不存在（被全空气跳过优化跳过），按需创建
-    if !found {
+    } else {
+        // 目标区块不存在（被全空气跳过优化跳过），按需创建
         let mut chunk = ChunkData::filled(0);
         chunk.set(lx, ly, lz, PLACE_BLOCK_ID);
 
         let position = coord.to_world_origin();
-
-        // 创建占位 Mesh（材质使用全局共享实例）
-        let placeholder_mesh = meshes.add(Mesh::new(
-            bevy::render::render_resource::PrimitiveTopology::TriangleList,
-            RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
-        ));
-        let placeholder_mat = shared_material.handle.clone();
 
         let entity = commands
             .spawn((
                 chunk.clone(),
                 Transform::from_translation(position),
                 Visibility::default(),
-                ChunkCoordComponent(coord),
-                Mesh3d(placeholder_mesh.clone()),
-                MeshMaterial3d(placeholder_mat.clone()),
-                ChunkMeshHandle {
-                    mesh: placeholder_mesh.clone(),
-                    material: placeholder_mat.clone(),
-                },
                 DirtyChunk,
             ))
             .id();
 
         // 注册到 LoadedChunks
-        // 注意：新创建的区块默认使用 LOD0，由 chunk_loader_system 根据距离更新
         loaded.entries.insert(
             coord,
             crate::chunk_manager::ChunkEntry {
                 entity,
                 data: chunk,
                 last_accessed: loaded.frame_counter,
-                mesh_handle: placeholder_mesh,
-                material_handle: placeholder_mat,
+                mesh_handle: Handle::default(),
+                material_handle: Handle::default(),
                 lod_level: crate::lod::LodLevel::Lod0,
             },
         );
     }
 
-    // 在 mut 遍历结束后，标记边界邻居为脏
-    for nc in &neighbor_coords {
-        for (entity, _, _, coord_comp) in chunk_query.iter() {
-            if coord_comp.0 == *nc {
-                mark_chunk_dirty(commands, entity);
-                break;
-            }
+    // 标记边界邻居为脏
+    for nc in boundary_neighbor_coords(coord, (lx, ly, lz)) {
+        if let Some(neighbor_entry) = loaded.entries.get(&nc) {
+            commands.entity(neighbor_entry.entity).insert(DirtyChunk);
         }
     }
 }

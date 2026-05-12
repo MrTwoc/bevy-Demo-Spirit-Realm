@@ -11,6 +11,7 @@ use bevy::{
 use noise::{Fbm, MultiFractal, NoiseFn, Simplex};
 use std::collections::HashMap;
 use std::hash::Hash;
+use std::sync::Arc;
 
 use crate::chunk_dirty::ChunkMeshHandle;
 use crate::resource_pack::{ResourcePackManager, VoxelMaterial};
@@ -101,24 +102,28 @@ impl PalettedChunkData {
         self.palette[palette_index]
     }
 
+    /// 获取或创建指定 BlockId 的调色板索引。
+    ///
+    /// 如果该 BlockId 已在调色板中，返回已有索引；
+    /// 否则添加到调色板并返回新索引。
+    pub fn add_or_get_palette_index(&mut self, id: BlockId) -> u8 {
+        if let Some(&index) = self.reverse_palette.get(&id) {
+            index
+        } else {
+            let index = self.palette.len() as u8;
+            self.palette.push(id);
+            self.reverse_palette.insert(id, index);
+            index
+        }
+    }
+
     /// 设置指定位置的方块ID
     pub fn set(&mut self, x: usize, y: usize, z: usize, id: BlockId) {
         if x >= CHUNK_SIZE || y >= CHUNK_SIZE || z >= CHUNK_SIZE {
             return;
         }
         let idx = z * CHUNK_SIZE * CHUNK_SIZE + y * CHUNK_SIZE + x;
-
-        // 获取或创建调色板索引
-        let palette_index = if let Some(&index) = self.reverse_palette.get(&id) {
-            index
-        } else {
-            // 新方块类型，添加到调色板
-            let index = self.palette.len() as u8;
-            self.palette.push(id);
-            self.reverse_palette.insert(id, index);
-            index
-        };
-
+        let palette_index = self.add_or_get_palette_index(id);
         self.indices[idx] = palette_index;
     }
 
@@ -220,18 +225,20 @@ const FACE_UV_INDICES: [usize; 6] = [2, 2, 0, 1, 2, 2];
 /// 索引顺序与 FACES 一致：[+X, -X, +Y, -Y, +Z, -Z]。
 /// 如果某个方向没有邻居（未加载），对应位置为 `None`，
 /// 面剔除时会将缺失的邻居视为空气（即保留该面）。
+///
+/// 使用 `Arc<Vec<BlockId>>` 共享邻居数据，避免每次提交异步任务时
+/// 为 6 个邻居各分配 32KB 堆内存（共 192KB）。
+/// 多个区块的同一方向邻居引用同一份 `Arc` 数据，只有在首次解码时分配。
 pub struct ChunkNeighbors {
-    /// 6 个方向的邻居区块数据引用
-    pub neighbors: [Option<BlockId>; 6],
     /// 6 个方向的邻居完整数据（用于跨边界查询）
-    pub neighbor_data: [Option<Vec<BlockId>>; 6],
+    /// 使用 Arc 共享，多个区块可引用同一份数据，避免重复分配
+    pub neighbor_data: [Option<Arc<Vec<BlockId>>>; 6],
 }
 
 impl ChunkNeighbors {
     /// 创建空的邻居数据（所有方向都没有邻居）
     pub fn empty() -> Self {
         Self {
-            neighbors: [None; 6],
             neighbor_data: std::array::from_fn(|_| None),
         }
     }
@@ -299,13 +306,10 @@ impl ChunkData {
                 if *current_id != id {
                     // 从Uniform转换为Paletted
                     let mut data = PalettedChunkData::new();
-                    // 填充所有体素为当前方块
-                    for oz in 0..CHUNK_SIZE {
-                        for oy in 0..CHUNK_SIZE {
-                            for ox in 0..CHUNK_SIZE {
-                                data.set(ox, oy, oz, *current_id);
-                            }
-                        }
+                    // 只在当前方块不是空气时才填充旧值（空气已经是默认值 0）
+                    if *current_id != 0 {
+                        let palette_index = data.add_or_get_palette_index(*current_id);
+                        data.indices.fill(palette_index);
                     }
                     // 设置新方块
                     data.set(x, y, z, id);
@@ -315,6 +319,18 @@ impl ChunkData {
             ChunkData::Paletted(data) => {
                 data.set(x, y, z, id);
             }
+        }
+    }
+
+    /// 将 ChunkData 转换为 Arc<Vec<BlockId>>（用于共享给邻居查询）。
+    ///
+    /// 使用 `Arc` 包装，多个区块可共享同一份邻居数据，
+    /// 避免每次提交异步任务时为 6 个邻居各分配 32KB 堆内存。
+    pub fn to_shared_vec(&self) -> Arc<Vec<BlockId>> {
+        match self {
+            ChunkData::Empty => Arc::new(vec![0; CHUNK_VOLUME]),
+            ChunkData::Uniform(id) => Arc::new(vec![*id; CHUNK_VOLUME]),
+            ChunkData::Paletted(data) => Arc::new(data.to_blocks()),
         }
     }
 

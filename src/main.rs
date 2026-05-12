@@ -52,6 +52,7 @@ fn main() {
             )
                 .chain(),
         )
+        .add_systems(Startup, raycast::setup_highlight_resources)
         .add_systems(First, chunk_manager::chunk_loader_system)
         .add_systems(
             Update,

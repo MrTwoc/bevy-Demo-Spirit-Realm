@@ -10,7 +10,7 @@ use bevy::prelude::*;
 use crate::async_mesh::{AsyncMeshManager, MeshTask};
 use crate::chunk::{ChunkCoord, ChunkData, ChunkNeighbors};
 use crate::chunk_manager::LoadedChunks;
-use crate::lod::{LodLevel, LodManager};
+use crate::lod::LodManager;
 use crate::resource_pack::VoxelMaterial;
 
 /// Tag component: chunk needs mesh rebuild.
@@ -56,7 +56,10 @@ const NEIGHBOR_OFFSETS: [(i32, i32, i32); 6] = [
     (0, 0, -1), // -Z (Back)
 ];
 
-/// 从已加载区块中收集指定坐标的 6 个邻居数据
+/// 从已加载区块中收集指定坐标的 6 个邻居数据。
+///
+/// 使用 `to_shared_vec()` 返回 `Arc<Vec<BlockId>>`，避免每个邻居
+/// 独立分配 32KB 堆内存。
 fn collect_neighbors(coord: ChunkCoord, loaded: &LoadedChunks) -> ChunkNeighbors {
     let mut neighbors = ChunkNeighbors::empty();
 
@@ -68,7 +71,7 @@ fn collect_neighbors(coord: ChunkCoord, loaded: &LoadedChunks) -> ChunkNeighbors
         };
 
         if let Some(entry) = loaded.entries.get(&neighbor_coord) {
-            neighbors.neighbor_data[i] = Some(entry.data.to_vec());
+            neighbors.neighbor_data[i] = Some(entry.data.to_shared_vec());
         }
     }
 

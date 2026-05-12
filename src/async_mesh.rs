@@ -34,7 +34,7 @@ use crate::lod::{LodLevel, generate_lod_mesh};
 
 /// 每帧最多从异步结果中收集并上传 GPU 的网格数。
 /// 限制 GPU 上传速率，避免帧时间尖峰。
-pub const MESH_UPLOADS_PER_FRAME: usize = 4;
+pub const MESH_UPLOADS_PER_FRAME: usize = 32;
 
 /// 工作线程数量。默认使用可用 CPU 核心数的一半（至少 1），
 /// 留出核心给主线程和渲染线程。

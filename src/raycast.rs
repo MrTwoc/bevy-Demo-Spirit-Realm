@@ -2,10 +2,16 @@
 //!
 //! 从摄像机位置向视线方向发射射线，遍历射线经过的体素，
 //! 找到第一个非空气方块后，在该位置显示一个半透明高亮方块。
+//!
+//! # 性能优化
+//!
+//! 使用 `LoadedChunks` HashMap 进行 O(1) 区块查找，替代原来的
+//! 每帧收集所有区块实体到 Vec 再做 O(N) 线性扫描的方式。
 
 use bevy::prelude::*;
 
-use crate::chunk::{BlockPos, CHUNK_SIZE, ChunkData};
+use crate::chunk::{BlockPos, CHUNK_SIZE, ChunkCoord};
+use crate::chunk_manager::LoadedChunks;
 use crate::chunk_wire_frame::WireframeMode;
 
 // ---------------------------------------------------------------------------
@@ -35,6 +41,13 @@ pub struct RayHitState {
     pub hit_normal: Option<IVec3>,
 }
 
+/// 预创建的高亮方块资源，避免每帧创建/销毁 GPU 资源
+#[derive(Resource)]
+pub struct HighlightResources {
+    pub mesh: Handle<Mesh>,
+    pub material: Handle<StandardMaterial>,
+}
+
 // ---------------------------------------------------------------------------
 // DDA 射线检测算法
 // ---------------------------------------------------------------------------
@@ -60,8 +73,11 @@ pub struct VoxelHit {
 /// 从射线起点出发，沿射线方向逐个体素遍历，
 /// 返回第一个非空气方块的命中信息。
 ///
+/// 使用 `LoadedChunks` HashMap 进行 O(1) 区块查找，
+/// 避免对所有 ~2000 个区块做线性扫描。
+///
 /// 参考: "A Fast Voxel Traversal Algorithm for Ray Tracing" - Amanatides & Woo
-pub fn cast_ray(ray: &Ray, chunks: &[(&ChunkData, Vec3)]) -> Option<VoxelHit> {
+pub fn cast_ray(ray: &Ray, loaded: &LoadedChunks) -> Option<VoxelHit> {
     let dir = ray.direction.normalize();
 
     // 当前所在的体素坐标
@@ -130,8 +146,8 @@ pub fn cast_ray(ray: &Ray, chunks: &[(&ChunkData, Vec3)]) -> Option<VoxelHit> {
 
     // 遍历体素
     for _ in 0..(MAX_RAY_DISTANCE * 3.0) as i32 {
-        // 检查当前体素是否为非空气
-        if let Some(block_id) = get_block_at(x, y, z, chunks) {
+        // 检查当前体素是否为非空气（O(1) HashMap 查找）
+        if let Some(block_id) = get_block_at_hashmap(x, y, z, loaded) {
             if block_id != 0 {
                 return Some(VoxelHit {
                     block_pos: BlockPos { x, y, z },
@@ -177,48 +193,66 @@ pub fn cast_ray(ray: &Ray, chunks: &[(&ChunkData, Vec3)]) -> Option<VoxelHit> {
     None
 }
 
-/// 根据世界坐标查询方块 ID
-fn get_block_at(x: i32, y: i32, z: i32, chunks: &[(&ChunkData, Vec3)]) -> Option<u8> {
-    for (chunk_data, chunk_origin) in chunks {
-        // 计算局部坐标
-        let local_x = x - chunk_origin.x as i32;
-        let local_y = y - chunk_origin.y as i32;
-        let local_z = z - chunk_origin.z as i32;
+/// 根据世界坐标查询方块 ID（O(1) HashMap 查找）。
+///
+/// 通过世界坐标计算 `ChunkCoord`，然后在 `LoadedChunks` 中查找对应区块，
+/// 最后在区块数据中查询局部坐标的方块 ID。
+fn get_block_at_hashmap(x: i32, y: i32, z: i32, loaded: &LoadedChunks) -> Option<u8> {
+    let world_pos = Vec3::new(x as f32 + 0.5, y as f32 + 0.5, z as f32 + 0.5);
+    let coord = ChunkCoord::from_world(world_pos);
 
-        // 检查是否在 chunk 范围内
-        if local_x >= 0
-            && local_x < CHUNK_SIZE as i32
-            && local_y >= 0
-            && local_y < CHUNK_SIZE as i32
-            && local_z >= 0
-            && local_z < CHUNK_SIZE as i32
-        {
-            return Some(chunk_data.get(local_x as usize, local_y as usize, local_z as usize));
-        }
-    }
-    None
+    // O(1) HashMap 查找
+    let entry = loaded.entries.get(&coord)?;
+
+    // 计算局部坐标
+    let lx = x.rem_euclid(CHUNK_SIZE as i32) as usize;
+    let ly = y.rem_euclid(CHUNK_SIZE as i32) as usize;
+    let lz = z.rem_euclid(CHUNK_SIZE as i32) as usize;
+
+    Some(entry.data.get(lx, ly, lz))
 }
 
 // ---------------------------------------------------------------------------
 // 系统
 // ---------------------------------------------------------------------------
 
-/// 每帧执行射线检测，更新高亮方块位置
-pub fn raycast_highlight_system(
+/// 初始化高亮方块资源（startup 时创建一次，避免每帧创建/销毁）
+pub fn setup_highlight_resources(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let mesh = meshes.add(Mesh::from(Cuboid::new(1.01, 1.01, 1.01)));
+    let mat = materials.add(StandardMaterial {
+        base_color: HIGHLIGHT_COLOR,
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
+    commands.insert_resource(HighlightResources {
+        mesh,
+        material: mat,
+    });
+}
+
+/// 每帧执行射线检测，更新高亮方块位置。
+///
+/// 使用 `LoadedChunks` HashMap 进行 O(1) 区块查找，
+/// 替代原来每帧收集所有 ~2000 个区块实体到 Vec 的 O(N) 线性扫描。
+pub fn raycast_highlight_system(
+    mut commands: Commands,
     camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
-    chunk_query: Query<(&ChunkData, &Transform)>,
-    highlight_query: Query<Entity, With<HighlightBlock>>,
+    loaded: Res<LoadedChunks>,
+    mut highlight_query: Query<(Entity, &mut Transform), With<HighlightBlock>>,
     mut hit_state: ResMut<RayHitState>,
     wireframe_mode: Res<WireframeMode>,
+    highlight_res: Option<Res<HighlightResources>>,
 ) {
     // 线框模式下不显示高亮（避免干扰）
     if wireframe_mode.0 {
-        // 移除已有的高亮方块
-        for entity in &highlight_query {
-            commands.entity(entity).despawn();
+        // 隐藏已有的高亮方块
+        for (entity, _) in &highlight_query {
+            commands.entity(entity).insert(Visibility::Hidden);
         }
         hit_state.hit_pos = None;
         return;
@@ -244,51 +278,43 @@ pub fn raycast_highlight_system(
         direction: *ray3d.direction,
     };
 
-    // 收集所有 chunk 数据
-    let chunk_data: Vec<(&ChunkData, Vec3)> = chunk_query
-        .iter()
-        .map(|(data, transform)| (data, transform.translation))
-        .collect();
-
-    // 执行射线检测
-    let hit = cast_ray(&ray, &chunk_data);
-
-    // 移除旧的高亮方块
-    for entity in &highlight_query {
-        commands.entity(entity).despawn();
-    }
+    // 执行射线检测（O(1) HashMap 查找）
+    let hit = cast_ray(&ray, &loaded);
 
     match hit {
         Some(hit) => {
             hit_state.hit_pos = Some(hit.block_pos);
             hit_state.hit_normal = Some(hit.normal);
 
-            // 在命中位置放置半透明高亮方块
+            // 更新高亮方块位置
             let highlight_pos = Vec3::new(
                 hit.block_pos.x as f32 + 0.5,
                 hit.block_pos.y as f32 + 0.5,
                 hit.block_pos.z as f32 + 0.5,
             );
 
-            // 创建一个略大的线框盒子来表示选中
-            let mesh = meshes.add(Mesh::from(Cuboid::new(1.01, 1.01, 1.01)));
-            let mat = materials.add(StandardMaterial {
-                base_color: HIGHLIGHT_COLOR,
-                alpha_mode: AlphaMode::Blend,
-                unlit: true,
-                ..default()
-            });
-
-            commands.spawn((
-                HighlightBlock,
-                Mesh3d(mesh),
-                MeshMaterial3d(mat),
-                Transform::from_translation(highlight_pos),
-            ));
+            // 复用已有的高亮实体（只更新 Transform），而非每帧创建/销毁
+            if let Some((_, mut transform)) = highlight_query.iter_mut().next() {
+                transform.translation = highlight_pos;
+                // 确保可见
+            } else if let Some(res) = &highlight_res {
+                // 首次创建高亮实体，使用预创建的 Mesh 和 Material
+                commands.spawn((
+                    HighlightBlock,
+                    Mesh3d(res.mesh.clone()),
+                    MeshMaterial3d(res.material.clone()),
+                    Transform::from_translation(highlight_pos),
+                ));
+            }
         }
         None => {
             hit_state.hit_pos = None;
             hit_state.hit_normal = None;
+
+            // 隐藏高亮方块（不销毁，避免每帧重建 GPU 资源）
+            for (entity, _) in &highlight_query {
+                commands.entity(entity).insert(Visibility::Hidden);
+            }
         }
     }
 }

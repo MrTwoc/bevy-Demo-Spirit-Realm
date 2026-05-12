@@ -26,16 +26,16 @@ use crate::lod::{LodLevel, LodManager};
 use crate::resource_pack::{ResourcePackManager, VoxelMaterial};
 
 /// 渲染距离（区块数）。增大此值可以看到更远的世界，但需要更多区块加载。
-pub const RENDER_DISTANCE: i32 = 32;
+pub const RENDER_DISTANCE: i32 = 16;
 /// 卸载距离：超过此距离的区块会被卸载。比渲染距离大 1 避免边界闪烁。
 pub const UNLOAD_DISTANCE: i32 = RENDER_DISTANCE + 1;
 /// 每帧最多提交到异步队列的区块数。控制任务提交速率，避免工作线程积压。
-pub const CHUNKS_PER_FRAME: usize = 4;
+pub const CHUNKS_PER_FRAME: usize = 32;
 /// 最大缓存区块数。当超过此数量时，使用LRU策略淘汰最久未访问的区块。
 /// 默认值：渲染距离内约 8*8*π*9 ≈ 1800 个区块，设置为 2000 留有余量。
 pub const MAX_CACHED_CHUNKS: usize = 2000;
 /// LRU淘汰时每帧最多卸载的区块数。避免一帧内卸载太多导致卡顿。
-pub const LRU_UNLOADS_PER_FRAME: usize = 8;
+pub const LRU_UNLOADS_PER_FRAME: usize = 16;
 /// 每帧最多标记邻居为脏的数量。限制脏标记速率，避免级联重建风暴。
 /// 移动时每个新区块会标记最多6个邻居，限制数量可以避免每帧大量重建。
 pub const NEIGHBOR_DIRTY_PER_FRAME: usize = 8;
@@ -112,7 +112,10 @@ const NEIGHBOR_OFFSETS: [(i32, i32, i32); 6] = [
     (0, 0, -1), // -Z (Back)
 ];
 
-/// 从已加载区块中收集指定坐标的 6 个邻居数据
+/// 从已加载区块中收集指定坐标的 6 个邻居数据。
+///
+/// 使用 `to_shared_vec()` 返回 `Arc<Vec<BlockId>>`，避免每个邻居
+/// 独立分配 32KB 堆内存。多个区块引用同一邻居时共享同一份 `Arc` 数据。
 fn collect_neighbors(coord: ChunkCoord, loaded: &LoadedChunks) -> ChunkNeighbors {
     let mut neighbors = ChunkNeighbors::empty();
 
@@ -124,7 +127,7 @@ fn collect_neighbors(coord: ChunkCoord, loaded: &LoadedChunks) -> ChunkNeighbors
         };
 
         if let Some(entry) = loaded.entries.get(&neighbor_coord) {
-            neighbors.neighbor_data[i] = Some(entry.data.to_vec());
+            neighbors.neighbor_data[i] = Some(entry.data.to_shared_vec());
         }
     }
 
@@ -360,17 +363,12 @@ pub fn chunk_loader_system(
         // 收集邻居数据用于跨区块面剔除
         let neighbors = collect_neighbors(coord, &*loaded);
 
-        // 创建实体（无 Mesh，等待异步结果）
-        let position = coord.to_world_origin();
-        let entity = commands
-            .spawn((
-                chunk.clone(),
-                Transform::from_translation(position),
-                Visibility::default(),
-                ChunkAtlasHandle(atlas_handle.handle.clone()),
-                ChunkCoordComponent(coord),
-            ))
-            .id();
+        // 计算该区块的 LOD 级别（基于与玩家的距离）
+        let dist = (((coord.cx - player_chunk.cx).pow(2)
+            + (coord.cy - player_chunk.cy).pow(2)
+            + (coord.cz - player_chunk.cz).pow(2)) as f32)
+            .sqrt();
+        let lod_level = LodLevel::from_chunk_distance(dist);
 
         // 创建占位 Mesh（材质使用全局共享实例）
         let placeholder_mesh = meshes.add(Mesh::new(
@@ -379,7 +377,29 @@ pub fn chunk_loader_system(
         ));
         let placeholder_mat = shared_material.handle.clone();
 
+        // 先将区块数据注册到 LoadedChunks（chunk 在此处被 move 进去，避免后续克隆）
+        let entity = commands.spawn_empty().id();
+        loaded.entries.insert(
+            coord,
+            ChunkEntry {
+                entity,
+                data: chunk,
+                last_accessed: current_frame,
+                mesh_handle: placeholder_mesh.clone(),
+                material_handle: placeholder_mat.clone(),
+                lod_level,
+            },
+        );
+
+        // 从 entries 中取出引用，补充实体组件（避免 clone ChunkData）
+        let entry = loaded.entries.get(&coord).unwrap();
+        let position = coord.to_world_origin();
         commands.entity(entity).insert((
+            entry.data.clone(), // ECS 组件需要一份副本，但只克隆这一次
+            Transform::from_translation(position),
+            Visibility::default(),
+            ChunkAtlasHandle(atlas_handle.handle.clone()),
+            ChunkCoordComponent(coord),
             Mesh3d(placeholder_mesh.clone()),
             MeshMaterial3d(placeholder_mat.clone()),
             ChunkMeshHandle {
@@ -388,33 +408,15 @@ pub fn chunk_loader_system(
             },
         ));
 
-        // 注册到 LoadedChunks
-        // 计算该区块的 LOD 级别（基于与玩家的距离）
-        let dist = (((coord.cx - player_chunk.cx).pow(2)
-            + (coord.cy - player_chunk.cy).pow(2)
-            + (coord.cz - player_chunk.cz).pow(2)) as f32)
-            .sqrt();
-        let lod_level = LodLevel::from_chunk_distance(dist);
-
-        loaded.entries.insert(
-            coord,
-            ChunkEntry {
-                entity,
-                data: chunk.clone(),
-                last_accessed: current_frame,
-                mesh_handle: placeholder_mesh,
-                material_handle: placeholder_mat,
-                lod_level,
-            },
-        );
-
         // 同时注册到 LodManager
         lod_manager.set_lod(coord, lod_level);
 
         // 提交异步网格生成任务（携带 LOD 级别）
+        // 从 entries 中取出 Arc 共享的邻居数据引用
+        let entry = loaded.entries.get(&coord).unwrap();
         async_mesh.submit_task(MeshTask::Generate {
             coord,
-            data: chunk,
+            data: entry.data.clone(), // 只克隆这一次
             neighbors,
             lod_level: Some(lod_level),
         });
