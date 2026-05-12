@@ -239,48 +239,6 @@ fn record_perf_metrics(
     // 获取区块数量
     let chunk_count = loaded_chunks.entries.len();
 
-    // 首次运行时自动发现三角面诊断路径
-    if !state.diagnostics_printed {
-        state.diagnostics_printed = true;
-
-        info!("=== GPU 三角面诊断自动发现 ===");
-
-        // 自动发现三角面诊断路径
-        let discovered = discover_triangle_diagnostics(&diagnostics);
-        state.triangle_paths = discovered;
-
-        if state.triangle_paths.is_empty() {
-            info!("  ❌ 未找到任何三角面诊断路径。");
-            info!("  可能原因：");
-            info!("    1. GPU 不支持 PIPELINE_STATISTICS_QUERIES 特性");
-            info!("    2. RenderDiagnosticsPlugin 未正确注册");
-            info!("    3. Bevy 0.18.1 的诊断系统尚未生成三角面数据");
-            info!("  当前将使用 CPU 端 Mesh 统计作为回退方案。");
-
-            // 打印所有已注册的诊断路径（用于调试）
-            info!("  已注册的诊断路径：");
-            for diag in diagnostics.iter() {
-                info!("    - {}", diag.path().as_str());
-            }
-        } else {
-            info!(
-                "  ✅ 发现 {} 个三角面诊断路径：",
-                state.triangle_paths.len()
-            );
-            for path in &state.triangle_paths {
-                if let Some(diag) = diagnostics.get(path) {
-                    if let Some(value) = diag.smoothed() {
-                        info!("    - {} = {:.0}", path.as_str(), value);
-                    } else {
-                        info!("    - {} (无数据)", path.as_str());
-                    }
-                }
-            }
-        }
-
-        info!("========================");
-    }
-
     // 获取 GPU 三角形数（使用自动发现的路径）
     let mut gpu_triangles: Option<f64> = None;
     for path in &state.triangle_paths {
