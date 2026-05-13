@@ -155,9 +155,10 @@ fn init_perf_logger(mut commands: Commands, config: Res<PerfLoggerConfig>) {
     let mut writer = BufWriter::new(file);
 
     // 写入 CSV 表头
+    // 注意：GPU 三角形数暂不支持（Bevy 不暴露），只记录 CPU 三角形数
     if let Err(e) = writeln!(
         writer,
-        "elapsed_secs,fps,frame_time_ms,chunk_count,triangle_count_gpu,triangle_count_cpu"
+        "elapsed_secs,fps,frame_time_ms,chunk_count,triangle_count_cpu"
     ) {
         error!("写入 CSV 表头失败: {}", e);
         return;
@@ -261,14 +262,11 @@ fn record_perf_metrics(
         .sum();
 
     // 写入 CSV 行
-    let gpu_tri_str = gpu_triangles
-        .map(|v| format!("{:.0}", v))
-        .unwrap_or_else(|| "N/A".to_string());
-
+    // 注意：GPU 三角形数暂不支持（Bevy 不暴露），只记录 CPU 三角形数
     if let Err(e) = writeln!(
         state.writer,
-        "{:.2},{:.1},{:.3},{},{},{}",
-        elapsed, fps, frame_time_ms, chunk_count, gpu_tri_str, cpu_triangles
+        "{:.2},{:.1},{:.3},{},{}",
+        elapsed, fps, frame_time_ms, chunk_count, cpu_triangles
     ) {
         error!("写入性能日志失败: {}", e);
     }
