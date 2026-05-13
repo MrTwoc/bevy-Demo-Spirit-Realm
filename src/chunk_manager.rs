@@ -43,6 +43,11 @@ pub const NEIGHBOR_DIRTY_PER_FRAME: usize = 16;
 /// 当需要卸载大量区块时，删除操作会分散到多帧执行。
 pub const DELETIONS_PER_FRAME: usize = 16;
 
+/// 每帧分帧加载队列构建最多处理的区块扫描步数。
+/// 控制 `rebuild_load_queue` 分帧构建的速率，避免一次遍历太多区块导致卡顿。
+/// 每个扫描步处理一个 (dx, dz, cy) 组合，约 ~8000 步覆盖整个渲染范围。
+pub const QUEUE_BUILD_STEPS_PER_FRAME: usize = 500;
+
 /// 已加载区块的条目，包含实体、区块数据、GPU 资源句柄和 LRU 访问信息。
 ///
 /// `mesh_handle` 和 `material_handle` 用于在卸载/淘汰时正确释放 GPU 资源，
@@ -80,6 +85,8 @@ pub struct LoadedChunks {
     pub frame_counter: u64,
     /// 分帧删除队列：待删除的区块信息
     pending_deletions: Vec<PendingDeletion>,
+    /// 分帧加载队列构建状态
+    load_queue_build_state: Option<LoadQueueBuildState>,
 }
 
 impl Default for LoadedChunks {
@@ -90,6 +97,7 @@ impl Default for LoadedChunks {
             last_player_chunk: None,
             frame_counter: 0,
             pending_deletions: Vec::new(),
+            load_queue_build_state: None,
         }
     }
 }
@@ -127,7 +135,40 @@ const NEIGHBOR_OFFSETS: [(i32, i32, i32); 6] = [
     (0, 0, -1), // -Z (Back)
 ];
 
-/// 从已加载区块中收集指定坐标的 6 个邻居数据。
+/// 分帧加载队列构建状态。
+///
+/// 当玩家移动到新区块时，`rebuild_load_queue` 需要遍历整个渲染范围内的所有区块。
+/// 为了避免一帧内同步遍历太多区块导致卡顿，将遍历过程分帧执行。
+///
+/// # 字段说明
+/// - `center`: 玩家当前位置（区块坐标）
+/// - `dx`, `dz`, `cy`: 当前扫描位置
+/// - `missing`: 已收集到的待加载区块坐标
+struct LoadQueueBuildState {
+    /// 玩家当前位置（区块坐标）
+    center: ChunkCoord,
+    /// 当前扫描的 X 偏移
+    dx: i32,
+    /// 当前扫描的 Z 偏移
+    dz: i32,
+    /// 当前扫描的 Y 层
+    cy: i32,
+    /// 已收集到的待加载区块坐标
+    missing: Vec<ChunkCoord>,
+}
+
+impl LoadQueueBuildState {
+    /// 创建新的分帧构建状态
+    fn new(center: ChunkCoord, cy_min: i32, cy_max: i32) -> Self {
+        Self {
+            center,
+            dx: -RENDER_DISTANCE,
+            dz: -RENDER_DISTANCE,
+            cy: cy_min,
+            missing: Vec::new(),
+        }
+    }
+}
 ///
 /// 使用 `to_shared_vec()` 返回 `Arc<Vec<BlockId>>`，避免每个邻居
 /// 独立分配 32KB 堆内存。多个区块引用同一邻居时共享同一份 `Arc` 数据。
@@ -223,7 +264,7 @@ pub fn setup_world(
         cz: 0,
     };
     loaded.last_player_chunk = Some(center);
-    rebuild_load_queue(center, &mut *loaded);
+    rebuild_load_queue(center, &mut *loaded, QUEUE_BUILD_STEPS_PER_FRAME);
 }
 
 /// 每帧系统：异步网格结果收集 + 分帧任务提交 + 卸载远处区块 + LOD 更新。
@@ -338,11 +379,27 @@ pub fn chunk_loader_system(
         commands.entity(deletion.entity).despawn();
     }
 
-    // ── 步骤 2：检测玩家移动，重建加载队列 ──────────────────────
-    if loaded.last_player_chunk != Some(player_chunk) {
-        loaded.last_player_chunk = Some(player_chunk);
-        rebuild_load_queue(player_chunk, &mut *loaded);
-        unload_distant_chunks(player_chunk, &mut *loaded, &*async_mesh, &mut *lod_manager);
+    // ── 步骤 2：检测玩家移动，启动/继续分帧加载队列构建 ──────────────────────
+    // 如果 load_queue_build_state.is_some()，说明正在构建中，继续分帧处理
+    // 如果 last_player_chunk != player_chunk，说明需要启动新的构建
+    let needs_rebuild =
+        loaded.load_queue_build_state.is_some() || loaded.last_player_chunk != Some(player_chunk);
+
+    if needs_rebuild {
+        // 更新 last_player_chunk（只在启动新构建时需要）
+        if loaded.load_queue_build_state.is_none() {
+            loaded.last_player_chunk = Some(player_chunk);
+        }
+
+        // 分帧构建加载队列
+        if let Some(built_queue) =
+            rebuild_load_queue(player_chunk, &mut *loaded, QUEUE_BUILD_STEPS_PER_FRAME)
+        {
+            // 构建完成，替换 load_queue
+            loaded.load_queue = built_queue;
+            // 启动异步卸载
+            unload_distant_chunks(player_chunk, &mut *loaded, &*async_mesh, &mut *lod_manager);
+        }
     }
 
     // ── 步骤 2.5：更新 LOD 管理器 ─────────────────────────────
@@ -474,46 +531,114 @@ pub fn chunk_loader_system(
     }
 }
 
-/// 重建加载队列：收集渲染距离内所有未加载的区块坐标，按与玩家的距离排序。
+/// 重建加载队列（分帧版本）：收集渲染距离内所有未加载的区块坐标，按与玩家的距离排序。
 ///
-/// Y 轴使用流式加载：基于玩家当前 Y 坐标动态计算加载范围，
-/// 只加载玩家上下 `Y_LOAD_RADIUS` 层的区块，支持 ±10240 格地形探索。
+/// 为了避免一帧内同步遍历太多区块导致卡顿，将遍历过程分帧执行。
+/// 每次调用处理最多 `QUEUE_BUILD_STEPS_PER_FRAME` 步扫描。
 ///
-/// 近处的区块排在前面，优先加载。
-fn rebuild_load_queue(center: ChunkCoord, loaded: &mut LoadedChunks) {
-    let cy_min = center.cy - Y_LOAD_RADIUS;
-    let cy_max = center.cy + Y_LOAD_RADIUS;
-
-    let mut missing: Vec<ChunkCoord> = Vec::new();
-
-    for dx in -RENDER_DISTANCE..=RENDER_DISTANCE {
-        for dz in -RENDER_DISTANCE..=RENDER_DISTANCE {
-            // 圆形裁剪：只加载圆形范围内的区块（而非方形），减少角落浪费
-            if dx * dx + dz * dz > RENDER_DISTANCE * RENDER_DISTANCE {
-                continue;
-            }
-            for cy in cy_min..=cy_max {
-                let coord = ChunkCoord {
-                    cx: center.cx + dx,
-                    cy,
-                    cz: center.cz + dz,
-                };
-                if !loaded.entries.contains_key(&coord) {
-                    missing.push(coord);
-                }
-            }
+/// # 返回
+/// - `Some`: 队列构建完成，`Vec<ChunkCoord>` 是排序后的待加载区块列表
+/// - `None`: 队列构建未完成，需要继续调用
+///
+/// # 状态管理
+/// 通过 `loaded.load_queue_build_state` 跟踪分帧构建进度。
+fn rebuild_load_queue(
+    center: ChunkCoord,
+    loaded: &mut LoadedChunks,
+    steps_limit: usize,
+) -> Option<Vec<ChunkCoord>> {
+    // 检查是否有正在进行的构建
+    if let Some(ref state) = loaded.load_queue_build_state {
+        // 如果中心点变了，重置构建状态
+        if state.center != center {
+            loaded.load_queue_build_state = None;
         }
     }
 
-    // 按与玩家的三维距离排序（近处优先）
-    missing.sort_by_key(|coord| {
-        let dx = (coord.cx - center.cx).abs();
-        let dy = (coord.cy - center.cy).abs();
-        let dz = (coord.cz - center.cz).abs();
-        dx * dx + dy * dy + dz * dz
-    });
+    // 如果没有正在进行的构建，创建新的构建状态
+    if loaded.load_queue_build_state.is_none() {
+        let cy_min = center.cy - Y_LOAD_RADIUS;
+        let cy_max = center.cy + Y_LOAD_RADIUS;
+        loaded.load_queue_build_state = Some(LoadQueueBuildState::new(center, cy_min, cy_max));
+    }
 
-    loaded.load_queue = missing;
+    let state = loaded
+        .load_queue_build_state
+        .as_mut()
+        .expect("guaranteed by logic above");
+
+    let cy_min = center.cy - Y_LOAD_RADIUS;
+    let cy_max = center.cy + Y_LOAD_RADIUS;
+
+    let mut steps_done = 0;
+
+    // 继续上次的扫描
+    while steps_done < steps_limit {
+        // 圆形裁剪：只加载圆形范围内的区块（而非方形），减少角落浪费
+        if state.dx * state.dx + state.dz * state.dz > RENDER_DISTANCE * RENDER_DISTANCE {
+            // 这个位置在圆形外，跳过，处理下一个位置
+            state.dz += 1;
+            if state.dz > RENDER_DISTANCE {
+                state.dz = -RENDER_DISTANCE;
+                state.dx += 1;
+            }
+            if state.dx > RENDER_DISTANCE {
+                // 扫描完成
+                break;
+            }
+            continue;
+        }
+
+        // 处理当前 (dx, dz, cy) 位置
+        let coord = ChunkCoord {
+            cx: center.cx + state.dx,
+            cy: state.cy,
+            cz: center.cz + state.dz,
+        };
+
+        if !loaded.entries.contains_key(&coord) {
+            state.missing.push(coord);
+        }
+
+        // 推进到下一个位置
+        state.cy += 1;
+        if state.cy > cy_max {
+            state.cy = cy_min;
+            state.dz += 1;
+            if state.dz > RENDER_DISTANCE {
+                state.dz = -RENDER_DISTANCE;
+                state.dx += 1;
+            }
+        }
+
+        steps_done += 1;
+
+        // 检查是否完成
+        if state.dx > RENDER_DISTANCE {
+            break;
+        }
+    }
+
+    // 检查是否完成
+    if state.dx > RENDER_DISTANCE {
+        // 构建完成，排序并返回
+        let cy_min = center.cy - Y_LOAD_RADIUS;
+        let cy_max = center.cy + Y_LOAD_RADIUS;
+
+        state.missing.sort_by_key(|coord| {
+            let dx = (coord.cx - center.cx).abs();
+            let dy = (coord.cy - center.cy).abs();
+            let dz = (coord.cz - center.cz).abs();
+            dx * dx + dy * dy + dz * dz
+        });
+
+        let result = Some(std::mem::take(&mut state.missing));
+        loaded.load_queue_build_state = None;
+        result
+    } else {
+        // 构建未完成
+        None
+    }
 }
 
 /// 卸载超出加载范围的区块实体。
