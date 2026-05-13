@@ -210,6 +210,8 @@
 
 ### 3.4 阶段三：GPU 剔除 + MultiDrawIndirect（远期目标）
 
+> **区块级优化**：Uniform 区块若6邻居均同ID可跳过网格生成（待实现）。
+
 **目标**：实现完全 GPU 驱动的渲染管线，Eliminate 所有 CPU 参与
 
 ```
