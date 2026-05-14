@@ -12,6 +12,7 @@
 //! - 主线程：结果收集 + GPU 上传（分帧控制）
 
 use bevy::asset::RenderAssetUsages;
+use bevy::camera::visibility::NoCpuCulling;
 use bevy::image::ImageSampler;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
@@ -251,6 +252,7 @@ pub fn setup_world(
             Camera3d::default(),
             camera_transform,
             CameraController::default(),
+            NoCpuCulling, // 禁用 CPU 视锥体剔除（让 GPU 做）
         ))
         .id();
 
