@@ -27,11 +27,11 @@ use crate::lod::{LodLevel, LodManager};
 use crate::resource_pack::{ResourcePackManager, VoxelMaterial};
 
 /// 渲染距离（区块数）。增大此值可以看到更远的世界，但需要更多区块加载。
-pub const RENDER_DISTANCE: i32 = 32;
+pub const RENDER_DISTANCE: i32 = 16;
 /// 卸载距离：超过此距离的区块会被卸载。比渲染距离大 1 避免边界闪烁。
 pub const UNLOAD_DISTANCE: i32 = RENDER_DISTANCE + 1;
 /// 每帧最多提交到异步队列的区块数。控制任务提交速率，避免工作线程积压。
-pub const CHUNKS_PER_FRAME: usize = 32;
+pub const CHUNKS_PER_FRAME: usize = 64;
 /// 最大缓存区块数。当超过此数量时，使用LRU策略淘汰最久未访问的区块。
 /// 默认值：渲染距离内约 8*8*π*9 ≈ 1800 个区块，设置为 2000 留有余量。
 pub const MAX_CACHED_CHUNKS: usize = 2000;
@@ -42,7 +42,7 @@ pub const LRU_UNLOADS_PER_FRAME: usize = 32;
 pub const NEIGHBOR_DIRTY_PER_FRAME: usize = 16;
 /// 每帧最多处理的删除数量。控制分帧删除速率，避免大量删除操作阻塞主线程。
 /// 当需要卸载大量区块时，删除操作会分散到多帧执行。
-pub const DELETIONS_PER_FRAME: usize = 16;
+pub const DELETIONS_PER_FRAME: usize = 32;
 
 /// 每帧分帧加载队列构建最多处理的区块扫描步数。
 /// 控制 `rebuild_load_queue` 分帧构建的速率，避免一次遍历太多区块导致卡顿。
@@ -105,7 +105,7 @@ impl Default for LoadedChunks {
 
 /// Y 轴加载半径：玩家上下各加载多少层 Y 区块。
 /// 每层 32 格，±4 层 = ±128 米，覆盖玩家周围主要交互高度。
-pub const Y_LOAD_RADIUS: i32 = 4;
+pub const Y_LOAD_RADIUS: i32 = 2;
 /// Y 轴卸载半径：超过此距离的 Y 区块会被卸载。比加载半径大 1 避免边界闪烁。
 pub const Y_UNLOAD_RADIUS: i32 = Y_LOAD_RADIUS + 1;
 
