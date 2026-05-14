@@ -207,8 +207,6 @@ Phase 5 ⏳
 
 - [Bevy 引擎](https://bevyengine.org/)
 - [Rust 编程语言](https://www.rust-lang.org/zh-CN/)
-- [Tokio 异步运行时](https://tokio.rs/tokio/tutorial/spawning)
-- [Rayon 数据并行](https://crates.io/crates/rayon)
 
 ### 项目文档
 
@@ -222,6 +220,7 @@ Phase 5 ⏳
 - [Voxy 体素引擎](https://github.com/Geofmorgen/voxy) — 核心技术借鉴
 - [Entity Component System 架构](https://mp.weixin.qq.com/s/dfEyst39sZ1fRCV6hcqCDA)
 - [GPU 体素渲染技术](https://www.bilibili.com/video/BV1he411q7Zi/)
+- [地形生成借鉴](https://github.com/Apollounknowndev/tectonic)
 
 ---
 
