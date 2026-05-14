@@ -11,36 +11,12 @@
 
 ### 1.1 当前渲染参数
 
-| 参数 | 值 | 说明 |
-|------|-----|------|
-| [`RENDER_DISTANCE`](../src/chunk_manager.rs:28) | 8 区块 | 半径 8 区块 ≈ 256 米 |
-| [`UNLOAD_DISTANCE`](../src/chunk_manager.rs:30) | 9 区块 | 比 RENDER_DISTANCE 大 1 |
-| [`CHUNK_SIZE`](../src/chunk.rs:25) | 32³ 体素 | 每区块 32768 体素 |
-| [`CHUNKS_PER_FRAME`](../src/chunk_manager.rs:32) | 4 区块/帧 | 每帧最多提交 4 个异步任务 |
-| [`Y_LOAD_RADIUS`](../src/chunk_manager.rs:78) | ±4 层 | Y 轴只加载 ±4 层 ≈ ±128 米 |
-| [`MAX_CACHED_CHUNKS`](../src/chunk_manager.rs:35) | 2000 | 缓存上限 |
-| [`MESH_UPLOADS_PER_FRAME`](../src/async_mesh.rs:36) | 4 网格/帧 | 每帧 GPU 上传上限 |
+待补充
 
 ### 1.2 性能瓶颈
 
-- **Draw Call 数**：~2,200+（当前 8 区块视距下已接近 Bevy 渲染瓶颈）
-- **GPU 顶点吞吐**：每个 32³ 区块平均 4000-8000 顶点，8 区块视距内约 2,000 区块产生 ~10M 顶点
-- **帧时间**：稳态 ~5.9ms，加载尖峰已通过 Phase 0 消除至 <8ms
+待补充
 
-### 1.3 问题：为什么直接增加 RENDER_DISTANCE 不可行？
-
-如果将 [`RENDER_DISTANCE`](../src/chunk_manager.rs:28) 从 8 提升至 32：
-
-| 指标 | 8 区块 | 32 区块 | 倍率 |
-|------|--------|---------|------|
-| 区块总数 | ~2,000 | ~32,000 | 16x |
-| 顶点数 | ~10M | ~160M | 16x |
-| Draw Call | ~2,200 | ~32,000 | 16x |
-| GPU 上传 | 4/帧 | 4/帧（排队 8000 帧） | — |
-
-**结论**：无 LOD 时直接增加视距不可行，需要降采样方案。
-
----
 
 ## 2. LOD 级别定义
 
