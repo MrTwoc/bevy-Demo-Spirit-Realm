@@ -227,13 +227,6 @@ Phase 5 ⏳
 ## 运行项目
 
 ```bash
-# 编译
-cargo build --release
-
-# 运行
-cargo run --release
-
-# 调试模式（显示 FPS、线框等）
 cargo run
 ```
 
