@@ -102,6 +102,7 @@ impl TreeGenerator {
     ///
     /// 要求：
     /// - 地表是草方块或泥土
+    /// - 树干位置上方不能有水方块（树木不能在水中生成）
     pub fn can_spawn_tree(
         &self,
         chunk: &Chunk,
@@ -109,12 +110,22 @@ impl TreeGenerator {
         local_x: usize,
         local_y: usize,
         local_z: usize,
-        _surface_world_y: i32,
+        surface_world_y: i32,
     ) -> bool {
         // 检查地表方块是否是草或泥土
         let surface_block = chunk.get(local_x, local_y, local_z);
         if surface_block != 1 && surface_block != 3 {
             return false; // 不是草方块(1)也不是泥土(3)
+        }
+
+        // 检查树干位置上方是否有水方块（block_id = 5）
+        // 树木必须在水面上方生成
+        for check_y in local_y..CHUNK_SIZE {
+            let block_above = chunk.get(local_x, check_y, local_z);
+            if block_above == 5 {
+                // 水方块，树木不能在此生成
+                return false;
+            }
         }
 
         true
