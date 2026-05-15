@@ -1,0 +1,84 @@
+mod voxel_render;
+mod async_mesh;
+mod block_interaction;
+mod camera;
+mod chunk;
+mod chunk_dirty;
+mod chunk_manager;
+mod chunk_wire_frame;
+mod fps_overlay;
+mod hud;
+mod input;
+mod lighting;
+mod lod;
+mod perf_logger;
+mod raycast;
+mod resource_pack;
+
+use crate::chunk_wire_frame::WireframeMode;
+use bevy::{
+    diagnostic::FrameTimeDiagnosticsPlugin, pbr::wireframe::WireframePlugin, prelude::*,
+    render::diagnostic::RenderDiagnosticsPlugin,
+};
+use resource_pack::VoxelMaterial;
+
+fn main() {
+    App::new()
+        .insert_resource(ClearColor(Color::srgb(0.53, 0.81, 0.92))) // 天空蓝背景
+        .init_resource::<WireframeMode>()
+        .init_resource::<raycast::RayHitState>()
+        .init_resource::<chunk_manager::LoadedChunks>()
+        .init_resource::<lod::LodManager>()
+        .init_resource::<hud::HardwareInfo>()
+        .insert_resource(hud::TriangleUpdateTimer(Timer::from_seconds(
+            5.0,
+            TimerMode::Repeating,
+        )))
+        .insert_resource(hud::HardwareInfoTimer(Timer::from_seconds(
+            2.0,
+            TimerMode::Repeating,
+        )))
+        .add_plugins((
+            DefaultPlugins,
+            WireframePlugin::default(),
+            FrameTimeDiagnosticsPlugin::default(),
+            RenderDiagnosticsPlugin,
+            fps_overlay::FpsOverlayPlugin,
+            perf_logger::PerfLoggerPlugin,
+            resource_pack::ResourcePackPlugin,
+            MaterialPlugin::<VoxelMaterial>::default(),
+            voxel_render::VoxelRenderPlugin,
+            voxel_render::RenderBridgePlugin,
+        ))
+        .add_systems(
+            Startup,
+            (
+                resource_pack::load_resource_pack_system,
+                lighting::setup_lighting,
+                chunk_manager::setup_world,
+            )
+                .chain(),
+        )
+        .add_systems(Startup, raycast::setup_highlight_resources)
+        .add_systems(First, chunk_manager::chunk_loader_system)
+        .add_systems(
+            Update,
+            (
+                camera::camera_movement,
+                camera::camera_rotation,
+                input::cursor_grab_system,
+                chunk_wire_frame::toggle_wireframe,
+                chunk_wire_frame::sync_chunk_wireframe,
+                chunk_wire_frame::draw_wireframes,
+                chunk_dirty::rebuild_dirty_chunks,
+                raycast::raycast_highlight_system,
+                block_interaction::block_interaction_system,
+                hud::update_hud,
+                hud::update_triangle_count,
+                hud::update_hardware_info,
+            ),
+        )
+        .add_systems(Update, hud::update_chunk_count)
+        .add_systems(Update, hud::update_view_distance)
+        .run();
+}
