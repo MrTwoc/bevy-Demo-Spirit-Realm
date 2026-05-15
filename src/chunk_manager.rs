@@ -25,6 +25,7 @@ use crate::chunk_dirty::{
 };
 use crate::lod::{LodLevel, LodManager};
 use crate::resource_pack::{ResourcePackManager, VoxelMaterial};
+use crate::tree_generator::{TreeConfig, TreeGenerator, TreeWriteRequest, generate_trees_in_chunk};
 
 /// 渲染距离（区块数）。增大此值可以看到更远的世界，但需要更多区块加载。
 pub const RENDER_DISTANCE: i32 = 16;
@@ -67,6 +68,10 @@ pub struct LoadedChunks {
     pub frame_counter: u64,
     pending_deletions: Vec<PendingDeletion>,
     load_queue_build_state: Option<LoadQueueBuildState>,
+    /// 待处理的跨区块树木写入请求
+    pub pending_tree_writes: Vec<TreeWriteRequest>,
+    /// 树木生成器（全局共享）
+    tree_generator: TreeGenerator,
 }
 
 impl Default for LoadedChunks {
@@ -78,6 +83,8 @@ impl Default for LoadedChunks {
             frame_counter: 0,
             pending_deletions: Vec::new(),
             load_queue_build_state: None,
+            pending_tree_writes: Vec::new(),
+            tree_generator: TreeGenerator::new(54321, TreeConfig::default()),
         }
     }
 }
@@ -341,6 +348,21 @@ pub fn chunk_loader_system(
         let mut chunk = Chunk::filled(0);
         fill_terrain(&mut chunk, &coord);
 
+        // 阶段2：生成树木（两阶段生成方案）
+        let (local_tree_writes, cross_chunk_requests) =
+            generate_trees_in_chunk(&chunk, coord, &loaded.tree_generator);
+
+        // 应用本地树木写入
+        for (pos, block_id) in local_tree_writes {
+            let local_x = (pos.x - coord.cx as i32 * 32) as usize;
+            let local_y = (pos.y - coord.cy as i32 * 32) as usize;
+            let local_z = (pos.z - coord.cz as i32 * 32) as usize;
+            chunk.set(local_x, local_y, local_z, block_id);
+        }
+
+        // 收集跨区块写入请求
+        loaded.pending_tree_writes.extend(cross_chunk_requests);
+
         if is_air_chunk(&chunk) {
             continue;
         }
@@ -421,6 +443,34 @@ pub fn chunk_loader_system(
     // 批量应用脏标记（优化：一次性插入多个实体的组件）
     for entity in dirty_neighbors {
         commands.entity(entity).insert(DirtyChunk);
+    }
+
+    // 阶段3：处理跨区块树木写入
+    if !loaded.pending_tree_writes.is_empty() {
+        // 先取出 pending_tree_writes，避免同时借用
+        let requests: Vec<TreeWriteRequest> = std::mem::take(&mut loaded.pending_tree_writes);
+
+        // 直接对已加载的区块应用树木写入
+        let mut modified_chunks = Vec::new();
+        for request in &requests {
+            if let Some(entry) = loaded.entries.get_mut(&request.chunk) {
+                let local_x = (request.world_pos.x - request.chunk.cx as i32 * 32) as usize;
+                let local_y = (request.world_pos.y - request.chunk.cy as i32 * 32) as usize;
+                let local_z = (request.world_pos.z - request.chunk.cz as i32 * 32) as usize;
+                entry.data.set(local_x, local_y, local_z, request.block_id);
+
+                if !modified_chunks.contains(&request.chunk) {
+                    modified_chunks.push(request.chunk);
+                }
+            }
+        }
+
+        // 标记被修改的邻居区块为脏
+        for chunk_coord in modified_chunks {
+            if let Some(entry) = loaded.entries.get(&chunk_coord) {
+                commands.entity(entry.entity).insert(DirtyChunk);
+            }
+        }
     }
 }
 

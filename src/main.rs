@@ -1,4 +1,3 @@
-mod voxel_render;
 mod async_mesh;
 mod block_interaction;
 mod camera;
@@ -14,6 +13,8 @@ mod lod;
 mod perf_logger;
 mod raycast;
 mod resource_pack;
+mod tree_generator;
+mod voxel_render;
 
 use crate::chunk_wire_frame::WireframeMode;
 use bevy::{
