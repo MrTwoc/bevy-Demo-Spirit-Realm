@@ -525,19 +525,24 @@ impl BlockPos {
 const TERRAIN_SEED: u32 = 12345;
 
 /// Base terrain height (world Y coordinate)
-const TERRAIN_BASE_HEIGHT: i32 = 16;
+const TERRAIN_BASE_HEIGHT: i32 = 96;
 
 /// Terrain height amplitude (max deviation from base)
-const TERRAIN_AMPLITUDE: f64 = 32.0;
+const TERRAIN_AMPLITUDE: f64 = 80.0;
 
 /// Height threshold for sand vs grass
-const SAND_HEIGHT_THRESHOLD: i32 = 20;
+const SAND_HEIGHT_THRESHOLD: i32 = 22;
 
 /// Depth of dirt layer below surface
 const DIRT_LAYER_DEPTH: i32 = 4;
 
 /// Water level (base height for water to appear)
-const WATER_LEVEL: i32 = 14;
+const WATER_LEVEL: i32 = 80;
+
+/// Minimum terrain generation height
+const TERRAIN_MIN_Y: i32 = -64;
+/// Maximum terrain generation height
+const TERRAIN_MAX_Y: i32 = 256;
 
 /// 全局噪声缓存（线程安全）
 ///
@@ -548,8 +553,8 @@ static TERRAIN_NOISE: std::sync::OnceLock<Fbm<Simplex>> = std::sync::OnceLock::n
 fn get_terrain_noise() -> &'static Fbm<Simplex> {
     TERRAIN_NOISE.get_or_init(|| {
         Fbm::<Simplex>::new(TERRAIN_SEED)
-            .set_octaves(4)
-            .set_frequency(0.005)
+            .set_octaves(5)
+            .set_frequency(0.003)
             .set_lacunarity(2.0)
             .set_persistence(0.5)
     })
@@ -574,6 +579,14 @@ pub fn fill_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
 
             for y in 0..CHUNK_SIZE {
                 let world_y = coord.cy as i32 * CHUNK_SIZE as i32 + y as i32;
+
+                // Skip if outside terrain generation bounds
+                if world_y > TERRAIN_MAX_Y {
+                    continue; // above max height = air
+                }
+                if world_y < TERRAIN_MIN_Y {
+                    continue; // below min height = air
+                }
 
                 if world_y > surface_height {
                     // 检查是否应该填充水方块
