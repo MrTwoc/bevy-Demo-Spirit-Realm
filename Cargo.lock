@@ -1742,6 +1742,7 @@ name = "bevygame1"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "bytemuck",
  "image",
  "noise",
  "sysinfo 0.34.2",

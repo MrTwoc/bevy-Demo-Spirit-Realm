@@ -1,0 +1,121 @@
+//! 渲染桥接模块
+//!
+//! 将现有的异步网格系统（AsyncMeshManager）连接到新的MultiDrawIndirect渲染系统。
+//! 负责将 MeshResult 转换为 ChunkMeshData，并提交到 VoxelRenderState。
+
+use std::collections::HashSet;
+
+use bevy::prelude::*;
+
+use crate::async_mesh::{AsyncMeshManager, MESH_UPLOADS_PER_FRAME};
+use crate::chunk::ChunkCoord;
+use crate::chunk_manager::LoadedChunks;
+use crate::lod::LodLevel;
+
+use super::buffers::ChunkMeshData;
+use super::extract::VoxelRenderState;
+
+/// 渲染桥接系统
+///
+/// 在每个帧的 Update 阶段运行，收集异步网格结果并转换为新渲染格式。
+/// 这个系统替代了原有的 chunk_loader_system 中的 Mesh 上传逻辑。
+pub fn render_bridge_system(
+    async_mesh: Res<AsyncMeshManager>,
+    loaded: Res<LoadedChunks>,
+    mut render_state: ResMut<VoxelRenderState>,
+) {
+    // 收集异步网格结果
+    let results = async_mesh.collect_results(MESH_UPLOADS_PER_FRAME);
+
+    for result in results {
+        // 检查区块是否仍然加载
+        if !loaded.entries.contains_key(&result.coord) {
+            // 区块已卸载，跳过
+            continue;
+        }
+
+        // 检查是否已经在上传队列中（去重）
+        let already_queued = render_state.upload_queue.iter().any(|m| m.coord == result.coord);
+        if already_queued {
+            // 更新已存在的条目
+            if let Some(existing) = render_state.upload_queue.iter_mut().find(|m| m.coord == result.coord) {
+                *existing = ChunkMeshData {
+                    coord: result.coord,
+                    positions: result.positions,
+                    normals: result.normals,
+                    uvs: result.uvs,
+                    indices: result.indices,
+                    lod_level: loaded.entries.get(&result.coord).map(|e| e.lod_level).unwrap_or(LodLevel::Lod0),
+                };
+            }
+            continue;
+        }
+
+        // 获取区块的LOD级别
+        let lod_level = loaded
+            .entries
+            .get(&result.coord)
+            .map(|entry| entry.lod_level)
+            .unwrap_or(LodLevel::Lod0);
+
+        // 转换为新的渲染格式
+        let mesh_data = ChunkMeshData {
+            coord: result.coord,
+            positions: result.positions,
+            normals: result.normals,
+            uvs: result.uvs,
+            indices: result.indices,
+            lod_level,
+        };
+
+        // 提交到渲染状态
+        render_state.upload_queue.push(mesh_data);
+        render_state.dirty = true;
+    }
+}
+
+/// 区块卸载检测系统
+///
+/// 检测已卸载的区块，并通知渲染系统移除对应数据。
+/// 使用 HashSet 提高查找效率。
+pub fn chunk_unload_detection_system(
+    loaded: Res<LoadedChunks>,
+    mut render_state: ResMut<VoxelRenderState>,
+    mut last_loaded_chunks: Local<HashSet<ChunkCoord>>,
+) {
+    // 获取当前已加载的区块坐标
+    let current_chunks: HashSet<ChunkCoord> = loaded.entries.keys().cloned().collect();
+
+    // 检测已卸载的区块（在上一帧存在但本帧不存在的区块）
+    for coord in last_loaded_chunks.iter() {
+        if !current_chunks.contains(coord) {
+            render_state.remove_queue.push(*coord);
+            render_state.dirty = true;
+        }
+    }
+
+    // 更新上一帧的区块列表
+    *last_loaded_chunks = current_chunks;
+}
+
+/// 渲染桥接插件
+pub struct RenderBridgePlugin;
+
+impl Plugin for RenderBridgePlugin {
+    fn build(&self, app: &mut App) {
+        // 注册渲染状态资源
+        app.init_resource::<VoxelRenderState>();
+
+        // 注册桥接系统
+        // 在 Update 阶段运行，在 chunk_loader_system 之后
+        app.add_systems(
+            Update,
+            (
+                render_bridge_system,
+                chunk_unload_detection_system,
+            )
+                .chain()
+                .after(crate::chunk_manager::chunk_loader_system),
+        );
+    }
+}
