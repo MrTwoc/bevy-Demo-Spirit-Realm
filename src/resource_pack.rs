@@ -76,6 +76,8 @@ const BIOME_TINTED_TEXTURES: &[(&str, [f32; 3])] = &[
     ("grass_block_top", [0.54, 0.71, 0.34]),
     // grass_block_side: 侧面也需要轻微着色
     ("grass_block_side", [0.75, 0.88, 0.60]),
+    // oak_leaves: 树叶默认绿色 #4A8B3C
+    ("oak_leaves", [0.29, 0.55, 0.24]),
 ];
 
 /// 材质包根目录（所有材质包存放于此）
@@ -277,6 +279,23 @@ impl ResourcePackManager {
         map.insert((5, "top".to_string()), "water".to_string());
         map.insert((5, "bottom".to_string()), "water".to_string());
         map.insert((5, "side".to_string()), "water".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 6: 木头 (Oak Log)
+        // ─────────────────────────────────────────────────────────────
+        // top/bottom 使用 oak_log_top（树桩切面纹理）
+        // side 使用 oak_log（树皮侧面纹理）
+        map.insert((6, "top".to_string()), "oak_log_top".to_string());
+        map.insert((6, "bottom".to_string()), "oak_log_top".to_string());
+        map.insert((6, "side".to_string()), "oak_log".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 7: 树叶 (Oak Leaves)
+        // ─────────────────────────────────────────────────────────────
+        // 所有面使用相同树叶纹理
+        map.insert((7, "top".to_string()), "oak_leaves".to_string());
+        map.insert((7, "bottom".to_string()), "oak_leaves".to_string());
+        map.insert((7, "side".to_string()), "oak_leaves".to_string());
 
         map
     }
