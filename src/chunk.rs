@@ -22,38 +22,20 @@ pub const CHUNK_SIZE: usize = 32;
 const CHUNK_VOLUME: usize = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
 
 /// A single block type identifier.
-/// 0 = air (not rendered), 1 = grass, 2 = stone, 3 = dirt, 4 = sand.
-///
-/// TODO: 如果需要兼容社区模组（方块种类可能超过 256），将此处改为 `u16`。
-/// 同步修改：PalettedChunkData 索引宽度、UvLookupTable 数组维度、
-/// ResourcePackManager::block_uv_array 维度、block_texture_map 键类型。
-/// u16 可支持 65536 种方块，UV 数组约 3MB，仍在可接受范围内。
 pub type BlockId = u8;
 
 /// 调色板压缩的区块数据。
-///
-/// 使用调色板（palette）存储不同的方块类型，每个体素只存储调色板索引。
-/// 对于32³=32768个体素：
-/// - 如果只有1种方块：调色板1项 + 索引0位 = ~2字节
-/// - 如果有2-256种方块：调色板N项 + 索引8位 = ~32KB + N*2字节
-/// - 使用4位索引（最多16种方块）：调色板16项 + 索引4位 = ~16KB + 32字节
-///
-/// 当前实现使用8位索引（最多256种方块），适合大多数场景。
 #[derive(Clone)]
 pub struct PalettedChunkData {
-    /// 调色板：索引 -> BlockId
     palette: Vec<BlockId>,
-    /// 反向调色板：BlockId -> 索引（用于快速查找）
     reverse_palette: HashMap<BlockId, u8>,
-    /// 体素索引数组：每个字节是调色板索引
     indices: Vec<u8>,
 }
 
 impl PalettedChunkData {
-    /// 创建全空气的调色板区块
     pub fn new() -> Self {
         let mut palette = Vec::new();
-        palette.push(0); // 索引0 = 空气
+        palette.push(0);
         let mut reverse_palette = HashMap::new();
         reverse_palette.insert(0, 0);
 
@@ -64,13 +46,11 @@ impl PalettedChunkData {
         }
     }
 
-    /// 从BlockId数组创建调色板区块
     pub fn from_blocks(blocks: &[BlockId]) -> Self {
         let mut palette = Vec::new();
         let mut reverse_palette = HashMap::new();
         let mut indices = Vec::with_capacity(blocks.len());
 
-        // 收集所有不同的方块类型
         for &block_id in blocks {
             if !reverse_palette.contains_key(&block_id) {
                 let index = palette.len() as u8;
@@ -79,7 +59,6 @@ impl PalettedChunkData {
             }
         }
 
-        // 生成索引数组
         for &block_id in blocks {
             let index = reverse_palette[&block_id];
             indices.push(index);
@@ -92,7 +71,6 @@ impl PalettedChunkData {
         }
     }
 
-    /// 获取指定位置的方块ID
     pub fn get(&self, x: usize, y: usize, z: usize) -> BlockId {
         if x >= CHUNK_SIZE || y >= CHUNK_SIZE || z >= CHUNK_SIZE {
             return 0;
@@ -102,10 +80,6 @@ impl PalettedChunkData {
         self.palette[palette_index]
     }
 
-    /// 获取或创建指定 BlockId 的调色板索引。
-    ///
-    /// 如果该 BlockId 已在调色板中，返回已有索引；
-    /// 否则添加到调色板并返回新索引。
     pub fn add_or_get_palette_index(&mut self, id: BlockId) -> u8 {
         if let Some(&index) = self.reverse_palette.get(&id) {
             index
@@ -117,7 +91,6 @@ impl PalettedChunkData {
         }
     }
 
-    /// 设置指定位置的方块ID
     pub fn set(&mut self, x: usize, y: usize, z: usize, id: BlockId) {
         if x >= CHUNK_SIZE || y >= CHUNK_SIZE || z >= CHUNK_SIZE {
             return;
@@ -127,7 +100,6 @@ impl PalettedChunkData {
         self.indices[idx] = palette_index;
     }
 
-    /// 转换为BlockId数组（用于兼容旧代码）
     pub fn to_blocks(&self) -> Vec<BlockId> {
         self.indices
             .iter()
@@ -135,21 +107,14 @@ impl PalettedChunkData {
             .collect()
     }
 
-    /// 获取调色板中的方块类型数量
     pub fn palette_len(&self) -> usize {
         self.palette.len()
     }
 
-    /// 检查是否为空气区块（所有体素都是空气）。
-    ///
-    /// 当最后一个非空气方块被破坏后，调色板可能仍保留旧方块 ID，
-    /// 但所有索引都指向空气。此时需要遍历索引确认。
     pub fn is_empty(&self) -> bool {
-        // 快速路径：调色板只有空气
         if self.palette.len() == 1 && self.palette[0] == 0 {
             return true;
         }
-        // 慢速路径：检查所有索引是否都指向空气调色板条目
         if let Some(&air_index) = self.reverse_palette.get(&0) {
             self.indices.iter().all(|&idx| idx == air_index)
         } else {
@@ -157,12 +122,10 @@ impl PalettedChunkData {
         }
     }
 
-    /// 检查是否为单一方块类型
     pub fn is_uniform(&self) -> bool {
         self.palette.len() == 1
     }
 
-    /// 获取单一方块类型（如果是Uniform）
     pub fn uniform_block(&self) -> Option<BlockId> {
         if self.is_uniform() {
             Some(self.palette[0])
@@ -184,19 +147,14 @@ pub enum Face {
 }
 
 impl Face {
-    /// 将 Face 转换为资源包映射表中的面名称
     pub fn to_face_name(&self) -> &'static str {
         match self {
             Face::Top => "top",
             Face::Bottom => "bottom",
-            _ => "side", // Right, Left, Front, Back 都用 "side"
+            _ => "side",
         }
     }
 
-    /// 将 Face 转换为 UV 数组索引，避免热路径中的 String 分配。
-    /// - 0 = "top"
-    /// - 1 = "bottom"
-    /// - 2 = "side"
     pub const fn face_index(&self) -> usize {
         match self {
             Face::Top => 0,
@@ -216,35 +174,20 @@ const FACES: [(Face, [i32; 3]); 6] = [
     (Face::Back, [0, 0, -1]),
 ];
 
-/// 面方向到 UV 数组索引的映射，与 FACES 顺序一致。
-/// 0=top, 1=bottom, 2=side
 const FACE_UV_INDICES: [usize; 6] = [2, 2, 0, 1, 2, 2];
 
 /// 6 个方向的邻居区块数据，用于跨区块面剔除。
-///
-/// 索引顺序与 FACES 一致：[+X, -X, +Y, -Y, +Z, -Z]。
-/// 如果某个方向没有邻居（未加载），对应位置为 `None`，
-/// 面剔除时会将缺失的邻居视为空气（即保留该面）。
-///
-/// 使用 `Arc<Vec<BlockId>>` 共享邻居数据，避免每次提交异步任务时
-/// 为 6 个邻居各分配 32KB 堆内存（共 192KB）。
-/// 多个区块的同一方向邻居引用同一份 `Arc` 数据，只有在首次解码时分配。
 pub struct ChunkNeighbors {
-    /// 6 个方向的邻居完整数据（用于跨边界查询）
-    /// 使用 Arc 共享，多个区块可引用同一份数据，避免重复分配
     pub neighbor_data: [Option<Arc<Vec<BlockId>>>; 6],
 }
 
 impl ChunkNeighbors {
-    /// 创建空的邻居数据（所有方向都没有邻居）
     pub fn empty() -> Self {
         Self {
             neighbor_data: std::array::from_fn(|_| None),
         }
     }
 
-    /// 获取指定方向邻居在 (x, y, z) 位置的方块 ID。
-    /// 如果邻居不存在，返回 0（空气）。
     pub fn get_neighbor_block(&self, face_index: usize, x: usize, y: usize, z: usize) -> BlockId {
         if let Some(ref data) = self.neighbor_data[face_index] {
             if x < CHUNK_SIZE && y < CHUNK_SIZE && z < CHUNK_SIZE {
@@ -254,17 +197,12 @@ impl ChunkNeighbors {
                 0
             }
         } else {
-            0 // 没有邻居数据，视为空气
+            0
         }
     }
 }
 
 /// Chunk data: three-state storage for a 32x32x32 voxel chunk.
-///
-/// 使用调色板压缩优化内存：
-/// - Empty: 0 字节（全空气）
-/// - Uniform: 2 字节（全同一种方块）
-/// - Paletted: ~4KB（调色板压缩，32³=32768体素）
 #[derive(Component, Clone)]
 pub enum ChunkData {
     Empty,
@@ -304,14 +242,11 @@ impl ChunkData {
             }
             ChunkData::Uniform(current_id) => {
                 if *current_id != id {
-                    // 从Uniform转换为Paletted
                     let mut data = PalettedChunkData::new();
-                    // 只在当前方块不是空气时才填充旧值（空气已经是默认值 0）
                     if *current_id != 0 {
                         let palette_index = data.add_or_get_palette_index(*current_id);
                         data.indices.fill(palette_index);
                     }
-                    // 设置新方块
                     data.set(x, y, z, id);
                     *self = ChunkData::Paletted(data);
                 }
@@ -322,10 +257,6 @@ impl ChunkData {
         }
     }
 
-    /// 将 ChunkData 转换为 Arc<Vec<BlockId>>（用于共享给邻居查询）。
-    ///
-    /// 使用 `Arc` 包装，多个区块可共享同一份邻居数据，
-    /// 避免每次提交异步任务时为 6 个邻居各分配 32KB 堆内存。
     pub fn to_shared_vec(&self) -> Arc<Vec<BlockId>> {
         match self {
             ChunkData::Empty => Arc::new(vec![0; CHUNK_VOLUME]),
@@ -334,7 +265,6 @@ impl ChunkData {
         }
     }
 
-    /// 将 ChunkData 转换为 Vec<BlockId>（用于传递给邻居查询）
     pub fn to_vec(&self) -> Vec<BlockId> {
         match self {
             ChunkData::Empty => vec![0; CHUNK_VOLUME],
@@ -343,10 +273,6 @@ impl ChunkData {
         }
     }
 
-    /// 判断指定面是否可见（需要渲染）。
-    ///
-    /// 当邻居在区块边界内时，直接查询本区块数据。
-    /// 当邻居在区块边界外时，通过 `neighbors` 查询邻居区块数据。
     pub fn is_face_visible(
         &self,
         x: usize,
@@ -362,7 +288,6 @@ impl ChunkData {
 
         let current_id = self.get(x, y, z);
 
-        // 邻居在区块边界内，直接查询本区块
         if nx >= 0
             && ny >= 0
             && nz >= 0
@@ -373,7 +298,6 @@ impl ChunkData {
             return self.get(nx as usize, ny as usize, nz as usize) != current_id;
         }
 
-        // 邻居在区块边界外，查询邻居区块数据
         let neighbor_x = nx.rem_euclid(CHUNK_SIZE as i32) as usize;
         let neighbor_y = ny.rem_euclid(CHUNK_SIZE as i32) as usize;
         let neighbor_z = nz.rem_euclid(CHUNK_SIZE as i32) as usize;
@@ -383,15 +307,11 @@ impl ChunkData {
         neighbor_id != current_id
     }
 
-    /// 获取内存占用估算（字节）
     pub fn memory_usage(&self) -> usize {
         match self {
             ChunkData::Empty => 0,
             ChunkData::Uniform(_) => 2,
-            ChunkData::Paletted(data) => {
-                // 调色板 + 索引数组
-                data.palette_len() * 2 + CHUNK_VOLUME
-            }
+            ChunkData::Paletted(data) => data.palette_len() * 2 + CHUNK_VOLUME,
         }
     }
 }
@@ -405,22 +325,15 @@ impl Default for ChunkData {
 pub type Chunk = ChunkData;
 
 /// Generates a face-culled mesh for the chunk.
-/// Returns (positions, uvs, normals, indices).
-/// UV 坐标从 ResourcePackManager 的动态 Atlas 中查找。
-///
-/// `neighbors` 提供 6 个方向的邻居区块数据，用于跨区块面剔除。
-/// 当邻居不存在时，边界面上的方块面会被保留（视为空气）。
 pub fn generate_chunk_mesh(
     chunk: &Chunk,
     resource_pack: &ResourcePackManager,
     neighbors: &ChunkNeighbors,
 ) -> (Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<[f32; 3]>, Vec<u32>) {
-    // 全空气区块提前返回，避免进入三重循环
     if matches!(chunk, ChunkData::Empty | ChunkData::Uniform(0)) {
         return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     }
 
-    // 预分配容量：32³ 区块最多约 12000 个可见面，每面 4 顶点
     let mut positions = Vec::with_capacity(48000);
     let mut uvs = Vec::with_capacity(48000);
     let mut normals = Vec::with_capacity(48000);
@@ -442,7 +355,6 @@ pub fn generate_chunk_mesh(
                     let base_index = positions.len() as u32;
                     let uv_idx = FACE_UV_INDICES[face_index];
 
-                    // 从资源包查找 UV 坐标（O(1) 数组索引）
                     let uv = resource_pack.get_block_uv_by_index(block_id, uv_idx);
 
                     let (face_verts, face_uvs, face_normal) = face_quad(x, y, z, face, uv);
@@ -530,40 +442,114 @@ fn face_quad(
         ),
     };
 
-    let (u_min, u_max, v_min, v_max) = uv;
-    let eps = 0.016; // UV 收缩量，防止双线性插值边缘渗色（约 0.5px / 32px）
+    let u_min = uv.0;
+    let u_max = uv.1;
+    let v_min = uv.2;
+    let v_max = uv.3;
+
     let face_uvs = [
-        [u_min + eps, v_max - eps],
-        [u_max - eps, v_max - eps],
-        [u_max - eps, v_min + eps],
-        [u_min + eps, v_min + eps],
+        [u_min, v_max],
+        [u_max, v_max],
+        [u_max, v_min],
+        [u_min, v_min],
     ];
 
     (verts, face_uvs, normal)
 }
 
-// --------------------------------------------------------------------------
-// Terrain helpers
-// --------------------------------------------------------------------------
+/// Chunk coordinates in chunk space.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ChunkCoord {
+    pub cx: i32,
+    pub cy: i32,
+    pub cz: i32,
+}
 
-/// 地形基准高度（世界 Y 坐标）。噪声在此基础上起伏。
+impl ChunkCoord {
+    pub fn from_world(world_pos: Vec3) -> Self {
+        Self {
+            cx: (world_pos.x / CHUNK_SIZE as f32).floor() as i32,
+            cy: (world_pos.y / CHUNK_SIZE as f32).floor() as i32,
+            cz: (world_pos.z / CHUNK_SIZE as f32).floor() as i32,
+        }
+    }
+
+    pub fn to_world_origin(self) -> Vec3 {
+        Vec3::new(
+            self.cx as f32 * CHUNK_SIZE as f32,
+            self.cy as f32 * CHUNK_SIZE as f32,
+            self.cz as f32 * CHUNK_SIZE as f32,
+        )
+    }
+}
+
+/// Block position in world space.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct BlockPos {
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+}
+
+impl BlockPos {
+    pub fn from_world(world_pos: Vec3) -> Self {
+        Self {
+            x: world_pos.x.floor() as i32,
+            y: world_pos.y.floor() as i32,
+            z: world_pos.z.floor() as i32,
+        }
+    }
+
+    pub fn to_chunk_coord(self) -> ChunkCoord {
+        ChunkCoord {
+            cx: self.x.div_euclid(CHUNK_SIZE as i32),
+            cy: self.y.div_euclid(CHUNK_SIZE as i32),
+            cz: self.z.div_euclid(CHUNK_SIZE as i32),
+        }
+    }
+
+    pub fn to_local(self) -> (usize, usize, usize) {
+        (
+            self.x.rem_euclid(CHUNK_SIZE as i32) as usize,
+            self.y.rem_euclid(CHUNK_SIZE as i32) as usize,
+            self.z.rem_euclid(CHUNK_SIZE as i32) as usize,
+        )
+    }
+}
+
+// ============================================================================
+// Terrain generation
+// ============================================================================
+
+/// Terrain noise seed
+const TERRAIN_SEED: u32 = 12345;
+
+/// Base terrain height (world Y coordinate)
 const TERRAIN_BASE_HEIGHT: i32 = 16;
-/// 地形起伏幅度。噪声值 ±1.0 映射为 ±此值。
-const TERRAIN_AMPLITUDE: f64 = 32.0;
-/// 噪声种子，保证所有区块生成一致的地形。
-const TERRAIN_SEED: u32 = 42;
-/// 泥土层厚度（地表以下多少格是泥土，再往下是石头）。
-const DIRT_LAYER_DEPTH: i32 = 4;
-/// 沙滩高度阈值：地表高度低于此值时使用沙子而非草地。
-const SAND_HEIGHT_THRESHOLD: i32 = TERRAIN_BASE_HEIGHT - 8;
 
-/// 创建全局 FBM 噪声生成器（Simplex + 分形布朗运动）。
-fn create_terrain_noise() -> Fbm<Simplex> {
-    Fbm::<Simplex>::new(TERRAIN_SEED)
-        .set_octaves(4)
-        .set_frequency(0.005)
-        .set_lacunarity(2.0)
-        .set_persistence(0.5)
+/// Terrain height amplitude (max deviation from base)
+const TERRAIN_AMPLITUDE: f64 = 32.0;
+
+/// Height threshold for sand vs grass
+const SAND_HEIGHT_THRESHOLD: i32 = 20;
+
+/// Depth of dirt layer below surface
+const DIRT_LAYER_DEPTH: i32 = 4;
+
+/// 全局噪声缓存（线程安全）
+///
+/// 使用 std::sync::OnceLock 缓存噪声函数，避免每次调用 fill_terrain 都重新创建。
+static TERRAIN_NOISE: std::sync::OnceLock<Fbm<Simplex>> = std::sync::OnceLock::new();
+
+/// 获取缓存的噪声函数
+fn get_terrain_noise() -> &'static Fbm<Simplex> {
+    TERRAIN_NOISE.get_or_init(|| {
+        Fbm::<Simplex>::new(TERRAIN_SEED)
+            .set_octaves(4)
+            .set_frequency(0.005)
+            .set_lacunarity(2.0)
+            .set_persistence(0.5)
+    })
 }
 
 /// Fills a chunk with noise-generated terrain.
@@ -571,24 +557,19 @@ fn create_terrain_noise() -> Fbm<Simplex> {
 /// 使用 Simplex FBM 噪声在 XZ 平面采样，生成有起伏的自然地形。
 /// 地形分层：地表=草地/沙子，浅层=泥土，深层=石头。
 ///
-/// `coord` 是区块的世界坐标，用于将局部 (x, z) 转换为世界坐标进行噪声采样，
-/// 保证区块边界处地形连续。
+/// 优化：使用缓存的噪声函数，避免每次创建。
 pub fn fill_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
-    let noise = create_terrain_noise();
+    let noise = get_terrain_noise();
 
     for z in 0..CHUNK_SIZE {
         for x in 0..CHUNK_SIZE {
-            // 将局部坐标转换为世界坐标
             let world_x = coord.cx as f64 * CHUNK_SIZE as f64 + x as f64;
             let world_z = coord.cz as f64 * CHUNK_SIZE as f64 + z as f64;
 
-            // 采样 FBM 噪声，输出范围约 -1.0 ~ +1.0
             let noise_val = noise.get([world_x, world_z]);
-            // 映射为地表高度
             let surface_height = TERRAIN_BASE_HEIGHT + (noise_val * TERRAIN_AMPLITUDE) as i32;
 
             for y in 0..CHUNK_SIZE {
-                // 将局部 Y 转换为世界 Y
                 let world_y = coord.cy as i32 * CHUNK_SIZE as i32 + y as i32;
 
                 if world_y > surface_height {
@@ -596,7 +577,6 @@ pub fn fill_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
                 }
 
                 let block_id = if world_y == surface_height {
-                    // 地表层：根据高度选择草地或沙子
                     if surface_height < SAND_HEIGHT_THRESHOLD {
                         4 // sand
                     } else {
@@ -619,14 +599,6 @@ pub fn fill_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
 // ---------------------------------------------------------------------------
 
 /// Spawns a single chunk entity with texture-mapped mesh.
-///
-/// 返回 `(Entity, Handle<Mesh>, Handle<VoxelMaterial>)`。
-/// - `Entity` 用于 ECS 组件插入
-/// - `Handle<Mesh>` 和 `Handle<VoxelMaterial>` 用于在卸载/淘汰时从 `Assets` 中移除，
-///   避免 GPU 内存泄漏（P0 #1 修复）
-///
-/// mesh 和 material handle 同时通过 `ChunkMeshHandle` 组件存储在实体上，
-/// 用于脏块重建时移除旧资源。
 pub fn spawn_chunk_entity(
     commands: &mut Commands,
     materials: &mut Assets<VoxelMaterial>,
@@ -656,130 +628,17 @@ pub fn spawn_chunk_entity(
 
     let entity = commands
         .spawn((
-            chunk,
+            chunk.clone(),
+            Transform::from_translation(position),
+            Visibility::default(),
             Mesh3d(mesh_handle.clone()),
             MeshMaterial3d(mat_handle.clone()),
             ChunkMeshHandle {
                 mesh: mesh_handle.clone(),
                 material: mat_handle.clone(),
             },
-            Transform::from_translation(position),
-            Visibility::default(),
         ))
         .id();
 
     (entity, mesh_handle, mat_handle)
-}
-
-// ---------------------------------------------------------------------------
-// Chunk coordinate system
-// ---------------------------------------------------------------------------
-
-#[derive(Clone, Copy, Hash, Eq, PartialEq)]
-pub struct BlockPos {
-    pub x: i32,
-    pub y: i32,
-    pub z: i32,
-}
-
-impl BlockPos {
-    pub fn from_world(world: Vec3) -> Self {
-        Self {
-            x: world.x.floor() as i32,
-            y: world.y.floor() as i32,
-            z: world.z.floor() as i32,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
-pub struct ChunkCoord {
-    pub cx: i32,
-    pub cy: i32,
-    pub cz: i32,
-}
-
-impl ChunkCoord {
-    pub fn from_world(world_pos: Vec3) -> Self {
-        Self {
-            cx: (world_pos.x / CHUNK_SIZE as f32).floor() as i32,
-            cy: (world_pos.y / CHUNK_SIZE as f32).floor() as i32,
-            cz: (world_pos.z / CHUNK_SIZE as f32).floor() as i32,
-        }
-    }
-
-    pub fn to_world_origin(self) -> Vec3 {
-        Vec3::new(
-            self.cx as f32 * CHUNK_SIZE as f32,
-            self.cy as f32 * CHUNK_SIZE as f32,
-            self.cz as f32 * CHUNK_SIZE as f32,
-        )
-    }
-}
-
-pub fn world_to_chunk(local_pos: BlockPos) -> Option<(ChunkCoord, usize)> {
-    let cx = local_pos.x.div_euclid(CHUNK_SIZE as i32);
-    let cy = local_pos.y.div_euclid(CHUNK_SIZE as i32);
-    let cz = local_pos.z.div_euclid(CHUNK_SIZE as i32);
-
-    let lx = local_pos.x.rem_euclid(CHUNK_SIZE as i32) as usize;
-    let ly = local_pos.y.rem_euclid(CHUNK_SIZE as i32) as usize;
-    let lz = local_pos.z.rem_euclid(CHUNK_SIZE as i32) as usize;
-
-    Some((
-        ChunkCoord { cx, cy, cz },
-        lz * CHUNK_SIZE * CHUNK_SIZE + ly * CHUNK_SIZE + lx,
-    ))
-}
-
-pub fn mark_block_dirty(
-    coord: ChunkCoord,
-    local_pos: (usize, usize, usize),
-    dirty_chunks: &mut Vec<ChunkCoord>,
-) {
-    dirty_chunks.push(coord);
-
-    let (x, y, z) = local_pos;
-    if x == 0 {
-        dirty_chunks.push(ChunkCoord {
-            cx: coord.cx - 1,
-            cy: coord.cy,
-            cz: coord.cz,
-        });
-    }
-    if x == CHUNK_SIZE - 1 {
-        dirty_chunks.push(ChunkCoord {
-            cx: coord.cx + 1,
-            cy: coord.cy,
-            cz: coord.cz,
-        });
-    }
-    if y == 0 {
-        dirty_chunks.push(ChunkCoord {
-            cx: coord.cx,
-            cy: coord.cy - 1,
-            cz: coord.cz,
-        });
-    }
-    if y == CHUNK_SIZE - 1 {
-        dirty_chunks.push(ChunkCoord {
-            cx: coord.cx,
-            cy: coord.cy + 1,
-            cz: coord.cz,
-        });
-    }
-    if z == 0 {
-        dirty_chunks.push(ChunkCoord {
-            cx: coord.cx,
-            cy: coord.cy,
-            cz: coord.cz - 1,
-        });
-    }
-    if z == CHUNK_SIZE - 1 {
-        dirty_chunks.push(ChunkCoord {
-            cx: coord.cx,
-            cy: coord.cy,
-            cz: coord.cz + 1,
-        });
-    }
 }

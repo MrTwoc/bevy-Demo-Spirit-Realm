@@ -31,18 +31,18 @@ pub const RENDER_DISTANCE: i32 = 16;
 /// 卸载距离：超过此距离的区块会被卸载。比渲染距离大 1 避免边界闪烁。
 pub const UNLOAD_DISTANCE: i32 = RENDER_DISTANCE + 1;
 /// 每帧最多提交到异步队列的区块数。控制任务提交速率，避免工作线程积压。
-pub const CHUNKS_PER_FRAME: usize = 64;
+pub const CHUNKS_PER_FRAME: usize = 16;
 /// 最大缓存区块数。当超过此数量时，使用LRU策略淘汰最久未访问的区块。
 /// 默认值：渲染距离内约 8*8*π*9 ≈ 1800 个区块，设置为 2000 留有余量。
 pub const MAX_CACHED_CHUNKS: usize = 2000;
 /// LRU淘汰时每帧最多卸载的区块数。避免一帧内卸载太多导致卡顿。
-pub const LRU_UNLOADS_PER_FRAME: usize = 32;
+pub const LRU_UNLOADS_PER_FRAME: usize = 16;
 /// 每帧最多标记邻居为脏的数量。限制脏标记速率，避免级联重建风暴。
 /// 移动时每个新区块会标记最多6个邻居，限制数量可以避免每帧大量重建。
 pub const NEIGHBOR_DIRTY_PER_FRAME: usize = 16;
 /// 每帧最多处理的删除数量。控制分帧删除速率，避免大量删除操作阻塞主线程。
 /// 当需要卸载大量区块时，删除操作会分散到多帧执行。
-pub const DELETIONS_PER_FRAME: usize = 32;
+pub const DELETIONS_PER_FRAME: usize = 16;
 
 /// 每帧分帧加载队列构建最多处理的区块扫描步数。
 /// 控制 `rebuild_load_queue` 分帧构建的速率，避免一次遍历太多区块导致卡顿。
