@@ -437,12 +437,11 @@ pub fn chunk_loader_system(
         // 收集邻居数据用于跨区块面剔除
         let neighbors = collect_neighbors(coord, &*loaded);
 
-        // 计算该区块的 LOD 级别（基于与玩家的距离）
-        let dist = (((coord.cx - player_chunk.cx).pow(2)
+        // 计算该区块的 LOD 级别（基于与玩家的距离平方，避免 sqrt）
+        let dist_sq = (coord.cx - player_chunk.cx).pow(2)
             + (coord.cy - player_chunk.cy).pow(2)
-            + (coord.cz - player_chunk.cz).pow(2)) as f32)
-            .sqrt();
-        let lod_level = LodLevel::from_chunk_distance(dist);
+            + (coord.cz - player_chunk.cz).pow(2);
+        let lod_level = LodLevel::from_chunk_distance_sq(dist_sq);
 
         // 创建占位 Mesh（材质使用全局共享实例）
         let placeholder_mesh = meshes.add(Mesh::new(

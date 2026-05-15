@@ -14,23 +14,20 @@
 //! # 关键设计决策
 //!
 //! 1. **UV 查找表预提取**：`ResourcePackManager` 是 Bevy `Resource`，不能跨线程发送。
-//!    因此在提交任务时，将 UV 映射表（`HashMap<(u8, String), (f32,f32,f32,f32)>`）
-//!    克隆并打包到任务数据中，供工作线程使用。
+//!    因此在提交任务时，将 UV 映射表（`HashMap<(u8, String), (f32,f32,f32,f32)`）克隆并打包到任务数据中。
 //!
-//! 2. **取消机制**：当区块在工作线程处理完成前被卸载时，通过发送 `Cancel` 任务
-//!    让工作线程跳过已取消的任务（基于 coord 匹配）。
+//! 2. **取消机制**：当区块在工作线程处理完成前被卸载时，通过发送 `Cancel` 任务让工作线程跳过已取消的任务。
 //!
-//! 3. **结果收集频率**：每帧在 `First` 阶段收集异步结果，限制每帧上传数量
-//!    避免 GPU 上传尖峰。
+//! 3. **结果收集频率**：每帧在 `First` 阶段收集异步结果，限制每帧上传数量避免 GPU 上传尖峰。
 
 use bevy::prelude::*;
 use std::collections::{HashSet, VecDeque};
-use std::sync::{Arc, mpsc};
+use std::sync::{mpsc, Arc};
 use std::thread;
 
-use crate::chunk::{CHUNK_SIZE, ChunkCoord, ChunkData, ChunkNeighbors};
+use crate::chunk::{ChunkCoord, ChunkData, ChunkNeighbors, CHUNK_SIZE};
 use crate::chunk_dirty::is_air_chunk;
-use crate::lod::{LodLevel, generate_lod_mesh};
+use crate::lod::{generate_lod_mesh, LodLevel};
 
 /// 每帧最多从异步结果中收集并上传 GPU 的网格数。
 /// 限制 GPU 上传速率，避免帧时间尖峰。
@@ -51,53 +48,30 @@ pub fn default_worker_count() -> usize {
 // ---------------------------------------------------------------------------
 
 /// UV 类型别名：(u_min, u_max, v_min, v_max)
-/// Texture Array 模式下：u_min = layer_index, u_max = layer_index + 1, v_min = 0, v_max = 1
 pub type UvCoord = (f32, f32, f32, f32);
 
-/// 默认 UV 坐标：映射到 Texture Array 第 0 层完整纹理
+/// 默认 UV 坐标
 const DEFAULT_UV: UvCoord = (0.0, 1.0, 0.0, 1.0);
 
 /// 面名称到索引的映射。
-///
-/// 面名称只有 3 种："top"(0)、"bottom"(1)、"side"(2)。
-/// 使用 `usize` 索引替代 `&str` 查找，避免热路径中的 String 分配。
 pub const fn face_name_to_index(face_name: &str) -> usize {
-    // 使用字节比较，避免哈希开销
     let bytes = face_name.as_bytes();
     if bytes.len() == 3 && bytes[0] == b't' && bytes[1] == b'o' && bytes[2] == b'p' {
-        0 // "top"
+        0
     } else if bytes.len() == 6 && bytes[0] == b'b' && bytes[1] == b'o' {
-        1 // "bottom"
+        1
     } else {
-        2 // "side"
+        2
     }
 }
 
 /// 从 ResourcePackManager 预提取的 UV 查找表。
-///
-/// 使用 `[[Option<UV>; 3]; 256]` 二维数组替代 `HashMap<(u8, String), UV>`，
-/// 实现 O(1) 零堆分配查找。
-///
-/// - 第一维：block_id（0-255）
-/// - 第二维：face_index（0=top, 1=bottom, 2=side）
-///
-/// 这是一个纯数据结构，不包含任何 Bevy 资源引用，可以安全地跨线程发送。
-/// 在提交网格生成任务时一次性构建，所有任务共享同一份（通过 Arc 共享）。
-///
-/// Texture Array 模式下，UV 编码为 (layer_index + u, v)，
-/// 其中 layer_index 是 Texture Array 的层索引，u/v 是 [0,1] 范围的纹理坐标。
 #[derive(Resource, Clone, Debug)]
 pub struct UvLookupTable {
-    /// `[block_id][face_index]` -> UV 坐标
-    /// face_index: 0=top, 1=bottom, 2=side
     uv_array: [[Option<UvCoord>; 3]; 256],
 }
 
 impl UvLookupTable {
-    /// 从 ResourcePackManager 构建 UV 查找表。
-    ///
-    /// 遍历 `block_texture_map`，查找每个 (block_id, face) 对应的纹理在 Atlas 中的 UV 坐标，
-    /// 填充到二维数组中。Texture Array 模式下 UV 编码为 (layer_index + u, v)。
     pub fn from_resource_pack(rp: &crate::resource_pack::ResourcePackManager) -> Self {
         let mut uv_array = [[None; 3]; 256];
 
@@ -113,10 +87,6 @@ impl UvLookupTable {
         Self { uv_array }
     }
 
-    /// 获取指定方块和面的 UV 坐标（通过 face index）。
-    ///
-    /// O(1) 数组索引，零堆分配。如果未映射，返回默认 UV。
-    /// Texture Array 模式下默认 UV 为 (0.0, 1.0, 0.0, 1.0) 表示第 0 层完整纹理。
     #[inline]
     pub fn get_uv(&self, block_id: u8, face_index: usize) -> UvCoord {
         self.uv_array[block_id as usize][face_index].unwrap_or(DEFAULT_UV)
@@ -129,23 +99,16 @@ impl UvLookupTable {
 
 /// 发送到工作线程的网格生成任务。
 pub enum MeshTask {
-    /// 生成指定区块的网格。
-    /// 地形数据在主线程生成（保证邻居数据完整性），
-    /// 网格计算（CPU 密集）在工作线程执行。
     Generate {
         coord: ChunkCoord,
         data: ChunkData,
         neighbors: ChunkNeighbors,
-        /// LOD 级别：None = LOD0（全精度），Some = 指定 LOD 级别
         lod_level: Option<LodLevel>,
     },
-    /// 取消指定区块的网格生成（区块已被卸载）。
     Cancel(ChunkCoord),
 }
 
 /// 工作线程返回的网格生成结果。
-///
-/// 包含构建 Bevy `Mesh` 所需的所有顶点数据。
 pub struct MeshResult {
     pub coord: ChunkCoord,
     pub positions: Vec<[f32; 3]>,
@@ -159,39 +122,20 @@ pub struct MeshResult {
 // ---------------------------------------------------------------------------
 
 /// 异步网格生成管理器。
-///
-/// 作为 Bevy `Resource` 注册，管理：
-/// - 任务发送通道（主线程 → 工作线程）
-/// - 结果接收通道（工作线程 → 主线程）
-/// - 待处理任务集合（用于取消和去重）
-/// - 待取消坐标队列（延迟发送取消信号）
-///
-/// 注意：`mpsc::Receiver` 不是 `Sync`，因此用 `Mutex` 包装以满足 Bevy `Resource` 的要求。
+#[derive(Resource)]
 pub struct AsyncMeshManager {
-    /// 发送任务到工作线程（Mutex 包装以满足 Sync 要求）
     task_sender: std::sync::Mutex<mpsc::Sender<MeshTask>>,
-    /// 从工作线程接收结果（Mutex 包装以满足 Sync 要求）
     result_receiver: std::sync::Mutex<mpsc::Receiver<MeshResult>>,
-    /// 当前正在工作线程中处理的区块坐标
     pending_tasks: std::sync::Mutex<HashSet<ChunkCoord>>,
-    /// 等待发送取消信号的坐标（在下一次 submit 时批量发送）
     cancel_queue: std::sync::Mutex<VecDeque<ChunkCoord>>,
-    /// 共享的 UV 查找表（所有工作线程只读访问，避免每任务克隆）
     uv_table: Arc<UvLookupTable>,
 }
 
-// 手动实现 Resource（因为 derive 宏要求所有字段 Sync，而 Mutex<Receiver> 满足）
-impl Resource for AsyncMeshManager {}
-
 impl AsyncMeshManager {
-    /// 创建异步网格管理器并启动工作线程。
-    ///
-    /// `worker_count` 指定工作线程数量。建议使用 `default_worker_count()`。
     pub fn new(worker_count: usize, uv_table: UvLookupTable) -> Self {
         let (task_tx, task_rx) = mpsc::channel::<MeshTask>();
         let (result_tx, result_rx) = mpsc::channel::<MeshResult>();
 
-        // task_rx 需要被多个工作线程共享，使用 Arc<Mutex<>> 包装
         let task_rx = Arc::new(std::sync::Mutex::new(task_rx));
         let uv_table = Arc::new(uv_table);
 
@@ -213,17 +157,12 @@ impl AsyncMeshManager {
         }
     }
 
-    /// 工作线程主循环。
-    ///
-    /// 持续从任务通道接收任务，执行网格生成，将结果发送回主线程。
-    /// 遇到 `Cancel` 任务时跳过对应坐标（如果还在处理中）。
     fn worker_loop(
         receiver: Arc<std::sync::Mutex<mpsc::Receiver<MeshTask>>>,
         sender: mpsc::Sender<MeshResult>,
         uv_table: Arc<UvLookupTable>,
     ) {
         loop {
-            // 从共享接收器获取任务
             let task = {
                 let rx = receiver.lock().unwrap();
                 rx.recv()
@@ -231,7 +170,7 @@ impl AsyncMeshManager {
 
             let task = match task {
                 Ok(t) => t,
-                Err(_) => break, // 通道关闭，退出线程
+                Err(_) => break,
             };
 
             match task {
@@ -241,7 +180,6 @@ impl AsyncMeshManager {
                     neighbors,
                     lod_level,
                 } => {
-                    // 全空气区块跳过网格生成
                     if is_air_chunk(&data) {
                         let _ = sender.send(MeshResult {
                             coord,
@@ -255,20 +193,9 @@ impl AsyncMeshManager {
 
                     let (positions, uvs, normals, indices) = match lod_level {
                         Some(LodLevel::Lod0) | None => {
-                            // LOD0 或未指定：使用标准网格生成
                             generate_chunk_mesh_async(&data, uv_table.as_ref(), &neighbors)
                         }
                         Some(lod) => {
-                            // LOD1-3：使用降采样网格生成
-                            // // 调试日志（已验证，注释掉）
-                            // let result =
-                            //     generate_lod_mesh(&data, uv_table.as_ref(), &neighbors, lod);
-                            // let face_count = result.0.len() / 4;
-                            // eprintln!(
-                            //     "[LOD] {:?} chunk ({},{},{}) → {} faces (triangles: {})",
-                            //     lod, coord.cx, coord.cy, coord.cz, face_count, result.3.len() / 3
-                            // );
-                            // result
                             generate_lod_mesh(&data, uv_table.as_ref(), &neighbors, lod)
                         }
                     };
@@ -281,46 +208,29 @@ impl AsyncMeshManager {
                         indices,
                     });
                 }
-                MeshTask::Cancel(_) => {
-                    // 取消任务：不做任何处理，结果通道中不会有对应结果
-                }
+                MeshTask::Cancel(_) => {}
             }
         }
     }
 
-    /// 提交网格生成任务。
-    ///
-    /// 将区块数据打包发送到工作线程。如果区块已在处理中（pending），跳过。
-    ///
-    /// 返回 `true` 表示任务已成功提交，`false` 表示因已在处理中而被跳过。
-    /// 调用方可根据返回值决定是否保留脏标记以便下帧重试。
     pub fn submit_task(&self, task: MeshTask) -> bool {
         if let MeshTask::Generate { coord, .. } = &task {
             let mut pending = self.pending_tasks.lock().unwrap();
-            // 如果已经在处理中，跳过
             if pending.contains(coord) {
                 return false;
             }
             pending.insert(*coord);
         }
-        // 忽略发送失败（通道关闭）
         let sender = self.task_sender.lock().unwrap();
         let _ = sender.send(task);
         true
     }
 
-    /// 请求取消指定区块的网格生成。
-    ///
-    /// 区块坐标会被加入取消队列，在下一次 `submit_task` 时批量发送取消信号。
-    /// 同时从 pending 集合中移除。
     pub fn cancel_task(&self, coord: ChunkCoord) {
         self.pending_tasks.lock().unwrap().remove(&coord);
         self.cancel_queue.lock().unwrap().push_back(coord);
     }
 
-    /// 批量发送取消信号。
-    ///
-    /// 在提交新任务前调用，将积压的取消请求发送到工作线程。
     fn flush_cancel_queue(&self) {
         let mut cancel_queue = self.cancel_queue.lock().unwrap();
         let sender = self.task_sender.lock().unwrap();
@@ -329,10 +239,6 @@ impl AsyncMeshManager {
         }
     }
 
-    /// 收集已完成的网格生成结果。
-    ///
-    /// 非阻塞地从结果通道中取出所有可用结果，最多返回 `max_results` 个。
-    /// 返回的结果会从 pending 集合中移除。
     pub fn collect_results(&self, max_results: usize) -> Vec<MeshResult> {
         let mut results = Vec::new();
         let receiver = self.result_receiver.lock().unwrap();
@@ -350,12 +256,10 @@ impl AsyncMeshManager {
         results
     }
 
-    /// 获取当前待处理任务数量。
     pub fn pending_count(&self) -> usize {
         self.pending_tasks.lock().unwrap().len()
     }
 
-    /// 检查指定坐标是否正在处理中。
     pub fn is_pending(&self, coord: &ChunkCoord) -> bool {
         self.pending_tasks.lock().unwrap().contains(coord)
     }
@@ -365,19 +269,16 @@ impl AsyncMeshManager {
 // 异步网格生成函数（在工作线程中执行）
 // ---------------------------------------------------------------------------
 
-/// 面方向定义，与 chunk.rs 中 FACES 一致。
-/// 元组格式：(面方向, 法线偏移, UV 数组索引)
-/// UV 数组索引：0=top, 1=bottom, 2=side
+/// 面方向定义
 const FACES_ASYNC: [(FaceAsync, [i32; 3], usize); 6] = [
-    (FaceAsync::Right, [1, 0, 0], 2),   // side
-    (FaceAsync::Left, [-1, 0, 0], 2),   // side
-    (FaceAsync::Top, [0, 1, 0], 0),     // top
-    (FaceAsync::Bottom, [0, -1, 0], 1), // bottom
-    (FaceAsync::Front, [0, 0, 1], 2),   // side
-    (FaceAsync::Back, [0, 0, -1], 2),   // side
+    (FaceAsync::Right, [1, 0, 0], 2),
+    (FaceAsync::Left, [-1, 0, 0], 2),
+    (FaceAsync::Top, [0, 1, 0], 0),
+    (FaceAsync::Bottom, [0, -1, 0], 1),
+    (FaceAsync::Front, [0, 0, 1], 2),
+    (FaceAsync::Back, [0, 0, -1], 2),
 ];
 
-/// 面方向枚举（工作线程本地副本，避免依赖 Bevy）
 #[derive(Clone, Copy)]
 enum FaceAsync {
     Top,
@@ -388,26 +289,45 @@ enum FaceAsync {
     Back,
 }
 
-/// 异步版本的网格生成函数。
+/// 预估区块的顶点数量
 ///
-/// 与 `chunk::generate_chunk_mesh()` 逻辑完全一致，但：
-/// - 使用 `UvLookupTable` 替代 `ResourcePackManager`（可跨线程）
-/// - 不依赖任何 Bevy 类型
+/// 根据区块类型和地表高度估算，避免过度预分配。
+fn estimate_vertex_capacity(chunk: &ChunkData) -> usize {
+    match chunk {
+        ChunkData::Empty | ChunkData::Uniform(0) => 0,
+        ChunkData::Uniform(_) => 2000,  // 全填充区块，预计有较多面
+        ChunkData::Paletted(data) => {
+            // 根据调色板大小估算
+            // 2-3 种类型：地表区块，预计 1000-3000 顶点
+            // 4+ 种类型：复杂区块，预计 2000-5000 顶点
+            let palette_len = data.palette_len();
+            if palette_len <= 2 {
+                1000
+            } else if palette_len <= 4 {
+                2000
+            } else {
+                3000
+            }
+        }
+    }
+}
+
+/// 异步版本的网格生成函数。
 fn generate_chunk_mesh_async(
     chunk: &ChunkData,
     uv_table: &UvLookupTable,
     neighbors: &ChunkNeighbors,
 ) -> (Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<[f32; 3]>, Vec<u32>) {
-    // 全空气区块提前返回
     if matches!(chunk, ChunkData::Empty | ChunkData::Uniform(0)) {
         return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     }
 
-    // 预分配容量
-    let mut positions = Vec::with_capacity(48000);
-    let mut uvs = Vec::with_capacity(48000);
-    let mut normals = Vec::with_capacity(48000);
-    let mut indices = Vec::with_capacity(72000);
+    // 动态预分配：根据区块类型估算顶点数量
+    let capacity = estimate_vertex_capacity(chunk);
+    let mut positions = Vec::with_capacity(capacity);
+    let mut uvs = Vec::with_capacity(capacity);
+    let mut normals = Vec::with_capacity(capacity);
+    let mut indices = Vec::with_capacity(capacity * 3 / 2);
 
     for z in 0..CHUNK_SIZE {
         for y in 0..CHUNK_SIZE {
@@ -424,8 +344,6 @@ fn generate_chunk_mesh_async(
                     }
 
                     let base_index = positions.len() as u32;
-
-                    // 从 UV 查找表获取坐标（O(1) 数组索引，零堆分配）
                     let uv = uv_table.get_uv(block_id, uv_idx);
 
                     let (face_verts, face_uvs, face_normal) = face_quad_async(x, y, z, face, uv);
@@ -449,8 +367,6 @@ fn generate_chunk_mesh_async(
 }
 
 /// 异步版本的面可见性检查。
-///
-/// 逻辑与 `ChunkData::is_face_visible()` 完全一致。
 fn is_face_visible_async(
     chunk: &ChunkData,
     x: usize,
@@ -466,7 +382,6 @@ fn is_face_visible_async(
 
     let current_id = chunk.get(x, y, z);
 
-    // 邻居在区块边界内
     if nx >= 0
         && ny >= 0
         && nz >= 0
@@ -477,7 +392,6 @@ fn is_face_visible_async(
         return chunk.get(nx as usize, ny as usize, nz as usize) != current_id;
     }
 
-    // 邻居在区块边界外
     let neighbor_x = nx.rem_euclid(CHUNK_SIZE as i32) as usize;
     let neighbor_y = ny.rem_euclid(CHUNK_SIZE as i32) as usize;
     let neighbor_z = nz.rem_euclid(CHUNK_SIZE as i32) as usize;
@@ -487,8 +401,6 @@ fn is_face_visible_async(
 }
 
 /// 异步版本的面四边形生成。
-///
-/// 逻辑与 `chunk::face_quad()` 完全一致。
 fn face_quad_async(
     x: usize,
     y: usize,
@@ -553,13 +465,16 @@ fn face_quad_async(
         ),
     };
 
-    let (u_min, u_max, v_min, v_max) = uv;
-    let eps = 0.016;
+    let u_min = uv.0;
+    let u_max = uv.1;
+    let v_min = uv.2;
+    let v_max = uv.3;
+
     let face_uvs = [
-        [u_min + eps, v_max - eps],
-        [u_max - eps, v_max - eps],
-        [u_max - eps, v_min + eps],
-        [u_min + eps, v_min + eps],
+        [u_min, v_max],
+        [u_max, v_max],
+        [u_max, v_min],
+        [u_min, v_min],
     ];
 
     (verts, face_uvs, normal)
