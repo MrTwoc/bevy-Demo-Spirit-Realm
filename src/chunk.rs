@@ -536,6 +536,9 @@ const SAND_HEIGHT_THRESHOLD: i32 = 20;
 /// Depth of dirt layer below surface
 const DIRT_LAYER_DEPTH: i32 = 4;
 
+/// Water level (base height for water to appear)
+const WATER_LEVEL: i32 = 14;
+
 /// 全局噪声缓存（线程安全）
 ///
 /// 使用 std::sync::OnceLock 缓存噪声函数，避免每次调用 fill_terrain 都重新创建。
@@ -573,6 +576,10 @@ pub fn fill_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
                 let world_y = coord.cy as i32 * CHUNK_SIZE as i32 + y as i32;
 
                 if world_y > surface_height {
+                    // 检查是否应该填充水方块
+                    if world_y < WATER_LEVEL && surface_height < WATER_LEVEL {
+                        chunk.set(x, y, z, 5); // water
+                    }
                     continue; // 空气，不需要设置（默认就是 0）
                 }
 

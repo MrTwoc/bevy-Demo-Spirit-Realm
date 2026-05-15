@@ -269,6 +269,15 @@ impl ResourcePackManager {
         map.insert((4, "bottom".to_string()), "sand".to_string());
         map.insert((4, "side".to_string()), "sand".to_string());
 
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 5: 水 (Water)
+        // ─────────────────────────────────────────────────────────────
+        // 使用蓝色半透明纹理
+        // 所有面使用相同纹理
+        map.insert((5, "top".to_string()), "water".to_string());
+        map.insert((5, "bottom".to_string()), "water".to_string());
+        map.insert((5, "side".to_string()), "water".to_string());
+
         map
     }
 
@@ -615,6 +624,7 @@ impl ResourcePackManager {
             ("obsidian", [20, 18, 30, 255]),
             ("glass", [200, 220, 240, 255]),
             ("bedrock", [85, 85, 85, 255]),
+            ("water", [30, 100, 200, 180]), // 半透明蓝色水纹理
         ];
 
         for (name, color) in default_textures {
