@@ -237,34 +237,30 @@ impl TreeGenerator {
         origin_z: i32,
         radius: i32,
     ) {
-        // 使用变种噪声为这层添加随机凸起
-        let layer_noise = self.variant_noise.get([
-            (origin_x + base_y) as f64 * 0.5,
-            (origin_z + base_y) as f64 * 0.5,
-        ]);
+        // 使用伪随机数替代噪声来减少计算开销
+        // 基于位置的哈希，比噪声计算快得多
+        let seed = (origin_x as u32).wrapping_mul(374761393)
+            ^ (origin_z as u32).wrapping_mul(1234567891)
+            ^ (base_y as u32).wrapping_mul(668476735);
 
         for dx in -radius..=radius {
             for dz in -radius..=radius {
                 // 跳过角落（但保留十字形）
                 if radius > 0 && dx.abs() == radius && dz.abs() == radius {
-                    // 用噪声决定是否保留角落方块
-                    let corner_noise = self
-                        .variant_noise
-                        .get([(origin_x + dx) as f64 * 0.8, (origin_z + dz) as f64 * 0.8]);
-                    if corner_noise < 0.0 {
+                    // 用伪随机决定是否保留角落方块（40% 概率保留）
+                    let corner_seed = seed.wrapping_add(((dx + 16) * 31 + (dz + 16) * 17) as u32);
+                    if corner_seed % 10 >= 4 {
                         continue;
                     }
                 }
 
                 // 十字形中心优先保留
                 if (dx == 0 || dz == 0) && radius >= 2 {
-                    // 十字形边缘用噪声裁剪
-                    if (dx.abs() == radius || dz.abs() == radius) {
-                        let edge_noise = self.variant_noise.get([
-                            (origin_x + dx * 2) as f64 * 0.6,
-                            (origin_z + dz * 2) as f64 * 0.6,
-                        ]);
-                        if edge_noise < -0.3 {
+                    // 十字形边缘用伪随机裁剪（30% 概率裁剪）
+                    if dx.abs() == radius || dz.abs() == radius {
+                        let edge_seed =
+                            seed.wrapping_add(((dx.abs() + 8) * 13 + (dz.abs() + 8) * 7) as u32);
+                        if edge_seed % 10 >= 7 {
                             continue;
                         }
                     }
