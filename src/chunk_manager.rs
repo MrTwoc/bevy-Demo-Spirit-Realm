@@ -37,8 +37,10 @@ pub const CHUNKS_PER_FRAME: usize = 16;
 pub const MAX_CACHED_CHUNKS: usize = 2000;
 /// LRU淘汰时每帧最多卸载的区块数。避免一帧内卸载太多导致卡顿。
 pub const LRU_UNLOADS_PER_FRAME: usize = 16;
-/// 每帧最多标记邻居为脏的数量。限制脏标记速率，避免级联重建风暴。
-pub const NEIGHBOR_DIRTY_PER_FRAME: usize = 16;
+/// 每帧最多标记邻居为脏的数量。
+/// 设为较大值以确保所有新加载区块的邻居都能被正确标记重建。
+/// 移除旧版 16 的限制，因为此限制导致超出部分的邻居永久性缺少重建（Bug #1）。
+pub const NEIGHBOR_DIRTY_PER_FRAME: usize = 512;
 /// 每帧最多处理的删除数量。控制分帧删除速率，避免大量删除操作阻塞主线程。
 pub const DELETIONS_PER_FRAME: usize = 16;
 /// 每帧分帧加载队列构建最多处理的区块扫描步数。
@@ -333,6 +335,8 @@ pub fn chunk_loader_system(
     let chunks_to_load: Vec<ChunkCoord> = loaded.load_queue.drain(..drain_count).collect();
 
     // 批量收集脏标记，最后一次性应用
+    // 注意：NEIGHBOR_DIRTY_PER_FRAME 已从 16 提升到 512，
+    // 确保所有新加载区块的邻居都能被正确标记重建，不再遗漏。
     let mut dirty_neighbors: Vec<Entity> = Vec::new();
     let mut neighbor_dirty_remaining = NEIGHBOR_DIRTY_PER_FRAME;
 
@@ -412,7 +416,7 @@ pub fn chunk_loader_system(
             lod_level: Some(lod_level),
         });
 
-        // 收集脏标记（不立即应用）
+        // 收集脏标记（NEIGHBOR_DIRTY_PER_FRAME=512 确保大部分场景无限制）
         for (dx, dy, dz) in NEIGHBOR_OFFSETS.iter() {
             if neighbor_dirty_remaining == 0 {
                 break;

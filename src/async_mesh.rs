@@ -25,7 +25,7 @@ use std::collections::{HashSet, VecDeque};
 use std::sync::{mpsc, Arc};
 use std::thread;
 
-use crate::chunk::{ChunkCoord, ChunkData, ChunkNeighbors, CHUNK_SIZE};
+use crate::chunk::{ChunkCoord, ChunkData, ChunkNeighbors, is_block_solid, CHUNK_SIZE};
 use crate::chunk_dirty::is_air_chunk;
 use crate::lod::{generate_lod_mesh, LodLevel};
 
@@ -380,24 +380,23 @@ fn is_face_visible_async(
     let ny = y as i32 + face[1];
     let nz = z as i32 + face[2];
 
-    let current_id = chunk.get(x, y, z);
-
-    if nx >= 0
+    let neighbor_id = if nx >= 0
         && ny >= 0
         && nz >= 0
         && nx < CHUNK_SIZE as i32
         && ny < CHUNK_SIZE as i32
         && nz < CHUNK_SIZE as i32
     {
-        return chunk.get(nx as usize, ny as usize, nz as usize) != current_id;
-    }
+        chunk.get(nx as usize, ny as usize, nz as usize)
+    } else {
+        let neighbor_x = nx.rem_euclid(CHUNK_SIZE as i32) as usize;
+        let neighbor_y = ny.rem_euclid(CHUNK_SIZE as i32) as usize;
+        let neighbor_z = nz.rem_euclid(CHUNK_SIZE as i32) as usize;
+        neighbors.get_neighbor_block(face_index, neighbor_x, neighbor_y, neighbor_z)
+    };
 
-    let neighbor_x = nx.rem_euclid(CHUNK_SIZE as i32) as usize;
-    let neighbor_y = ny.rem_euclid(CHUNK_SIZE as i32) as usize;
-    let neighbor_z = nz.rem_euclid(CHUNK_SIZE as i32) as usize;
-
-    let neighbor_id = neighbors.get_neighbor_block(face_index, neighbor_x, neighbor_y, neighbor_z);
-    neighbor_id != current_id
+    // 核心优化：仅当相邻方块为非实体（空气/水）时才生成面。
+    !is_block_solid(neighbor_id)
 }
 
 /// 异步版本的面四边形生成。

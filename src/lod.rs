@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 
 use crate::async_mesh::UvLookupTable;
-use crate::chunk::{BlockId, ChunkCoord, ChunkData, ChunkNeighbors, CHUNK_SIZE};
+use crate::chunk::{BlockId, ChunkCoord, ChunkData, ChunkNeighbors, is_block_solid, CHUNK_SIZE};
 use bevy::prelude::Resource;
 
 // ============================================================================
@@ -318,7 +318,7 @@ fn is_face_visible_lod(
     x: usize,
     y: usize,
     z: usize,
-    current_id: BlockId,
+    _current_id: BlockId,
     lod_offset: &[i32; 3],
     face_index: usize,
     neighbors: &ChunkNeighbors,
@@ -328,39 +328,42 @@ fn is_face_visible_lod(
     let ny = y as i32 + lod_offset[1];
     let nz = z as i32 + lod_offset[2];
 
-    if nx >= 0
+    let neighbor_id = if nx >= 0
         && ny >= 0
         && nz >= 0
         && nx + step as i32 <= CHUNK_SIZE as i32
         && ny + step as i32 <= CHUNK_SIZE as i32
         && nz + step as i32 <= CHUNK_SIZE as i32
     {
-        let neighbor_id = sample_dominant_block(chunk, nx as usize, ny as usize, nz as usize, step);
-        return neighbor_id != current_id;
-    }
+        sample_dominant_block(chunk, nx as usize, ny as usize, nz as usize, step)
+    } else {
+        let neighbor_x = nx.rem_euclid(CHUNK_SIZE as i32) as usize;
+        let neighbor_y = ny.rem_euclid(CHUNK_SIZE as i32) as usize;
+        let neighbor_z = nz.rem_euclid(CHUNK_SIZE as i32) as usize;
 
-    let neighbor_x = nx.rem_euclid(CHUNK_SIZE as i32) as usize;
-    let neighbor_y = ny.rem_euclid(CHUNK_SIZE as i32) as usize;
-    let neighbor_z = nz.rem_euclid(CHUNK_SIZE as i32) as usize;
-
-    if neighbor_x + step <= CHUNK_SIZE
-        && neighbor_y + step <= CHUNK_SIZE
-        && neighbor_z + step <= CHUNK_SIZE
-    {
-        if let Some(neighbor_id) = sample_dominant_block_from_neighbors(
-            neighbors,
-            face_index,
-            neighbor_x,
-            neighbor_y,
-            neighbor_z,
-            step,
-        ) {
-            return neighbor_id != current_id;
+        if neighbor_x + step <= CHUNK_SIZE
+            && neighbor_y + step <= CHUNK_SIZE
+            && neighbor_z + step <= CHUNK_SIZE
+        {
+            if let Some(sampled) = sample_dominant_block_from_neighbors(
+                neighbors,
+                face_index,
+                neighbor_x,
+                neighbor_y,
+                neighbor_z,
+                step,
+            ) {
+                sampled
+            } else {
+                neighbors.get_neighbor_block(face_index, neighbor_x, neighbor_y, neighbor_z)
+            }
+        } else {
+            neighbors.get_neighbor_block(face_index, neighbor_x, neighbor_y, neighbor_z)
         }
-    }
+    };
 
-    let neighbor_id = neighbors.get_neighbor_block(face_index, neighbor_x, neighbor_y, neighbor_z);
-    neighbor_id != current_id
+    // 核心优化：仅当相邻降采样区域为非实体时才渲染面。
+    !is_block_solid(neighbor_id)
 }
 
 fn sample_dominant_block_from_neighbors(

@@ -24,6 +24,22 @@ const CHUNK_VOLUME: usize = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
 /// A single block type identifier.
 pub type BlockId = u8;
 
+/// 判断方块 ID 是否为实体（不透明）方块，用于面剔除优化。
+///
+/// 实体方块（草地=1, 石头=2, 泥土=3, 沙=4）完全遮挡相邻方向的拼接面，
+/// 即使方块 ID 不同，两个实体方块之间也不应渲染面。
+/// 非实体方块（空气=0, 水=5）不遮挡面，其与实体方块之间的界面应当渲染。
+///
+/// 这是核心优化：旧代码使用 `neighbor_id != current_id` 检查，
+/// 导致不同实体类型（如石头 vs 泥土）之间生成大量冗余三角面。
+#[inline]
+pub fn is_block_solid(block_id: BlockId) -> bool {
+    match block_id {
+        0 | 5 => false, // 空气、水 → 非实体，不遮挡
+        _ => true,      // 草地(1)、石头(2)、泥土(3)、沙(4) → 实体，完全遮挡
+    }
+}
+
 /// 调色板压缩的区块数据。
 #[derive(Clone)]
 pub struct PalettedChunkData {
@@ -286,25 +302,24 @@ impl ChunkData {
         let ny = y as i32 + face[1];
         let nz = z as i32 + face[2];
 
-        let current_id = self.get(x, y, z);
-
-        if nx >= 0
+        let neighbor_id = if nx >= 0
             && ny >= 0
             && nz >= 0
             && nx < CHUNK_SIZE as i32
             && ny < CHUNK_SIZE as i32
             && nz < CHUNK_SIZE as i32
         {
-            return self.get(nx as usize, ny as usize, nz as usize) != current_id;
-        }
+            self.get(nx as usize, ny as usize, nz as usize)
+        } else {
+            let neighbor_x = nx.rem_euclid(CHUNK_SIZE as i32) as usize;
+            let neighbor_y = ny.rem_euclid(CHUNK_SIZE as i32) as usize;
+            let neighbor_z = nz.rem_euclid(CHUNK_SIZE as i32) as usize;
+            neighbors.get_neighbor_block(face_index, neighbor_x, neighbor_y, neighbor_z)
+        };
 
-        let neighbor_x = nx.rem_euclid(CHUNK_SIZE as i32) as usize;
-        let neighbor_y = ny.rem_euclid(CHUNK_SIZE as i32) as usize;
-        let neighbor_z = nz.rem_euclid(CHUNK_SIZE as i32) as usize;
-
-        let neighbor_id =
-            neighbors.get_neighbor_block(face_index, neighbor_x, neighbor_y, neighbor_z);
-        neighbor_id != current_id
+        // 核心优化：仅当相邻方块为非实体（空气/水）时才生成面。
+        // 两个实体方块（无论 ID 是否相同）之间的面完全被遮挡，无需渲染。
+        !is_block_solid(neighbor_id)
     }
 
     pub fn memory_usage(&self) -> usize {
