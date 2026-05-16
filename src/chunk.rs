@@ -339,6 +339,21 @@ impl Default for ChunkData {
 
 pub type Chunk = ChunkData;
 
+/// `Arc<ChunkData>` 的组件包装器。
+///
+/// 实体组件和 `ChunkEntry.data` 共享同一份 `Arc<ChunkData>`，
+/// 避免在创建实体和提交异步任务时发生 ~64KB 的深拷贝。
+/// 写入操通过 `Arc::make_mut` 在必要时按需克隆（仅限方块交互路径）。
+#[derive(Component, Clone)]
+pub struct ChunkComponent(pub Arc<ChunkData>);
+
+impl std::ops::Deref for ChunkComponent {
+    type Target = ChunkData;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 /// Generates a face-culled mesh for the chunk.
 pub fn generate_chunk_mesh(
     chunk: &Chunk,

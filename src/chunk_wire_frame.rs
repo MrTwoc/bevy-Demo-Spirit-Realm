@@ -4,7 +4,7 @@
 
 use bevy::{gizmos::gizmos::Gizmos, pbr::wireframe::Wireframe, prelude::*};
 
-use crate::chunk::{self, Chunk};
+use crate::chunk::{self, ChunkComponent};
 
 /// Tracks the current wireframe mode state.
 #[derive(Resource, Default)]
@@ -23,7 +23,7 @@ pub fn toggle_wireframe(keyboard: Res<ButtonInput<KeyCode>>, mut mode: ResMut<Wi
 pub fn sync_chunk_wireframe(
     mode: Res<WireframeMode>,
     mut commands: Commands,
-    chunks: Query<Entity, With<Chunk>>,
+    chunks: Query<Entity, With<ChunkComponent>>,
 ) {
     if mode.0 {
         // 进入线框模式：给还没有 Wireframe 的 Chunk 插入组件
@@ -42,7 +42,7 @@ pub fn sync_chunk_wireframe(
 /// 只要 WireframeMode 开启就会绘制。
 pub fn draw_wireframes(
     mode: Res<WireframeMode>,
-    chunks: Query<(&Chunk, &Transform)>,
+    chunks: Query<(&ChunkComponent, &Transform)>,
     mut gizmos: Gizmos,
 ) {
     if !mode.0 {

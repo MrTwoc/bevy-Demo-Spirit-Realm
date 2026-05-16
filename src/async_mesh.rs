@@ -113,7 +113,7 @@ pub enum MeshTask {
     /// 网格生成：在准备好的区块数据上执行面剔除 + 网格构建。
     Generate {
         coord: ChunkCoord,
-        data: ChunkData,
+        data: Arc<ChunkData>,
         neighbors: ChunkNeighbors,
         lod_level: Option<LodLevel>,
     },
@@ -231,7 +231,8 @@ impl AsyncMeshManager {
                     neighbors,
                     lod_level,
                 } => {
-                    if is_air_chunk(&data) {
+                    // data 是 Arc<ChunkData>，通过 as_ref() 获取 &ChunkData
+                    if is_air_chunk(data.as_ref()) {
                         let _ = mesh_sender.send(MeshResult {
                             coord,
                             positions: Vec::new(),
@@ -244,10 +245,10 @@ impl AsyncMeshManager {
 
                     let (positions, uvs, normals, indices) = match lod_level {
                         Some(LodLevel::Lod0) | None => {
-                            generate_chunk_mesh_async(&data, uv_table.as_ref(), &neighbors)
+                            generate_chunk_mesh_async(data.as_ref(), uv_table.as_ref(), &neighbors)
                         }
                         Some(lod) => {
-                            generate_lod_mesh(&data, uv_table.as_ref(), &neighbors, lod)
+                            generate_lod_mesh(data.as_ref(), uv_table.as_ref(), &neighbors, lod)
                         }
                     };
 

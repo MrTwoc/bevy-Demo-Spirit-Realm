@@ -6,9 +6,10 @@
 //! 3. 异步结果由 `chunk_loader_system` 统一收集并上传 GPU
 
 use bevy::prelude::*;
+use std::sync::Arc;
 
 use crate::async_mesh::{AsyncMeshManager, MeshTask};
-use crate::chunk::{ChunkCoord, ChunkData, ChunkNeighbors};
+use crate::chunk::{ChunkComponent, ChunkCoord, ChunkData, ChunkNeighbors};
 use crate::chunk_manager::LoadedChunks;
 use crate::lod::LodManager;
 use crate::resource_pack::VoxelMaterial;
@@ -93,18 +94,21 @@ pub fn rebuild_dirty_chunks(
     mut meshes: ResMut<Assets<Mesh>>,
     async_mesh: Res<AsyncMeshManager>,
     mut loaded: ResMut<LoadedChunks>,
+    // 实体组件已改为 ChunkComponent(Arc<ChunkData>)，避免脏块重建时深拷贝
+    // 通过 ChunkComponent 的 Deref 实现可自动解引用到 &ChunkData
     dirty_chunks: Query<
-        (Entity, &ChunkData, &ChunkCoordComponent, &ChunkMeshHandle),
+        (Entity, &ChunkComponent, &ChunkCoordComponent, &ChunkMeshHandle),
         With<DirtyChunk>,
     >,
     shared_material: Res<crate::chunk_manager::SharedVoxelMaterial>,
     lod_manager: Res<LodManager>,
 ) {
-    for (entity, chunk_data, coord_comp, mesh_handle) in &dirty_chunks {
+    for (entity, chunk_component, coord_comp, mesh_handle) in &dirty_chunks {
         let coord = coord_comp.0;
 
         // 全空气区块：清理旧 Mesh 资源，替换为空 Mesh
-        if is_air_chunk(chunk_data) {
+        // ChunkComponent 实现了 Deref<Target=ChunkData>，自动解引用
+        if is_air_chunk(chunk_component) {
             // 移除旧的 mesh 资源（材质使用全局共享实例，不单独移除）
             meshes.remove(&mesh_handle.mesh);
 
@@ -144,9 +148,10 @@ pub fn rebuild_dirty_chunks(
         let neighbors = collect_neighbors(coord, &loaded);
 
         // 提交异步网格生成任务（携带 LOD 级别）
+        // chunk_component.0 是 Arc<ChunkData>，Arc::clone 仅增加引用计数，O(1)
         let submitted = async_mesh.submit_task(MeshTask::Generate {
             coord,
-            data: chunk_data.clone(),
+            data: Arc::clone(&chunk_component.0),
             neighbors,
             lod_level: Some(lod_level),
         });

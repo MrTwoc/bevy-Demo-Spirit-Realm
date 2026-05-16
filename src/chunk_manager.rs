@@ -36,9 +36,10 @@ use bevy::image::ImageSampler;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::async_mesh::{AsyncMeshManager, MESH_UPLOADS_PER_FRAME, MeshTask};
-use crate::chunk::{Chunk, ChunkCoord, ChunkNeighbors};
+use crate::chunk::{Chunk, ChunkComponent, ChunkCoord, ChunkNeighbors};
 use crate::chunk_dirty::{
     ChunkAtlasHandle, ChunkCoordComponent, ChunkMeshHandle, DirtyChunk, is_air_chunk,
 };
@@ -68,7 +69,9 @@ pub const QUEUE_BUILD_STEPS_PER_FRAME: usize = 500;
 /// 已加载区块的条目
 pub struct ChunkEntry {
     pub entity: Entity,
-    pub data: Chunk,
+    /// `Arc<Chunk>` 避免深拷贝：实体组件和 Entry 共享同一份 ChunkData，
+    /// 提交异步任务时仅执行 Arc::clone（引用计数 +1，O(1) 开销）。
+    pub data: Arc<Chunk>,
     pub last_accessed: u64,
     pub mesh_handle: Handle<Mesh>,
     pub material_handle: Handle<VoxelMaterial>,
@@ -388,10 +391,16 @@ pub fn chunk_loader_system(
         ));
         let placeholder_mat = shared_material.handle.clone();
 
+        // 使用 Arc 包装 ChunkData，实体组件和 Entry 共享同一份数据：
+        // - 实体组件：ChunkComponent(Arc::clone(&shared)) → 引用计数 +1，O(1)
+        // - Entry.data：shared → 所有权转移，零拷贝
+        // - 异步任务：Arc::clone(&entry.data) → 引用计数 +1，O(1)
+        // 对比旧代码：chunk.clone()（~32KB）+ entry.data.clone()（~32KB）= 64KB 深拷贝
+        let shared = Arc::new(chunk);
         let position = coord.to_world_origin();
         let entity = commands
             .spawn((
-                chunk.clone(),
+                ChunkComponent(Arc::clone(&shared)),
                 Transform::from_translation(position),
                 Visibility::default(),
                 ChunkAtlasHandle(atlas_handle.handle.clone()),
@@ -409,7 +418,7 @@ pub fn chunk_loader_system(
             coord,
             ChunkEntry {
                 entity,
-                data: chunk,
+                data: shared,
                 last_accessed: current_frame,
                 mesh_handle: placeholder_mesh.clone(),
                 material_handle: placeholder_mat.clone(),
@@ -423,7 +432,7 @@ pub fn chunk_loader_system(
         let entry = loaded.entries.get(&coord).unwrap();
         async_mesh.submit_task(MeshTask::Generate {
             coord,
-            data: entry.data.clone(),
+            data: Arc::clone(&entry.data),
             neighbors,
             lod_level: Some(lod_level),
         });
@@ -439,7 +448,8 @@ pub fn chunk_loader_system(
                 cz: coord.cz + dz,
             };
             if let Some(neighbor_entry) = loaded.entries.get(&neighbor_coord) {
-                if is_air_chunk(&neighbor_entry.data) {
+                // neighbor_entry.data 是 Arc<Chunk>，通过 as_ref() 获取 &ChunkData
+                if is_air_chunk(neighbor_entry.data.as_ref()) {
                     continue;
                 }
                 dirty_neighbors.push(neighbor_entry.entity);

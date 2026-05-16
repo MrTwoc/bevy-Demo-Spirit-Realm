@@ -15,8 +15,9 @@
 //! 导致"方块已被破坏但贴图仍在"的幽灵方块问题。
 
 use bevy::prelude::*;
+use std::sync::Arc;
 
-use crate::chunk::{BlockId, BlockPos, CHUNK_SIZE, ChunkCoord, ChunkData};
+use crate::chunk::{BlockId, BlockPos, CHUNK_SIZE, ChunkComponent, ChunkCoord, ChunkData};
 use crate::chunk_dirty::{ChunkCoordComponent, ChunkMeshHandle, DirtyChunk};
 use crate::chunk_manager::LoadedChunks;
 use crate::raycast::RayHitState;
@@ -91,7 +92,7 @@ pub fn block_interaction_system(
     hit_state: Res<RayHitState>,
     mut commands: Commands,
     mut loaded: ResMut<LoadedChunks>,
-    mut chunk_query: Query<&mut ChunkData>,
+    mut chunk_query: Query<&mut ChunkComponent>,
     cursor_options: Single<&bevy::window::CursorOptions>,
 ) {
     // Only interact when cursor is locked (player is in game mode)
@@ -130,7 +131,7 @@ fn destroy_block(
     block_pos: &BlockPos,
     commands: &mut Commands,
     loaded: &mut LoadedChunks,
-    chunk_query: &mut Query<&mut ChunkData>,
+    chunk_query: &mut Query<&mut ChunkComponent>,
 ) {
     let coord = ChunkCoord {
         cx: block_pos.x.div_euclid(CHUNK_SIZE as i32),
@@ -147,13 +148,16 @@ fn destroy_block(
 
     if let Some(entry) = loaded.entries.get_mut(&coord) {
         // Set to air in LoadedChunks copy
-        entry.data.set(lx, ly, lz, 0);
+        // entry.data 是 Arc<Chunk>，通过 Arc::make_mut 获得 &mut ChunkData
+        // 若引用计数 >1（Entry + 实体组件共享），Arc::make_mut 按需克隆
+        Arc::make_mut(&mut entry.data).set(lx, ly, lz, 0);
     }
 
-    // 同步更新 ECS ChunkData 组件（脏块重建时从此处读取数据）
+    // 同步更新 ECS ChunkComponent 中的 Arc<ChunkData>
     if let Some(entity) = target_entity {
-        if let Ok(mut chunk_data) = chunk_query.get_mut(entity) {
-            chunk_data.set(lx, ly, lz, 0);
+        if let Ok(mut chunk_comp) = chunk_query.get_mut(entity) {
+            // chunk_comp: Mut<ChunkComponent>，通过 .0 访问内部的 Arc
+            Arc::make_mut(&mut chunk_comp.as_mut().0).set(lx, ly, lz, 0);
         }
         // 标记为脏
         commands.entity(entity).insert(DirtyChunk);
@@ -176,7 +180,7 @@ fn place_block(
     normal: &IVec3,
     commands: &mut Commands,
     loaded: &mut LoadedChunks,
-    chunk_query: &mut Query<&mut ChunkData>,
+    chunk_query: &mut Query<&mut ChunkComponent>,
 ) {
     // The new block goes at hit_pos + normal
     let place_pos = BlockPos {
@@ -198,15 +202,17 @@ fn place_block(
     // O(1) HashMap 查找目标区块
     if let Some(entry) = loaded.entries.get_mut(&coord) {
         // Only place if the target position is currently air
+        // entry.data.get() 通过 Arc 的 Deref 自动解引用到 &ChunkData
         if entry.data.get(lx, ly, lz) == 0 {
-            // 更新 LoadedChunks 副本
-            entry.data.set(lx, ly, lz, PLACE_BLOCK_ID);
+            // 更新 LoadedChunks 副本（Arc::make_mut 处理引用计数）
+            Arc::make_mut(&mut entry.data).set(lx, ly, lz, PLACE_BLOCK_ID);
 
             let entity = entry.entity;
 
-            // 同步更新 ECS ChunkData 组件
-            if let Ok(mut chunk_data) = chunk_query.get_mut(entity) {
-                chunk_data.set(lx, ly, lz, PLACE_BLOCK_ID);
+            // 同步更新 ECS ChunkComponent（通过 .0 访问内部 Arc）
+            if let Ok(mut chunk_comp) = chunk_query.get_mut(entity) {
+                Arc::make_mut(&mut chunk_comp.as_mut().0)
+                    .set(lx, ly, lz, PLACE_BLOCK_ID);
             }
 
             // 标记为脏
@@ -217,6 +223,8 @@ fn place_block(
         let mut chunk = ChunkData::filled(0);
         chunk.set(lx, ly, lz, PLACE_BLOCK_ID);
 
+        // 使用 Arc 共享数据：实体组件用 ChunkComponent(Arc::clone)，Entry 用所有权转移
+        let shared = Arc::new(chunk);
         let position = coord.to_world_origin();
 
         // 创建占位 Mesh（rebuild_dirty_chunks 需要 ChunkMeshHandle 组件）
@@ -225,7 +233,7 @@ fn place_block(
 
         let entity = commands
             .spawn((
-                chunk.clone(),
+                ChunkComponent(Arc::clone(&shared)),
                 Transform::from_translation(position),
                 Visibility::default(),
                 ChunkCoordComponent(coord),
@@ -242,7 +250,7 @@ fn place_block(
             coord,
             crate::chunk_manager::ChunkEntry {
                 entity,
-                data: chunk,
+                data: shared,
                 last_accessed: loaded.frame_counter,
                 mesh_handle: placeholder_mesh,
                 material_handle: placeholder_mat,

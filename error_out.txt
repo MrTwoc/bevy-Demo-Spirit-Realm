@@ -1,0 +1,424 @@
+    Checking bevygame1 v0.1.0 (I:\VScodeIng\bevy-Demo-Spirit-Realm)
+warning: unused import: `super::bridge::RawChunkMeshes`
+ --> src\voxel_render\draw.rs:9:5
+  |
+9 | use super::bridge::RawChunkMeshes;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `RawChunkMeshes`
+  --> src\voxel_render\mod.rs:12:18
+   |
+12 | pub use bridge::{RawChunkMeshes, RenderBridgePlugin};
+   |                  ^^^^^^^^^^^^^^
+
+warning: unused imports: `ChunkMeshData` and `VoxelBuffers`
+  --> src\voxel_render\mod.rs:13:19
+   |
+13 | pub use buffers::{ChunkMeshData, VoxelBuffers};
+   |                   ^^^^^^^^^^^^^  ^^^^^^^^^^^^
+
+warning: unused import: `extract::VoxelRenderState`
+  --> src\voxel_render\mod.rs:14:9
+   |
+14 | pub use extract::VoxelRenderState;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0277]: `Arc<ChunkData>` is not a `Component`
+   --> src\block_interaction.rs:95:22
+    |
+ 95 |     mut chunk_query: Query<&mut Arc<ChunkData>>,
+    |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^ invalid `Component`
+    |
+    = help: the trait `bevy::prelude::Component` is not implemented for `Arc<ChunkData>`
+    = note: consider annotating `Arc<ChunkData>` with `#[derive(Component)]`
+    = help: the following other types implement trait `bevy::prelude::Component`:
+              Aabb
+              AccessibilityNode
+              Anchor
+              AnimatedBy
+              AnimationGraphHandle
+              AnimationPlayer
+              AnimationTargetId
+              AnimationTransitions
+            and 364 others
+    = note: required for `&mut Arc<ChunkData>` to implement `QueryData`
+note: required by a bound in `bevy::prelude::Query`
+   --> I:\rust\.cargo\registry\src\mirror.xuanwu.openatom.cn-4e6db2b003e739b3\bevy_ecs-0.18.1\src\system\query.rs:485:37
+    |
+485 | pub struct Query<'world, 'state, D: QueryData, F: QueryFilter = ()> {
+    |                                     ^^^^^^^^^ required by this bound in `Query`
+
+error[E0277]: `Arc<ChunkData>` is not a `Component`
+   --> src\block_interaction.rs:134:23
+    |
+134 |     chunk_query: &mut Query<&mut Arc<ChunkData>>,
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^ invalid `Component`
+    |
+    = help: the trait `bevy::prelude::Component` is not implemented for `Arc<ChunkData>`
+    = note: consider annotating `Arc<ChunkData>` with `#[derive(Component)]`
+    = help: the following other types implement trait `bevy::prelude::Component`:
+              Aabb
+              AccessibilityNode
+              Anchor
+              AnimatedBy
+              AnimationGraphHandle
+              AnimationPlayer
+              AnimationTargetId
+              AnimationTransitions
+            and 364 others
+    = note: required for `&mut Arc<ChunkData>` to implement `QueryData`
+note: required by a bound in `bevy::prelude::Query`
+   --> I:\rust\.cargo\registry\src\mirror.xuanwu.openatom.cn-4e6db2b003e739b3\bevy_ecs-0.18.1\src\system\query.rs:485:37
+    |
+485 | pub struct Query<'world, 'state, D: QueryData, F: QueryFilter = ()> {
+    |                                     ^^^^^^^^^ required by this bound in `Query`
+
+error[E0277]: `Arc<ChunkData>` is not a `Component`
+   --> src\block_interaction.rs:183:23
+    |
+183 |     chunk_query: &mut Query<&mut Arc<ChunkData>>,
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^ invalid `Component`
+    |
+    = help: the trait `bevy::prelude::Component` is not implemented for `Arc<ChunkData>`
+    = note: consider annotating `Arc<ChunkData>` with `#[derive(Component)]`
+    = help: the following other types implement trait `bevy::prelude::Component`:
+              Aabb
+              AccessibilityNode
+              Anchor
+              AnimatedBy
+              AnimationGraphHandle
+              AnimationPlayer
+              AnimationTargetId
+              AnimationTransitions
+            and 364 others
+    = note: required for `&mut Arc<ChunkData>` to implement `QueryData`
+note: required by a bound in `bevy::prelude::Query`
+   --> I:\rust\.cargo\registry\src\mirror.xuanwu.openatom.cn-4e6db2b003e739b3\bevy_ecs-0.18.1\src\system\query.rs:485:37
+    |
+485 | pub struct Query<'world, 'state, D: QueryData, F: QueryFilter = ()> {
+    |                                     ^^^^^^^^^ required by this bound in `Query`
+
+error[E0277]: `Arc<ChunkData>` is not a `Component`
+   --> src\chunk_dirty.rs:98:19
+    |
+ 98 |       dirty_chunks: Query<
+    |  ___________________^
+ 99 | |         (Entity, &Arc<ChunkData>, &ChunkCoordComponent, &ChunkMeshHandle),
+100 | |         With<DirtyChunk>,
+101 | |     >,
+    | |_____^ invalid `Component`
+    |
+    = help: the trait `bevy::prelude::Component` is not implemented for `Arc<ChunkData>`
+    = note: consider annotating `Arc<ChunkData>` with `#[derive(Component)]`
+    = help: the following other types implement trait `bevy::prelude::Component`:
+              Aabb
+              AccessibilityNode
+              Anchor
+              AnimatedBy
+              AnimationGraphHandle
+              AnimationPlayer
+              AnimationTargetId
+              AnimationTransitions
+            and 364 others
+    = note: required for `&Arc<ChunkData>` to implement `QueryData`
+    = note: 1 redundant requirement hidden
+    = note: required for `(bevy::prelude::Entity, &Arc<ChunkData>, &ChunkCoordComponent, &ChunkMeshHandle)` to implement `QueryData`
+note: required by a bound in `bevy::prelude::Query`
+   --> I:\rust\.cargo\registry\src\mirror.xuanwu.openatom.cn-4e6db2b003e739b3\bevy_ecs-0.18.1\src\system\query.rs:485:37
+    |
+485 | pub struct Query<'world, 'state, D: QueryData, F: QueryFilter = ()> {
+    |                                     ^^^^^^^^^ required by this bound in `Query`
+
+error[E0277]: `Arc<ChunkData>` is not a `Component`
+   --> src\block_interaction.rs:109:60
+    |
+109 |         destroy_block(hit_pos, &mut commands, &mut loaded, &mut chunk_query);
+    |                                                            ^^^^^^^^^^^^^^^^ invalid `Component`
+    |
+    = help: the trait `bevy::prelude::Component` is not implemented for `Arc<ChunkData>`
+    = note: consider annotating `Arc<ChunkData>` with `#[derive(Component)]`
+    = help: the following other types implement trait `bevy::prelude::Component`:
+              Aabb
+              AccessibilityNode
+              Anchor
+              AnimatedBy
+              AnimationGraphHandle
+              AnimationPlayer
+              AnimationTargetId
+              AnimationTransitions
+            and 364 others
+    = note: required for `&mut Arc<ChunkData>` to implement `QueryData`
+note: required by a bound in `bevy::prelude::Query`
+   --> I:\rust\.cargo\registry\src\mirror.xuanwu.openatom.cn-4e6db2b003e739b3\bevy_ecs-0.18.1\src\system\query.rs:485:37
+    |
+485 | pub struct Query<'world, 'state, D: QueryData, F: QueryFilter = ()> {
+    |                                     ^^^^^^^^^ required by this bound in `Query`
+
+error[E0277]: `Arc<ChunkData>` is not a `Component`
+   --> src\block_interaction.rs:120:17
+    |
+120 |                 &mut chunk_query,
+    |                 ^^^^^^^^^^^^^^^^ invalid `Component`
+    |
+    = help: the trait `bevy::prelude::Component` is not implemented for `Arc<ChunkData>`
+    = note: consider annotating `Arc<ChunkData>` with `#[derive(Component)]`
+    = help: the following other types implement trait `bevy::prelude::Component`:
+              Aabb
+              AccessibilityNode
+              Anchor
+              AnimatedBy
+              AnimationGraphHandle
+              AnimationPlayer
+              AnimationTargetId
+              AnimationTransitions
+            and 364 others
+    = note: required for `&mut Arc<ChunkData>` to implement `QueryData`
+note: required by a bound in `bevy::prelude::Query`
+   --> I:\rust\.cargo\registry\src\mirror.xuanwu.openatom.cn-4e6db2b003e739b3\bevy_ecs-0.18.1\src\system\query.rs:485:37
+    |
+485 | pub struct Query<'world, 'state, D: QueryData, F: QueryFilter = ()> {
+    |                                     ^^^^^^^^^ required by this bound in `Query`
+
+error[E0599]: the method `get_mut` exists for mutable reference `&mut bevy::prelude::Query<'_, '_, &mut Arc<ChunkData>>`, but its trait bounds were not satisfied
+   --> src\block_interaction.rs:158:49
+    |
+158 |           if let Ok(mut chunk_data) = chunk_query.get_mut(entity) {
+    |                                                   ^^^^^^^ method cannot be called due to unsatisfied trait bounds
+    |
+   ::: I:\rust\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\alloc\src\sync.rs:264:1
+    |
+264 | / pub struct Arc<
+265 | |     T: ?Sized,
+266 | |     #[unstable(feature = "allocator_api", issue = "32838")] A: Allocator = Global,
+267 | | > {
+    | |_- doesn't satisfy `Arc<ChunkData>: bevy::prelude::Component`
+    |
+    = note: the following trait bounds were not satisfied:
+            `Arc<ChunkData>: bevy::prelude::Component`
+
+error[E0282]: type annotations needed
+   --> src\block_interaction.rs:160:13
+    |
+160 |             Arc::make_mut(&mut *chunk_data).set(lx, ly, lz, 0);
+    |             ^^^^^^^^^^^^^ cannot infer type of the type parameter `T` declared on the struct `Arc`
+    |
+help: consider specifying the generic arguments
+    |
+160 |             Arc::<T, A>::make_mut(&mut *chunk_data).set(lx, ly, lz, 0);
+    |                ++++++++
+
+error[E0599]: the method `get_mut` exists for mutable reference `&mut bevy::prelude::Query<'_, '_, &mut Arc<ChunkData>>`, but its trait bounds were not satisfied
+   --> src\block_interaction.rs:213:53
+    |
+213 |               if let Ok(mut chunk_data) = chunk_query.get_mut(entity) {
+    |                                                       ^^^^^^^ method cannot be called due to unsatisfied trait bounds
+    |
+   ::: I:\rust\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\alloc\src\sync.rs:264:1
+    |
+264 | / pub struct Arc<
+265 | |     T: ?Sized,
+266 | |     #[unstable(feature = "allocator_api", issue = "32838")] A: Allocator = Global,
+267 | | > {
+    | |_- doesn't satisfy `Arc<ChunkData>: bevy::prelude::Component`
+    |
+    = note: the following trait bounds were not satisfied:
+            `Arc<ChunkData>: bevy::prelude::Component`
+
+error[E0282]: type annotations needed
+   --> src\block_interaction.rs:214:17
+    |
+214 |                 Arc::make_mut(&mut *chunk_data).set(lx, ly, lz, PLACE_BLOCK_ID);
+    |                 ^^^^^^^^^^^^^ cannot infer type of the type parameter `T` declared on the struct `Arc`
+    |
+help: consider specifying the generic arguments
+    |
+214 |                 Arc::<T, A>::make_mut(&mut *chunk_data).set(lx, ly, lz, PLACE_BLOCK_ID);
+    |                    ++++++++
+
+error[E0277]: `(Arc<ChunkData>, Transform, Visibility, ChunkCoordComponent, ..., ...)` is not a `Bundle`
+   --> src\block_interaction.rs:234:20
+    |
+234 |               .spawn((
+    |  ______________-----_^
+    | |              |
+    | |              required by a bound introduced by this call
+235 | |                 Arc::clone(&shared),
+236 | |                 Transform::from_translation(position),
+237 | |                 Visibility::default(),
+...   |
+243 | |                 DirtyChunk,
+244 | |             ))
+    | |_____________^ invalid `Bundle`
+    |
+    = help: the trait `Bundle` is not implemented for `(Arc<ChunkData>, Transform, Visibility, ChunkCoordComponent, ..., ...)`
+    = note: consider annotating `(Arc<ChunkData>, Transform, Visibility, ChunkCoordComponent, ..., ...)` with `#[derive(Component)]` or `#[derive(Bundle)]`
+    = help: the following other types implement trait `Bundle`:
+              ()
+              (B,)
+              (B0, B1)
+              (B0, B1, B2)
+              (B0, B1, B2, B3)
+              (B0, B1, B2, B3, B4)
+              (B0, B1, B2, B3, B4, B5)
+              (B0, B1, B2, B3, B4, B5, B6)
+            and 8 others
+note: required by a bound in `bevy::prelude::Commands::<'w, 's>::spawn`
+   --> I:\rust\.cargo\registry\src\mirror.xuanwu.openatom.cn-4e6db2b003e739b3\bevy_ecs-0.18.1\src\system\commands\mod.rs:400:21
+    |
+400 |     pub fn spawn<T: Bundle>(&mut self, bundle: T) -> EntityCommands<'_> {
+    |                     ^^^^^^ required by this bound in `Commands::<'w, 's>::spawn`
+    = note: the full name for the type has been written to 'i:\VScodeIng\bevy-Demo-Spirit-Realm\target\debug\deps\bevygame1-aa8ce4c3369c61a3.long-type-894849422029038233.txt'
+    = note: consider using `--verbose` to print the full type name to the console
+
+error[E0277]: `Arc<ChunkData>` is not a `Component`
+   --> src\chunk_dirty.rs:105:58
+    |
+105 |     for (entity, chunk_data, coord_comp, mesh_handle) in &dirty_chunks {
+    |                                                          ^^^^^^^^^^^^^ invalid `Component`
+    |
+    = help: the trait `bevy::prelude::Component` is not implemented for `Arc<ChunkData>`
+    = note: consider annotating `Arc<ChunkData>` with `#[derive(Component)]`
+    = help: the following other types implement trait `bevy::prelude::Component`:
+              Aabb
+              AccessibilityNode
+              Anchor
+              AnimatedBy
+              AnimationGraphHandle
+              AnimationPlayer
+              AnimationTargetId
+              AnimationTransitions
+            and 364 others
+    = note: required for `&Arc<ChunkData>` to implement `QueryData`
+    = note: 1 redundant requirement hidden
+    = note: required for `(bevy::prelude::Entity, &Arc<ChunkData>, &ChunkCoordComponent, &ChunkMeshHandle)` to implement `QueryData`
+note: required by a bound in `bevy::prelude::Query`
+   --> I:\rust\.cargo\registry\src\mirror.xuanwu.openatom.cn-4e6db2b003e739b3\bevy_ecs-0.18.1\src\system\query.rs:485:37
+    |
+485 | pub struct Query<'world, 'state, D: QueryData, F: QueryFilter = ()> {
+    |                                     ^^^^^^^^^ required by this bound in `Query`
+
+error[E0277]: `&Query<'_, '_, (Entity, &Arc<ChunkData>, &..., ...), ...>` is not an iterator
+    --> src\chunk_dirty.rs:105:58
+     |
+ 105 |     for (entity, chunk_data, coord_comp, mesh_handle) in &dirty_chunks {
+     |                                                          ^^^^^^^^^^^^^ `&Query<'_, '_, (Entity, &Arc<ChunkData>, &..., ...), ...>` is not an iterator
+     |
+     = help: the trait `IntoIterator` is not implemented for `&Query<'_, '_, (Entity, &Arc<ChunkData>, &..., ...), ...>`
+help: the following other types implement trait `IntoIterator`
+    --> I:\rust\.cargo\registry\src\mirror.xuanwu.openatom.cn-4e6db2b003e739b3\bevy_ecs-0.18.1\src\system\query.rs:2515:1
+     |
+2515 | impl<'w, 's, D: QueryData, F: QueryFilter> IntoIterator for Query<'w, 's, D, F> {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `bevy::prelude::Query<'_, '_, D, F>`
+...
+2528 | impl<'w, 's, D: QueryData, F: QueryFilter> IntoIterator for &'w Query<'_, 's, D, F> {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&bevy::prelude::Query<'_, '_, D, F>`
+...
+2537 | impl<'w, 's, D: QueryData, F: QueryFilter> IntoIterator for &'w mut Query<'_, 's, D, F> {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&mut bevy::prelude::Query<'_, '_, D, F>`
+     = note: the full name for the type has been written to 'i:\VScodeIng\bevy-Demo-Spirit-Realm\target\debug\deps\bevygame1-aa8ce4c3369c61a3.long-type-13517206010911553745.txt'
+     = note: consider using `--verbose` to print the full type name to the console
+
+error[E0282]: type annotations needed
+   --> src\chunk_dirty.rs:110:25
+    |
+110 |         if is_air_chunk(chunk_data.as_ref()) {
+    |                         ^^^^^^^^^^ cannot infer type
+
+error[E0277]: `(Arc<ChunkData>, Transform, Visibility, ..., ..., ..., ..., ...)` is not a `Bundle`
+   --> src\chunk_manager.rs:402:20
+    |
+402 |               .spawn((
+    |  ______________-----_^
+    | |              |
+    | |              required by a bound introduced by this call
+403 | |                 Arc::clone(&shared),
+404 | |                 Transform::from_translation(position),
+405 | |                 Visibility::default(),
+...   |
+413 | |                 },
+414 | |             ))
+    | |_____________^ invalid `Bundle`
+    |
+    = help: the trait `Bundle` is not implemented for `(Arc<ChunkData>, Transform, Visibility, ..., ..., ..., ..., ...)`
+    = note: consider annotating `(Arc<ChunkData>, Transform, Visibility, ..., ..., ..., ..., ...)` with `#[derive(Component)]` or `#[derive(Bundle)]`
+    = help: the following other types implement trait `Bundle`:
+              ()
+              (B,)
+              (B0, B1)
+              (B0, B1, B2)
+              (B0, B1, B2, B3)
+              (B0, B1, B2, B3, B4)
+              (B0, B1, B2, B3, B4, B5)
+              (B0, B1, B2, B3, B4, B5, B6)
+            and 8 others
+note: required by a bound in `bevy::prelude::Commands::<'w, 's>::spawn`
+   --> I:\rust\.cargo\registry\src\mirror.xuanwu.openatom.cn-4e6db2b003e739b3\bevy_ecs-0.18.1\src\system\commands\mod.rs:400:21
+    |
+400 |     pub fn spawn<T: Bundle>(&mut self, bundle: T) -> EntityCommands<'_> {
+    |                     ^^^^^^ required by this bound in `Commands::<'w, 's>::spawn`
+    = note: the full name for the type has been written to 'i:\VScodeIng\bevy-Demo-Spirit-Realm\target\debug\deps\bevygame1-aa8ce4c3369c61a3.long-type-1582096898437520476.txt'
+    = note: consider using `--verbose` to print the full type name to the console
+
+error[E0277]: `(..., ..., ..., ..., ..., ..., ..., ..., ..., ..., ..., ...)` does not describe a valid system configuration
+   --> src\main.rs:69:13
+    |
+ 67 |           .add_systems(
+    |            ----------- required by a bound introduced by this call
+ 68 |               Update,
+ 69 | /             (
+ 70 | |                 camera::camera_movement,
+ 71 | |                 camera::camera_rotation,
+ 72 | |                 input::cursor_grab_system,
+...   |
+ 81 | |                 hud::update_hardware_info,
+ 82 | |             ),
+    | |_____________^ invalid system configuration
+    |
+    = help: the trait `bevy::prelude::IntoScheduleConfigs<Box<(dyn bevy::prelude::System<In = (), Out = ()> + 'static)>, _>` is not implemented for `(..., ..., ..., ..., ..., ..., ..., ..., ..., ..., ..., ...)`
+    = help: the following other types implement trait `bevy::prelude::IntoScheduleConfigs<T, Marker>`:
+              `(S,)` implements `bevy::prelude::IntoScheduleConfigs<T, (ScheduleConfigTupleMarker, P)>`
+              `(S0, S1)` implements `bevy::prelude::IntoScheduleConfigs<T, (ScheduleConfigTupleMarker, P0, P1)>`
+              `(S0, S1, S2)` implements `bevy::prelude::IntoScheduleConfigs<T, (ScheduleConfigTupleMarker, P0, P1, P2)>`
+              `(S0, S1, S2, S3)` implements `bevy::prelude::IntoScheduleConfigs<T, (ScheduleConfigTupleMarker, P0, P1, P2, P3)>`
+              `(S0, S1, S2, S3, S4)` implements `bevy::prelude::IntoScheduleConfigs<T, (ScheduleConfigTupleMarker, P0, P1, P2, P3, P4)>`
+              `(S0, S1, S2, S3, S4, S5)` implements `bevy::prelude::IntoScheduleConfigs<T, (ScheduleConfigTupleMarker, P0, P1, P2, P3, P4, P5)>`
+              `(S0, S1, S2, S3, S4, S5, S6)` implements `IntoScheduleConfigs<T, (..., ..., ..., ..., ..., ..., ..., ...)>`
+              `(S0, S1, S2, S3, S4, S5, S6, S7)` implements `IntoScheduleConfigs<T, (..., ..., ..., ..., ..., ..., ..., ..., ...)>`
+            and 12 others
+note: required by a bound in `bevy::prelude::App::add_systems`
+   --> I:\rust\.cargo\registry\src\mirror.xuanwu.openatom.cn-4e6db2b003e739b3\bevy_app-0.18.1\src\app.rs:325:23
+    |
+322 |     pub fn add_systems<M>(
+    |            ----------- required by a bound in this associated function
+...
+325 |         systems: impl IntoScheduleConfigs<ScheduleSystem, M>,
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `App::add_systems`
+    = note: the full name for the type has been written to 'i:\VScodeIng\bevy-Demo-Spirit-Realm\target\debug\deps\bevygame1-aa8ce4c3369c61a3.long-type-6195720321145038026.txt'
+    = note: consider using `--verbose` to print the full type name to the console
+
+warning: unused variable: `cy_max`
+   --> src\chunk_manager.rs:147:45
+    |
+147 |     fn new(center: ChunkCoord, cy_min: i32, cy_max: i32) -> Self {
+    |                                             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_cy_max`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `cy_min`
+   --> src\chunk_manager.rs:552:13
+    |
+552 |         let cy_min = center.cy - Y_LOAD_RADIUS;
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_cy_min`
+
+warning: unused variable: `cy_max`
+   --> src\chunk_manager.rs:553:13
+    |
+553 |         let cy_max = center.cy + Y_LOAD_RADIUS;
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_cy_max`
+
+Some errors have detailed explanations: E0277, E0282, E0599.
+For more information about an error, try `rustc --explain E0277`.
+warning: `bevygame1` (bin "bevygame1") generated 7 warnings
+error: could not compile `bevygame1` (bin "bevygame1") due to 16 previous errors; 7 warnings emitted
