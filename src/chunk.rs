@@ -317,9 +317,21 @@ impl ChunkData {
             neighbors.get_neighbor_block(face_index, neighbor_x, neighbor_y, neighbor_z)
         };
 
-        // 核心优化：仅当相邻方块为非实体（空气/水）时才生成面。
-        // 两个实体方块（无论 ID 是否相同）之间的面完全被遮挡，无需渲染。
-        !is_block_solid(neighbor_id)
+        let current_id = self.get(x, y, z);
+
+        // 优化1：相同类型的相邻方块（包括水）之间的面完全剔除
+        // 防止水体内部方块渲染冗余面
+        if neighbor_id == current_id && neighbor_id != 0 {
+            return false;
+        }
+
+        // 优化2：实体方块（草地、石头、泥土、沙）完全遮挡相邻面
+        if is_block_solid(neighbor_id) {
+            return false;
+        }
+
+        // 邻居是空气或不同类型的非实体方块时，渲染面
+        true
     }
 
     pub fn memory_usage(&self) -> usize {
