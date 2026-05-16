@@ -40,6 +40,11 @@ pub struct TreeConfig {
     pub tree_step: i32,
 }
 
+// # Safety
+// TreeConfig 只包含原始类型（i32, f64），可安全跨线程发送和共享。
+unsafe impl Send for TreeConfig {}
+unsafe impl Sync for TreeConfig {}
+
 impl Default for TreeConfig {
     fn default() -> Self {
         Self {
@@ -60,6 +65,12 @@ pub struct TreeNoise {
     /// 树木高度变异噪声（决定树的高度）
     pub height_variation: Perlin,
 }
+
+// # Safety
+// TreeNoise 包含两个 Perlin 噪声生成器。noise crate 的 Perlin 类型实现了 Send + Sync，
+// 因此 TreeNoise 可安全跨线程发送和共享。
+unsafe impl Send for TreeNoise {}
+unsafe impl Sync for TreeNoise {}
 
 impl TreeNoise {
     pub fn new(seed: u32) -> Self {

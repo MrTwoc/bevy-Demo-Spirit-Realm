@@ -25,9 +25,10 @@ use std::collections::{HashSet, VecDeque};
 use std::sync::{mpsc, Arc};
 use std::thread;
 
-use crate::chunk::{ChunkCoord, ChunkData, ChunkNeighbors, is_block_solid, CHUNK_SIZE};
+use crate::chunk::{ChunkCoord, ChunkData, ChunkNeighbors, fill_terrain, is_block_solid, CHUNK_SIZE};
 use crate::chunk_dirty::is_air_chunk;
 use crate::lod::{generate_lod_mesh, LodLevel};
+use crate::tree_gen::{generate_trees_in_chunk, TreeConfig, TreeNoise};
 
 /// 每帧最多从异步结果中收集并上传 GPU 的网格数。
 /// 限制 GPU 上传速率，避免帧时间尖峰。
@@ -97,8 +98,19 @@ impl UvLookupTable {
 // 网格生成任务和结果
 // ---------------------------------------------------------------------------
 
+/// 区块数据准备结果（地形+树木生成完成后返回）。
+pub struct PrepareResult {
+    pub coord: ChunkCoord,
+    pub data: ChunkData,
+}
+
 /// 发送到工作线程的网格生成任务。
 pub enum MeshTask {
+    /// 准备区块数据：地形生成 + 树木生成（CPU 密集型，移至工作线程）。
+    Prepare {
+        coord: ChunkCoord,
+    },
+    /// 网格生成：在准备好的区块数据上执行面剔除 + 网格构建。
     Generate {
         coord: ChunkCoord,
         data: ChunkData,
@@ -125,42 +137,64 @@ pub struct MeshResult {
 #[derive(Resource)]
 pub struct AsyncMeshManager {
     task_sender: std::sync::Mutex<mpsc::Sender<MeshTask>>,
-    result_receiver: std::sync::Mutex<mpsc::Receiver<MeshResult>>,
+    mesh_receiver: std::sync::Mutex<mpsc::Receiver<MeshResult>>,
+    prepare_receiver: std::sync::Mutex<mpsc::Receiver<PrepareResult>>,
     pending_tasks: std::sync::Mutex<HashSet<ChunkCoord>>,
+    prepare_pending: std::sync::Mutex<HashSet<ChunkCoord>>,
     cancel_queue: std::sync::Mutex<VecDeque<ChunkCoord>>,
     uv_table: Arc<UvLookupTable>,
+    tree_config: Arc<TreeConfig>,
+    tree_noise: Arc<TreeNoise>,
 }
 
 impl AsyncMeshManager {
-    pub fn new(worker_count: usize, uv_table: UvLookupTable) -> Self {
+    pub fn new(
+        worker_count: usize,
+        uv_table: UvLookupTable,
+        tree_config: TreeConfig,
+        tree_noise: TreeNoise,
+    ) -> Self {
         let (task_tx, task_rx) = mpsc::channel::<MeshTask>();
-        let (result_tx, result_rx) = mpsc::channel::<MeshResult>();
+        let (mesh_tx, mesh_rx) = mpsc::channel::<MeshResult>();
+        let (prepare_tx, prepare_rx) = mpsc::channel::<PrepareResult>();
 
         let task_rx = Arc::new(std::sync::Mutex::new(task_rx));
         let uv_table = Arc::new(uv_table);
+        let tree_config = Arc::new(tree_config);
+        let tree_noise = Arc::new(tree_noise);
 
         for _ in 0..worker_count {
             let rx = task_rx.clone();
-            let tx = result_tx.clone();
+            let mesh_tx = mesh_tx.clone();
+            let prepare_tx = prepare_tx.clone();
             let uv = uv_table.clone();
+            let tc = tree_config.clone();
+            let tn = tree_noise.clone();
             thread::spawn(move || {
-                Self::worker_loop(rx, tx, uv);
+                Self::worker_loop(rx, mesh_tx, prepare_tx, uv, tc, tn);
             });
         }
 
         Self {
             task_sender: std::sync::Mutex::new(task_tx),
-            result_receiver: std::sync::Mutex::new(result_rx),
+            mesh_receiver: std::sync::Mutex::new(mesh_rx),
+            prepare_receiver: std::sync::Mutex::new(prepare_rx),
             pending_tasks: std::sync::Mutex::new(HashSet::new()),
+            prepare_pending: std::sync::Mutex::new(HashSet::new()),
             cancel_queue: std::sync::Mutex::new(VecDeque::new()),
             uv_table,
+            tree_config,
+            tree_noise,
         }
     }
 
     fn worker_loop(
         receiver: Arc<std::sync::Mutex<mpsc::Receiver<MeshTask>>>,
-        sender: mpsc::Sender<MeshResult>,
+        mesh_sender: mpsc::Sender<MeshResult>,
+        prepare_sender: mpsc::Sender<PrepareResult>,
         uv_table: Arc<UvLookupTable>,
+        tree_config: Arc<TreeConfig>,
+        tree_noise: Arc<TreeNoise>,
     ) {
         loop {
             let task = {
@@ -174,6 +208,23 @@ impl AsyncMeshManager {
             };
 
             match task {
+                MeshTask::Prepare { coord } => {
+                    let mut chunk = ChunkData::filled(0);
+                    fill_terrain(&mut chunk, &coord);
+                    generate_trees_in_chunk(
+                        &mut chunk,
+                        &coord,
+                        tree_config.as_ref(),
+                        tree_noise.as_ref(),
+                    );
+
+                    // 始终发送结果（包括空区块），确保 prepare_pending 能被正确清除。
+                    // 空区块的过滤在 collect_prepare_results 的消费者端进行。
+                    let _ = prepare_sender.send(PrepareResult {
+                        coord,
+                        data: chunk,
+                    });
+                }
                 MeshTask::Generate {
                     coord,
                     data,
@@ -181,7 +232,7 @@ impl AsyncMeshManager {
                     lod_level,
                 } => {
                     if is_air_chunk(&data) {
-                        let _ = sender.send(MeshResult {
+                        let _ = mesh_sender.send(MeshResult {
                             coord,
                             positions: Vec::new(),
                             uvs: Vec::new(),
@@ -200,7 +251,7 @@ impl AsyncMeshManager {
                         }
                     };
 
-                    let _ = sender.send(MeshResult {
+                    let _ = mesh_sender.send(MeshResult {
                         coord,
                         positions,
                         uvs,
@@ -213,6 +264,7 @@ impl AsyncMeshManager {
         }
     }
 
+    /// 提交网格生成任务（区块数据已准备好）。
     pub fn submit_task(&self, task: MeshTask) -> bool {
         if let MeshTask::Generate { coord, .. } = &task {
             let mut pending = self.pending_tasks.lock().unwrap();
@@ -226,8 +278,22 @@ impl AsyncMeshManager {
         true
     }
 
+    /// 提交区块数据准备任务（地形+树木生成，在工作线程中执行）。
+    pub fn submit_prepare_task(&self, coord: ChunkCoord) -> bool {
+        let mut pending = self.prepare_pending.lock().unwrap();
+        if pending.contains(&coord) {
+            return false;
+        }
+        pending.insert(coord);
+        let sender = self.task_sender.lock().unwrap();
+        let _ = sender.send(MeshTask::Prepare { coord });
+        true
+    }
+
+    /// 取消指定区块的所有任务（准备 + 网格生成）。
     pub fn cancel_task(&self, coord: ChunkCoord) {
         self.pending_tasks.lock().unwrap().remove(&coord);
+        self.prepare_pending.lock().unwrap().remove(&coord);
         self.cancel_queue.lock().unwrap().push_back(coord);
     }
 
@@ -239,9 +305,10 @@ impl AsyncMeshManager {
         }
     }
 
+    /// 收集完成的网格生成结果。
     pub fn collect_results(&self, max_results: usize) -> Vec<MeshResult> {
         let mut results = Vec::new();
-        let receiver = self.result_receiver.lock().unwrap();
+        let receiver = self.mesh_receiver.lock().unwrap();
         let mut pending = self.pending_tasks.lock().unwrap();
         while results.len() < max_results {
             match receiver.try_recv() {
@@ -256,12 +323,40 @@ impl AsyncMeshManager {
         results
     }
 
-    pub fn pending_count(&self) -> usize {
-        self.pending_tasks.lock().unwrap().len()
+    /// 收集完成的区块数据准备结果。
+    pub fn collect_prepare_results(&self, max_results: usize) -> Vec<PrepareResult> {
+        let mut results = Vec::new();
+        let receiver = self.prepare_receiver.lock().unwrap();
+        let mut prepare_pending = self.prepare_pending.lock().unwrap();
+        while results.len() < max_results {
+            match receiver.try_recv() {
+                Ok(result) => {
+                    // 如果 coord 已不在 prepare_pending 中（已被取消），丢弃结果
+                    if prepare_pending.remove(&result.coord) {
+                        results.push(result);
+                    }
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => break,
+            }
+        }
+        results
     }
 
+    /// 总待处理任务数（准备 + 网格生成）。
+    pub fn pending_count(&self) -> usize {
+        self.pending_tasks.lock().unwrap().len()
+            + self.prepare_pending.lock().unwrap().len()
+    }
+
+    /// 指定区块是否有网格生成任务待处理。
     pub fn is_pending(&self, coord: &ChunkCoord) -> bool {
         self.pending_tasks.lock().unwrap().contains(coord)
+    }
+
+    /// 指定区块是否有数据准备任务待处理。
+    pub fn is_prepare_pending(&self, coord: &ChunkCoord) -> bool {
+        self.prepare_pending.lock().unwrap().contains(coord)
     }
 }
 

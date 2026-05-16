@@ -4,12 +4,31 @@
 //! 区块按与玩家的距离排序，每帧只加载固定数量（`CHUNKS_PER_FRAME`）。
 //! 使用LRU（最近最少使用）缓存淘汰机制，优先卸载最久未访问且距离较远的区块。
 //!
-//! # 异步网格生成
+//! # 异步网格生成（两阶段流水线）
 //!
-//! 网格生成已迁移到后台工作线程（Phase 0 优化），消除加载尖峰：
-//! - 主线程：地形生成 + 任务提交（轻量）
-//! - 工作线程：网格计算（CPU 密集）
-//! - 主线程：结果收集 + GPU 上传（分帧控制）
+//! 地形生成 + 树木生成（CPU 密集型）和网格生成均已迁移到后台工作线程：
+//!
+//! ```text
+//! ┌──────────────────────────────────────────────────────────────┐
+//! │ 主线程（轻量）                         工作线程（CPU 密集）    │
+//! │                                                              │
+//! │ ① 提交 Prepare 任务 ─────────────────→ ② 地形生成 + 树木生成 │
+//! │                                                              │
+//! │ ③ 收集 Prepare 结果 ─────────────────→                       │
+//! │ ④ 创建 ECS 实体                                              │
+//! │ ⑤ 提交 Generate 任务 ───────────────→ ⑥ 网格生成（面剔除）    │
+//! │                                                              │
+//! │ ⑦ 收集 Mesh 结果 ──────────────────→                        │
+//! │ ⑧ GPU 上传                                                  │
+//! └──────────────────────────────────────────────────────────────┘
+//! ```
+//!
+//! # 优势
+//!
+//! - **消除加载尖峰**：地形生成（~50ms）和网格生成均不在主线程，帧时间无长尾。
+//! - **两阶段流水线**：Prepare 和 Generate 可并行执行，最大化工作线程利用率。
+//! - **分帧控制**：每帧限制 Prepare 提交和 Result 收集数量，避免一帧内过度开销。
+//! - **LRU 缓存**：超过 `MAX_CACHED_CHUNKS` 时逐步淘汰远处区块。
 
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::visibility::NoCpuCulling;
@@ -19,13 +38,13 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use std::collections::HashMap;
 
 use crate::async_mesh::{AsyncMeshManager, MESH_UPLOADS_PER_FRAME, MeshTask};
-use crate::chunk::{Chunk, ChunkCoord, ChunkNeighbors, fill_terrain};
+use crate::chunk::{Chunk, ChunkCoord, ChunkNeighbors};
 use crate::chunk_dirty::{
     ChunkAtlasHandle, ChunkCoordComponent, ChunkMeshHandle, DirtyChunk, is_air_chunk,
 };
 use crate::lod::{LodLevel, LodManager};
 use crate::resource_pack::{ResourcePackManager, VoxelMaterial};
-use crate::tree_gen::{generate_trees_in_chunk, TreeConfig, TreeNoise};
+use crate::tree_gen::{TreeConfig, TreeNoise};
 
 /// 渲染距离（区块数）。增大此值可以看到更远的世界，但需要更多区块加载。
 pub const RENDER_DISTANCE: i32 = 16;
@@ -158,6 +177,8 @@ pub fn setup_world(
     resource_pack: Res<ResourcePackManager>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<VoxelMaterial>>,
+    tree_config: Res<TreeConfig>,
+    tree_noise: Res<TreeNoise>,
 ) {
     let atlas_handle = if let Some(atlas) = &resource_pack.atlas {
         let size = Extent3d {
@@ -196,7 +217,12 @@ pub fn setup_world(
 
     let worker_count = crate::async_mesh::default_worker_count();
     let uv_table = crate::async_mesh::UvLookupTable::from_resource_pack(&resource_pack);
-    commands.insert_resource(AsyncMeshManager::new(worker_count, uv_table));
+    commands.insert_resource(AsyncMeshManager::new(
+        worker_count,
+        uv_table,
+        tree_config.as_ref().clone(),
+        tree_noise.as_ref().clone(),
+    ));
 
     use crate::camera::CameraController;
     let camera_transform = Transform::from_xyz(16.0, 64.0, 16.0);
@@ -233,8 +259,6 @@ pub fn chunk_loader_system(
     atlas_handle: Res<AtlasTextureHandle>,
     shared_material: Res<SharedVoxelMaterial>,
     mut lod_manager: ResMut<LodManager>,
-    tree_config: Res<TreeConfig>,
-    tree_noise: Res<TreeNoise>,
 ) {
     let Ok(cam_transform) = camera_query.single() else {
         return;
@@ -330,35 +354,23 @@ pub fn chunk_loader_system(
 
     lru_evict(player_chunk, &mut *loaded, &*async_mesh, &mut *lod_manager);
 
-    // ── 步骤 3：分帧提交异步任务 ────────────────────────────────
-    let drain_count = CHUNKS_PER_FRAME.min(loaded.load_queue.len());
-    let chunks_to_load: Vec<ChunkCoord> = loaded.load_queue.drain(..drain_count).collect();
-
-    // 批量收集脏标记，最后一次性应用
-    // 注意：NEIGHBOR_DIRTY_PER_FRAME 已从 16 提升到 512，
-    // 确保所有新加载区块的邻居都能被正确标记重建，不再遗漏。
+    // ── 步骤 3A：收集准备完成的区块数据，创建实体并提交网格生成任务 ──
+    // 将地形+树木生成（Prepare 阶段）的结果转化为 ECS 实体和网格生成任务。
+    // 使用 CHUNKS_PER_FRAME * 2 的收集上限以匹配两阶段流水线产出率。
+    let prepare_results = async_mesh.collect_prepare_results(CHUNKS_PER_FRAME * 2);
     let mut dirty_neighbors: Vec<Entity> = Vec::new();
     let mut neighbor_dirty_remaining = NEIGHBOR_DIRTY_PER_FRAME;
 
-    for coord in chunks_to_load {
+    for prepare_result in prepare_results {
+        let coord = prepare_result.coord;
+        let chunk = prepare_result.data;
+
+        // 区块已在之前被加载（例如通过相邻区块的脏重建流程），跳过。
         if loaded.entries.contains_key(&coord) {
             continue;
         }
 
-        if async_mesh.is_pending(&coord) {
-            continue;
-        }
-
-        let mut chunk = Chunk::filled(0);
-        fill_terrain(&mut chunk, &coord);
-
-        // 地形生成后，在区块中生成树木。
-        // 树木生成使用确定性噪声，能自动处理跨区块延伸的树干和树叶：
-        // - 树干在本区块内的树木 → 放置树干 + 树叶
-        // - 树干在相邻区块但树叶伸入本区块 → 仅放置落在本区块内的树叶
-        // 相邻区块加载时也会独立计算相同的树木结构。
-        generate_trees_in_chunk(&mut chunk, &coord, &*tree_config, &*tree_noise);
-
+        // 纯空气区块（理论很少见）：不创建实体，不占用 ECS 资源。
         if is_air_chunk(&chunk) {
             continue;
         }
@@ -376,7 +388,6 @@ pub fn chunk_loader_system(
         ));
         let placeholder_mat = shared_material.handle.clone();
 
-        // 一次性创建带组件的实体（优化：减少 Commands 调用）
         let position = coord.to_world_origin();
         let entity = commands
             .spawn((
@@ -408,6 +419,7 @@ pub fn chunk_loader_system(
 
         lod_manager.set_lod(coord, lod_level);
 
+        // 提交网格生成任务（在工作线程中将准备好的区块数据转为 GPU 网格）
         let entry = loaded.entries.get(&coord).unwrap();
         async_mesh.submit_task(MeshTask::Generate {
             coord,
@@ -416,7 +428,7 @@ pub fn chunk_loader_system(
             lod_level: Some(lod_level),
         });
 
-        // 收集脏标记（NEIGHBOR_DIRTY_PER_FRAME=512 确保大部分场景无限制）
+        // 标记相邻区块为脏块，使其网格在邻居变化后被重建
         for (dx, dy, dz) in NEIGHBOR_OFFSETS.iter() {
             if neighbor_dirty_remaining == 0 {
                 break;
@@ -436,9 +448,25 @@ pub fn chunk_loader_system(
         }
     }
 
-    // 批量应用脏标记（优化：一次性插入多个实体的组件）
+    // 批量应用脏标记
     for entity in dirty_neighbors {
         commands.entity(entity).insert(DirtyChunk);
+    }
+
+    // ── 步骤 3B：提交区块数据准备任务（地形生成 + 树木生成，在工作线程执行） ──
+    // 从加载队列中取出区块坐标，提交 Prepare 任务。
+    // 双重 pending 检查（prepare + generate）避免重复提交和竞态。
+    let drain_count = CHUNKS_PER_FRAME.min(loaded.load_queue.len());
+    let chunks_to_submit: Vec<ChunkCoord> = loaded.load_queue.drain(..drain_count).collect();
+
+    for coord in chunks_to_submit {
+        if loaded.entries.contains_key(&coord) {
+            continue;
+        }
+        if async_mesh.is_prepare_pending(&coord) || async_mesh.is_pending(&coord) {
+            continue;
+        }
+        async_mesh.submit_prepare_task(coord);
     }
 }
 
