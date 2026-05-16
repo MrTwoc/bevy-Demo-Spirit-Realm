@@ -174,8 +174,33 @@ impl TreeGenerator {
             }
         }
 
-        // 生成树冠
+        // 生成树冠 - Minecraft 风格
+        // Minecraft 橡树树冠特点：
+        // 1. 底部较宽的一层（通常 5x5 或 6x6）
+        // 2. 中间层稍小（5x5 或 4x4）
+        // 3. 顶部更小（3x3 或十字形）
+        // 4. 有随机的凸起让边缘不规则
         let crown_base_y = origin_world_y + trunk_height;
+
+        // 底层树冠（最宽的一层）
+        self.generate_crown_layer(
+            &mut result,
+            origin_x,
+            crown_base_y,
+            origin_z,
+            3, // 半径 3，所以是 7x7
+        );
+
+        // 第二层（中间）
+        self.generate_crown_layer(
+            &mut result,
+            origin_x,
+            crown_base_y + 1,
+            origin_z,
+            2, // 半径 2，所以是 5x5
+        );
+
+        // 使用噪声添加随机凸起
         let crown_variance = self
             .variant_noise
             .get([origin_x as f64 * 1.3, origin_z as f64 * 1.3]);
@@ -185,40 +210,84 @@ impl TreeGenerator {
                 * (self.config.crown_max_height - self.config.crown_min_height) as f64)
                 as i32;
 
-        for dy in 0..crown_height {
-            // 椭圆形树冠：底部宽，顶部窄
-            let normalized_dy = dy as f64 / crown_height as f64;
-            let radius_factor = 1.0 - normalized_dy * 0.5; // 从 1.0 递减到 0.5
-            let effective_radius = (self.config.crown_radius as f64 * radius_factor).ceil() as i32;
-
-            for dx in -effective_radius..=effective_radius {
-                for dz in -effective_radius..=effective_radius {
-                    // 跳过角落，形成更自然的形状
-                    if dx * dx + dz * dz > (effective_radius + 1) * (effective_radius + 1) {
-                        continue;
-                    }
-
-                    let world_pos = BlockPos {
-                        x: origin_x + dx,
-                        y: crown_base_y + dy,
-                        z: origin_z + dz,
-                    };
-                    let coord = world_pos.to_chunk_coord();
-
-                    if coord == ChunkCoord::from_world_coords(origin_x, origin_world_y, origin_z) {
-                        result.local_writes.push((world_pos, 7)); // 7 = oak_leaves
-                    } else {
-                        result.cross_chunk_writes.push(TreeWriteRequest {
-                            chunk: coord,
-                            world_pos,
-                            block_id: 7, // oak_leaves
-                        });
-                    }
-                }
-            }
+        // 第三层和更上层（顶部区域）
+        for dy in 2..crown_height {
+            self.generate_crown_layer(
+                &mut result,
+                origin_x,
+                crown_base_y + dy,
+                origin_z,
+                if dy <= 2 { 1 } else { 0 }, // 半径从 1 递减到 0
+            );
         }
 
         result
+    }
+
+    /// 生成单层树冠（用于构建 Minecraft 风格的层叠树冠）
+    ///
+    /// `origin_x`, `origin_z` 是树干中心的世界坐标
+    /// `base_y` 是这层的世界 Y 坐标
+    /// `radius` 是这层的半径（0 = 只有中心 1 个方块）
+    fn generate_crown_layer(
+        &self,
+        result: &mut TreeGenerationResult,
+        origin_x: i32,
+        base_y: i32,
+        origin_z: i32,
+        radius: i32,
+    ) {
+        // 使用变种噪声为这层添加随机凸起
+        let layer_noise = self.variant_noise.get([
+            (origin_x + base_y) as f64 * 0.5,
+            (origin_z + base_y) as f64 * 0.5,
+        ]);
+
+        for dx in -radius..=radius {
+            for dz in -radius..=radius {
+                // 跳过角落（但保留十字形）
+                if radius > 0 && dx.abs() == radius && dz.abs() == radius {
+                    // 用噪声决定是否保留角落方块
+                    let corner_noise = self
+                        .variant_noise
+                        .get([(origin_x + dx) as f64 * 0.8, (origin_z + dz) as f64 * 0.8]);
+                    if corner_noise < 0.0 {
+                        continue;
+                    }
+                }
+
+                // 十字形中心优先保留
+                if (dx == 0 || dz == 0) && radius >= 2 {
+                    // 十字形边缘用噪声裁剪
+                    if (dx.abs() == radius || dz.abs() == radius) {
+                        let edge_noise = self.variant_noise.get([
+                            (origin_x + dx * 2) as f64 * 0.6,
+                            (origin_z + dz * 2) as f64 * 0.6,
+                        ]);
+                        if edge_noise < -0.3 {
+                            continue;
+                        }
+                    }
+                }
+
+                let world_pos = BlockPos {
+                    x: origin_x + dx,
+                    y: base_y,
+                    z: origin_z + dz,
+                };
+                let coord = world_pos.to_chunk_coord();
+
+                if coord == ChunkCoord::from_world_coords(origin_x, base_y, origin_z) {
+                    result.local_writes.push((world_pos, 7)); // 7 = oak_leaves
+                } else {
+                    result.cross_chunk_writes.push(TreeWriteRequest {
+                        chunk: coord,
+                        world_pos,
+                        block_id: 7, // oak_leaves
+                    });
+                }
+            }
+        }
     }
 
     /// 决定是否在给定位置生成树木
