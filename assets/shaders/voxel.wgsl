@@ -33,6 +33,15 @@ fn fragment(
     pbr_input.material.base_color = vec4<f32>(1.0, 0.0, 1.0, 1.0); // missing texture magenta
 #endif
 
+    // ─────────────────────────────────────────────────────────────
+    // 去除方块反光效果，临时方案，后续应该在材质包中定义
+    // ─────────────────────────────────────────────────────────────
+    // perceptual_roughness = 1.0: 最大粗糙度 → 完全哑光，无镜面高光
+    // metallic = 0.0: 非金属材质（树叶、木头、草等都是非金属）
+    pbr_input.material.perceptual_roughness = 1.0;
+    pbr_input.material.metallic = 0.0;
+    // ─────────────────────────────────────────────────────────────
+
     let double_sided = (pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_DOUBLE_SIDED_BIT) != 0u;
     pbr_input.frag_coord = mesh.position;
     pbr_input.world_position = mesh.world_position;
