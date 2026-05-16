@@ -13,6 +13,7 @@ mod lod;
 mod perf_logger;
 mod raycast;
 mod resource_pack;
+mod tree_gen;
 mod voxel_render;
 
 use crate::chunk_wire_frame::WireframeMode;
@@ -38,6 +39,8 @@ fn main() {
             2.0,
             TimerMode::Repeating,
         )))
+        .init_resource::<tree_gen::TreeConfig>()
+        .insert_resource(tree_gen::TreeNoise::default())
         .add_plugins((
             DefaultPlugins,
             WireframePlugin::default(),

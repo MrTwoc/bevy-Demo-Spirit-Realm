@@ -5,10 +5,8 @@
 
 use bevy::prelude::*;
 
-use crate::async_mesh::{AsyncMeshManager, MESH_UPLOADS_PER_FRAME};
 use crate::chunk::ChunkCoord;
 use crate::chunk_manager::LoadedChunks;
-use crate::lod::LodLevel;
 
 /// 单个区块的原始 Mesh 数据
 #[derive(Clone, Debug)]
@@ -31,33 +29,21 @@ pub struct RawChunkMeshes {
     pub dirty: bool,
 }
 
-/// 渲染桥接系统
+/// 渲染桥接系统（当前为占位，不消耗异步网格结果）
 ///
-/// 收集异步网格结果，存储到 RawChunkMeshes 中。
+/// ⚠️ 注意：此系统**不再调用 `async_mesh.collect_results()`**，避免与
+/// `chunk_loader_system`（First 阶段）争夺异步结果，导致区块实体
+/// 的 `Mesh3d` 组件永不被更新、永久显示占位空网格。
+///
+/// 数据来源当前设计为 WIP（只收集不渲染）。未来启用时需改为直接从
+/// ECS 实体读取已应用的 `ChunkMeshHandle` 以获取最新网格数据。
 pub fn render_bridge_system(
-    async_mesh: Res<AsyncMeshManager>,
-    loaded: Res<LoadedChunks>,
-    mut raw_meshes: ResMut<RawChunkMeshes>,
+    _async_mesh: Res<crate::async_mesh::AsyncMeshManager>,
+    _loaded: Res<LoadedChunks>,
+    _raw_meshes: ResMut<RawChunkMeshes>,
 ) {
-    let results = async_mesh.collect_results(MESH_UPLOADS_PER_FRAME * 2);
-
-    for result in results {
-        // 检查区块是否仍然加载
-        if !loaded.entries.contains_key(&result.coord) {
-            continue;
-        }
-
-        let raw_mesh = RawChunkMesh {
-            coord: result.coord,
-            positions: result.positions,
-            normals: result.normals,
-            uvs: result.uvs,
-            indices: result.indices,
-        };
-
-        raw_meshes.meshes.insert(result.coord, raw_mesh);
-        raw_meshes.dirty = true;
-    }
+    // 空操作：异步网格结果由 `chunk_loader_system` 统一收集并上传 GPU，
+    // 此处不再重复消费结果。
 }
 
 /// 渲染桥接插件

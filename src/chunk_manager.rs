@@ -25,6 +25,7 @@ use crate::chunk_dirty::{
 };
 use crate::lod::{LodLevel, LodManager};
 use crate::resource_pack::{ResourcePackManager, VoxelMaterial};
+use crate::tree_gen::{generate_trees_in_chunk, TreeConfig, TreeNoise};
 
 /// 渲染距离（区块数）。增大此值可以看到更远的世界，但需要更多区块加载。
 pub const RENDER_DISTANCE: i32 = 16;
@@ -215,7 +216,9 @@ pub fn setup_world(
         cz: 0,
     };
     loaded.last_player_chunk = Some(center);
-    rebuild_load_queue(center, &mut *loaded, QUEUE_BUILD_STEPS_PER_FRAME);
+    if let Some(queue) = rebuild_load_queue(center, &mut *loaded, QUEUE_BUILD_STEPS_PER_FRAME) {
+        loaded.load_queue = queue;
+    }
 }
 
 /// 每帧系统：异步网格结果收集 + 分帧任务提交 + 卸载远处区块 + LOD 更新。
@@ -227,8 +230,9 @@ pub fn chunk_loader_system(
     camera_query: Query<&Transform, With<Camera3d>>,
     atlas_handle: Res<AtlasTextureHandle>,
     shared_material: Res<SharedVoxelMaterial>,
-    dirty_query: Query<&DirtyChunk>,
     mut lod_manager: ResMut<LodManager>,
+    tree_config: Res<TreeConfig>,
+    tree_noise: Res<TreeNoise>,
 ) {
     let Ok(cam_transform) = camera_query.single() else {
         return;
@@ -240,6 +244,12 @@ pub fn chunk_loader_system(
     let current_frame = loaded.frame_counter;
 
     // ── 步骤 1：收集异步结果并上传 GPU ──────────────────────────
+    // ⚠️ 无论 DirtyChunk 是否存在都应用结果，避免占位空网格持续显示。
+    // 如果 DirtyChunk 因 LOD 变更或邻居标记而存在，dirty 系统后续会
+    // 提交重建任务覆盖为正确版本。移除脏标记检查防止以下死锁场景：
+    //   - 邻居标记添加 DirtyChunk → 结果被跳过 → dirty 提交新任务但
+    //     pending_tasks 有该区块返回 false → DirtyChunk 不清理 →
+    //     下帧继续跳过 → 区块永久显示空网格
     let results = async_mesh.collect_results(MESH_UPLOADS_PER_FRAME);
     for result in results {
         if !loaded.entries.contains_key(&result.coord) {
@@ -247,9 +257,6 @@ pub fn chunk_loader_system(
         }
 
         if let Some(entry) = loaded.entries.get(&result.coord) {
-            if dirty_query.get(entry.entity).is_ok() {
-                continue;
-            }
             let entity = entry.entity;
 
             meshes.remove(&entry.mesh_handle);
@@ -340,6 +347,13 @@ pub fn chunk_loader_system(
 
         let mut chunk = Chunk::filled(0);
         fill_terrain(&mut chunk, &coord);
+
+        // 地形生成后，在区块中生成树木。
+        // 树木生成使用确定性噪声，能自动处理跨区块延伸的树干和树叶：
+        // - 树干在本区块内的树木 → 放置树干 + 树叶
+        // - 树干在相邻区块但树叶伸入本区块 → 仅放置落在本区块内的树叶
+        // 相邻区块加载时也会独立计算相同的树木结构。
+        generate_trees_in_chunk(&mut chunk, &coord, &*tree_config, &*tree_noise);
 
         if is_air_chunk(&chunk) {
             continue;

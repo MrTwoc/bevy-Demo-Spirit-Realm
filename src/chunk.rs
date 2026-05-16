@@ -537,7 +537,7 @@ const SAND_HEIGHT_THRESHOLD: i32 = 22;
 const DIRT_LAYER_DEPTH: i32 = 4;
 
 /// Water level (base height for water to appear)
-const WATER_LEVEL: i32 = 80;
+pub const WATER_LEVEL: i32 = 80;
 
 /// Minimum terrain generation height
 const TERRAIN_MIN_Y: i32 = -64;
@@ -558,6 +558,19 @@ fn get_terrain_noise() -> &'static Fbm<Simplex> {
             .set_lacunarity(2.0)
             .set_persistence(0.5)
     })
+}
+
+/// 获取世界坐标 (world_x, world_z) 处的**地表高度**。
+///
+/// 使用与 `fill_terrain` 完全相同的噪声配置和计算公式，
+/// 确保在任何位置（跨越区块边界）计算的地表高度一致。
+///
+/// 此函数是确定性的——相同的 (world_x, world_z) 总是返回相同的高度值。
+/// 这使得树木生成可以在不依赖邻近区块数据的情况下正确计算树木位置。
+pub fn get_surface_height(world_x: f64, world_z: f64) -> i32 {
+    let noise = get_terrain_noise();
+    let noise_val = noise.get([world_x, world_z]);
+    TERRAIN_BASE_HEIGHT + (noise_val * TERRAIN_AMPLITUDE) as i32
 }
 
 /// Fills a chunk with noise-generated terrain.
