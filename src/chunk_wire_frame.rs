@@ -40,9 +40,10 @@ pub fn sync_chunk_wireframe(
 
 /// 绘制所有区块的外包 bounding box（调试用，半透明白色盒子）。
 /// 只要 WireframeMode 开启就会绘制。
+/// 只绘制当前对摄像机可见的区块，避免对不可见区块进行无效绘制。
 pub fn draw_wireframes(
     mode: Res<WireframeMode>,
-    chunks: Query<(&ChunkComponent, &Transform)>,
+    chunks: Query<(&ChunkComponent, &Transform, &ViewVisibility)>,
     mut gizmos: Gizmos,
 ) {
     if !mode.0 {
@@ -52,7 +53,12 @@ pub fn draw_wireframes(
     let size = chunk::CHUNK_SIZE as f32;
     let color = Color::WHITE.with_alpha(0.6);
 
-    for (_, transform) in &chunks {
+    for (_, transform, vis) in &chunks {
+        // 只绘制对摄像机可见的区块
+        if !vis.get() {
+            continue;
+        }
+
         // gizmos.cube: Transform.translation is the CENTER of the box.
         // For a 32x32x32 box, center = chunk_origin + (16, 16, 16).
         let center = transform.translation + Vec3::splat(size / 2.0);
