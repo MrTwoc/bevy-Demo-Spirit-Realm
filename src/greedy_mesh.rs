@@ -35,6 +35,17 @@ use crate::chunk::{BlockId, CHUNK_SIZE, ChunkData, ChunkNeighbors, should_cull_f
 /// 水方块 ID
 const WATER_BLOCK_ID: u8 = 5;
 
+/// 预计算的 6 个方向法线向量（对应 FACE_CONFIGS 的顺序）
+/// +X, -X, +Y, -Y, +Z, -Z
+const NORMALS: [[f32; 3]; 6] = [
+    [1.0, 0.0, 0.0],  // +X (Right)
+    [-1.0, 0.0, 0.0], // -X (Left)
+    [0.0, 1.0, 0.0],  // +Y (Top)
+    [0.0, -1.0, 0.0], // -Y (Bottom)
+    [0.0, 0.0, 1.0],  // +Z (Front)
+    [0.0, 0.0, -1.0], // -Z (Back)
+];
+
 // ---------------------------------------------------------------------------
 // 公共类型
 // ---------------------------------------------------------------------------
@@ -162,8 +173,9 @@ where
             indices: Vec::new(),
         };
     }
-    
+
     // 如果区块不包含水方块，提前返回（避免不必要的计算）
+    // 注意：对于 Paletted 区块，contains_block 只检查调色板而非所有方块，开销很小
     // if !chunk.contains_block(WATER_BLOCK_ID) {
     //     return GreedyMeshResult {
     //         positions: Vec::new(),
@@ -239,10 +251,8 @@ fn process_face<F>(
         // 1. 构建 2D 可见性掩码
         build_mask(chunk, neighbors, face, layer, &normal_offset, mask);
 
-        // 2. 重置已消费标记
-        for row in consumed.iter_mut() {
-            row.fill(false);
-        }
+        // 2. 重置已消费标记（使用 fill 一次性重置整个数组）
+        consumed.iter_mut().for_each(|row| row.fill(false));
 
         // 3. 贪心合并：扫描掩码，合并同材质连续区域
         for v in 0..CHUNK_SIZE {
@@ -328,38 +338,30 @@ fn build_mask(
             let ny = y as i32 + normal_offset[1];
             let nz = z as i32 + normal_offset[2];
 
-            // 检查邻居是否在当前区块内
-            if nx >= 0
+            // 获取邻居方块 ID（在区块内直接查询，在区块外查询邻居区块）
+            let neighbor_id = if nx >= 0
                 && ny >= 0
                 && nz >= 0
                 && nx < CHUNK_SIZE as i32
                 && ny < CHUNK_SIZE as i32
                 && nz < CHUNK_SIZE as i32
             {
-                // 邻居在区块内，直接查询
-                let neighbor_id = chunk.get(nx as usize, ny as usize, nz as usize);
-                mask[v][u] = if !should_cull_face(block_id, neighbor_id) {
-                    Some(block_id)
-                } else {
-                    None
-                };
+                // 邻居在区块内
+                chunk.get(nx as usize, ny as usize, nz as usize)
             } else {
-                // 邻居在区块外，查询邻居区块数据
+                // 邻居在区块外，使用 rem_euclid 处理负数索引并查询邻居区块
                 let neighbor_x = nx.rem_euclid(CHUNK_SIZE as i32) as usize;
                 let neighbor_y = ny.rem_euclid(CHUNK_SIZE as i32) as usize;
                 let neighbor_z = nz.rem_euclid(CHUNK_SIZE as i32) as usize;
-                let neighbor_id = neighbors.get_neighbor_block(
-                    face.face_index,
-                    neighbor_x,
-                    neighbor_y,
-                    neighbor_z,
-                );
-                mask[v][u] = if !should_cull_face(block_id, neighbor_id) {
-                    Some(block_id)
-                } else {
-                    None
-                };
-            }
+                neighbors.get_neighbor_block(face.face_index, neighbor_x, neighbor_y, neighbor_z)
+            };
+
+            // 根据面剔除规则决定是否渲染
+            mask[v][u] = if should_cull_face(block_id, neighbor_id) {
+                None
+            } else {
+                Some(block_id)
+            };
         }
     }
 }
@@ -452,12 +454,8 @@ fn emit_quad<F>(
         ),
     };
 
-    // 法线向量
-    let normal = {
-        let mut n = [0.0f32; 3];
-        n[face.normal_axis] = face.normal_sign as f32;
-        n
-    };
+    // 法线向量（使用预计算常量）
+    let normal = NORMALS[face.face_index];
 
     // UV 坐标（平铺模式：根据合并大小计算，实现纹理平铺）
     // UV.x = layer_index + local_u, UV.y = local_v
@@ -467,7 +465,7 @@ fn emit_quad<F>(
     let layer_index = u_min; // u_min 就是纹理层索引
     let u_start_f = u_start as f32;
     let v_start_f = v_start as f32;
-    
+
     let mut face_uvs = [[0.0f32, 0.0f32]; 4];
     for i in 0..4 {
         // 计算顶点在 u_axis 和 v_axis 上的局部坐标

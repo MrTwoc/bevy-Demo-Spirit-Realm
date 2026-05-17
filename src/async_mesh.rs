@@ -22,17 +22,19 @@
 
 use bevy::prelude::*;
 use std::collections::{HashSet, VecDeque};
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 use std::thread;
 
-use crate::chunk::{ChunkCoord, ChunkData, ChunkNeighbors, fill_terrain, should_cull_face, CHUNK_SIZE};
+use crate::chunk::{
+    CHUNK_SIZE, ChunkCoord, ChunkData, ChunkNeighbors, fill_terrain, should_cull_face,
+};
 use crate::chunk_dirty::is_air_chunk;
-use crate::lod::{generate_lod_mesh, LodLevel};
-use crate::tree_gen::{generate_trees_in_chunk, TreeConfig, TreeNoise};
+use crate::lod::{LodLevel, generate_lod_mesh};
+use crate::tree_gen::{TreeConfig, TreeNoise, generate_trees_in_chunk};
 
 /// 每帧最多从异步结果中收集并上传 GPU 的网格数。
 /// 限制 GPU 上传速率，避免帧时间尖峰。
-pub const MESH_UPLOADS_PER_FRAME: usize = 32;
+pub const MESH_UPLOADS_PER_FRAME: usize = 64;
 
 /// 工作线程数量。默认使用可用 CPU 核心数的一半（至少 1），
 /// 留出核心给主线程和渲染线程。
@@ -220,10 +222,7 @@ impl AsyncMeshManager {
 
                     // 始终发送结果（包括空区块），确保 prepare_pending 能被正确清除。
                     // 空区块的过滤在 collect_prepare_results 的消费者端进行。
-                    let _ = prepare_sender.send(PrepareResult {
-                        coord,
-                        data: chunk,
-                    });
+                    let _ = prepare_sender.send(PrepareResult { coord, data: chunk });
                 }
                 MeshTask::Generate {
                     coord,
@@ -347,8 +346,7 @@ impl AsyncMeshManager {
 
     /// 总待处理任务数（准备 + 网格生成）。
     pub fn pending_count(&self) -> usize {
-        self.pending_tasks.lock().unwrap().len()
-            + self.prepare_pending.lock().unwrap().len()
+        self.pending_tasks.lock().unwrap().len() + self.prepare_pending.lock().unwrap().len()
     }
 
     /// 指定区块是否有网格生成任务待处理。
@@ -392,7 +390,7 @@ enum FaceAsync {
 fn estimate_vertex_capacity(chunk: &ChunkData) -> usize {
     match chunk {
         ChunkData::Empty | ChunkData::Uniform(0) => 0,
-        ChunkData::Uniform(_) => 2000,  // 全填充区块，预计有较多面
+        ChunkData::Uniform(_) => 2000, // 全填充区块，预计有较多面
         ChunkData::Paletted(data) => {
             // 根据调色板大小估算
             // 2-3 种类型：地表区块，预计 1000-3000 顶点
@@ -410,7 +408,7 @@ fn estimate_vertex_capacity(chunk: &ChunkData) -> usize {
 }
 
 /// 异步版本的网格生成函数。
-/// 
+///
 /// 注意：水方块（BlockId = 5）由 greedy_mesh 处理，此处跳过。
 fn generate_chunk_mesh_async(
     chunk: &ChunkData,
@@ -477,28 +475,26 @@ fn generate_combined_mesh(
     neighbors: &ChunkNeighbors,
 ) -> (Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<[f32; 3]>, Vec<u32>) {
     // 1. 使用 greedy_mesh 生成水方块的网格
-    let water_result = crate::greedy_mesh::generate_greedy_mesh(
-        chunk,
-        neighbors,
-        |block_id, face_name| {
+    let water_result =
+        crate::greedy_mesh::generate_greedy_mesh(chunk, neighbors, |block_id, face_name| {
             let face_index = face_name_to_index(face_name);
             uv_table.get_uv(block_id, face_index)
-        },
-    );
+        });
 
     // 2. 使用标准算法生成其他方块的网格（已跳过水方块）
-    let (mut positions, mut uvs, mut normals, mut indices) = 
+    let (mut positions, mut uvs, mut normals, mut indices) =
         generate_chunk_mesh_async(chunk, uv_table, neighbors);
 
     // 3. 合并结果（调整 indices 偏移量）
     let index_offset = positions.len() as u32;
-    
+
     positions.extend(water_result.positions);
     uvs.extend(water_result.uvs);
     normals.extend(water_result.normals);
-    
+
     // 调整水方块网格的索引偏移量
-    let water_indices: Vec<u32> = water_result.indices
+    let water_indices: Vec<u32> = water_result
+        .indices
         .into_iter()
         .map(|idx| idx + index_offset)
         .collect();
