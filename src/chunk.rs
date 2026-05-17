@@ -345,6 +345,18 @@ impl ChunkData {
             ChunkData::Paletted(data) => data.palette_len() * 2 + CHUNK_VOLUME,
         }
     }
+
+    /// 检查区块是否包含指定的方块类型
+    pub fn contains_block(&self, block_id: BlockId) -> bool {
+        match self {
+            ChunkData::Empty => false,
+            ChunkData::Uniform(id) => *id == block_id,
+            ChunkData::Paletted(data) => {
+                // 检查调色板中是否包含该方块 ID
+                data.palette.contains(&block_id)
+            }
+        }
+    }
 }
 
 impl Default for ChunkData {

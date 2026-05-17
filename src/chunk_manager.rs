@@ -32,9 +32,11 @@
 
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::visibility::NoCpuCulling;
-use bevy::image::ImageSampler;
+use bevy::image::{ImageSampler, ImageSamplerDescriptor, ImageAddressMode, ImageFilterMode};
 use bevy::prelude::*;
-use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::render::render_resource::Extent3d;
+use bevy::render::render_resource::TextureDimension;
+use bevy::render::render_resource::TextureFormat;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -204,7 +206,18 @@ pub fn setup_world(
             TextureFormat::Rgba8UnormSrgb,
             RenderAssetUsages::default(),
         );
-        bevy_image.sampler = ImageSampler::nearest();
+        // 使用重复模式采样器，支持纹理平铺
+        // U/V 方向重复，W 方向（纹理数组层）夹紧
+        bevy_image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+            label: Some("array_texture_sampler".to_string()),
+            address_mode_u: ImageAddressMode::Repeat,
+            address_mode_v: ImageAddressMode::Repeat,
+            address_mode_w: ImageAddressMode::ClampToEdge,
+            mag_filter: ImageFilterMode::Nearest,
+            min_filter: ImageFilterMode::Nearest,
+            mipmap_filter: ImageFilterMode::Nearest,
+            ..Default::default()
+        });
         images.add(bevy_image)
     } else {
         images.add(Image::default())

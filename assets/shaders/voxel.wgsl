@@ -24,8 +24,10 @@ fn fragment(
 
 #ifdef VERTEX_UVS
     // 从 UV.x 解码纹理层索引（整数部分）和实际 UV（小数部分）
+    // UV.x = layer_index + actual_u, UV.y = actual_v
+    // actual_u 和 actual_v 可以大于 1，通过 fract() 实现纹理平铺
     let layer = u32(floor(mesh.uv.x));
-    let sample_uv = vec2<f32>(fract(mesh.uv.x), mesh.uv.y);
+    let sample_uv = vec2<f32>(fract(mesh.uv.x), fract(mesh.uv.y));
     pbr_input.material.base_color = textureSample(
         voxel_array_texture, voxel_array_texture_sampler, sample_uv, layer
     );
