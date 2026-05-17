@@ -32,8 +32,9 @@ fn main() {
         .init_resource::<chunk_manager::LoadedChunks>()
         .init_resource::<lod::LodManager>()
         .init_resource::<hud::HardwareInfo>()
+        .init_resource::<hud::CachedTriangleCount>()
         .insert_resource(hud::TriangleUpdateTimer(Timer::from_seconds(
-            5.0,
+            0.1,
             TimerMode::Repeating,
         )))
         .insert_resource(hud::HardwareInfoTimer(Timer::from_seconds(

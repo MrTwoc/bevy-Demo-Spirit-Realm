@@ -258,6 +258,7 @@ fn place_block(
                 mesh_handle: placeholder_mesh,
                 material_handle: placeholder_mat,
                 lod_level: crate::lod::LodLevel::Lod0,
+                triangle_count: 0,
             },
         );
     }

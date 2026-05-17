@@ -20,6 +20,7 @@ use crate::async_mesh::{AsyncMeshManager, MeshTask};
 use crate::chunk::{ChunkComponent, ChunkCoord, ChunkData, ChunkNeighbors};
 use crate::chunk_changes::clear_change_markers;
 use crate::chunk_manager::LoadedChunks;
+use crate::hud::CachedTriangleCount;
 use crate::lod::LodManager;
 use crate::resource_pack::VoxelMaterial;
 
@@ -103,6 +104,7 @@ pub fn rebuild_dirty_chunks(
     mut meshes: ResMut<Assets<Mesh>>,
     async_mesh: Res<AsyncMeshManager>,
     mut loaded: ResMut<LoadedChunks>,
+    mut cached: ResMut<CachedTriangleCount>,
     // 实体组件已改为 ChunkComponent(Arc<ChunkData>)，避免脏块重建时深拷贝
     // 通过 ChunkComponent 的 Deref 实现可自动解引用到 &ChunkData
     dirty_chunks: Query<
@@ -120,6 +122,12 @@ pub fn rebuild_dirty_chunks(
         if is_air_chunk(chunk_component) {
             // 移除旧的 mesh 资源（材质使用全局共享实例，不单独移除）
             meshes.remove(&mesh_handle.mesh);
+
+            // ⭐ 原三角形数归零
+            if let Some(entry) = loaded.entries.get_mut(&coord) {
+                cached.0 = cached.0.wrapping_sub(entry.triangle_count);
+                entry.triangle_count = 0;
+            }
 
             // 创建空 Mesh（无顶点数据，不渲染任何内容）
             let empty_mesh = meshes.add(Mesh::new(

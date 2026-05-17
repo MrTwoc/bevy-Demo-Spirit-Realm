@@ -67,6 +67,10 @@ pub(crate) struct ViewDistanceText;
 #[derive(Resource)]
 pub struct TriangleUpdateTimer(pub Timer);
 
+/// 缓存当前世界的总三角形数，由 chunk_manager 增量维护。
+#[derive(Resource, Default)]
+pub struct CachedTriangleCount(pub u32);
+
 pub fn setup_hud(commands: &mut Commands, camera_entity: Entity) {
     commands
         .spawn((
@@ -159,8 +163,7 @@ pub fn update_hud(
 pub fn update_triangle_count(
     time: Res<Time>,
     mut timer: ResMut<TriangleUpdateTimer>,
-    meshes: Res<Assets<Mesh>>,
-    mesh_query: Query<&Mesh3d>,
+    cached: Res<CachedTriangleCount>,
     mut text_query: Query<&mut Text, With<TriangleCountText>>,
 ) {
     timer.0.tick(time.delta());
@@ -168,20 +171,8 @@ pub fn update_triangle_count(
         return;
     }
 
-    // 注意：GPU 三角形数暂不支持（Bevy 不暴露），只统计 Mesh 数据中的三角形数
-    let total: u32 = mesh_query
-        .iter()
-        .map(|h| {
-            meshes.get(&h.0).map_or(0, |mesh| match mesh.indices() {
-                Some(indices) => indices.len() as u32 / 3,
-                None => mesh.count_vertices() as u32 / 3,
-            })
-        })
-        .sum();
-    let display_text = format!("Triangle Count: {}", total);
-
     if let Ok(mut text) = text_query.single_mut() {
-        **text = display_text;
+        **text = format!("Triangle Count: {}", cached.0);
     }
 }
 

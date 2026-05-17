@@ -44,6 +44,7 @@ use crate::chunk_changes::{LodChangedFlag, NeighborChangedFlag};
 use crate::chunk_dirty::{
     ChunkAtlasHandle, ChunkCoordComponent, ChunkMeshHandle, DirtyChunk, is_air_chunk,
 };
+use crate::hud::CachedTriangleCount;
 use crate::lod::{LodLevel, LodManager};
 use crate::resource_pack::{ResourcePackManager, VoxelMaterial};
 use crate::tree_gen::{TreeConfig, TreeNoise};
@@ -77,6 +78,7 @@ pub struct ChunkEntry {
     pub mesh_handle: Handle<Mesh>,
     pub material_handle: Handle<VoxelMaterial>,
     pub lod_level: LodLevel,
+    pub triangle_count: u32,
 }
 
 /// 待删除区块的信息
@@ -258,6 +260,7 @@ pub fn chunk_loader_system(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut loaded: ResMut<LoadedChunks>,
+    mut cached: ResMut<CachedTriangleCount>,
     async_mesh: Res<AsyncMeshManager>,
     camera_query: Query<&Transform, With<Camera3d>>,
     atlas_handle: Res<AtlasTextureHandle>,
@@ -288,6 +291,7 @@ pub fn chunk_loader_system(
 
         if let Some(entry) = loaded.entries.get(&result.coord) {
             let entity = entry.entity;
+            let indices_len = result.indices.len() as u32 / 3;
 
             meshes.remove(&entry.mesh_handle);
 
@@ -314,6 +318,10 @@ pub fn chunk_loader_system(
             ));
 
             if let Some(entry) = loaded.entries.get_mut(&result.coord) {
+                // ⭐ 增量更新三角形数（indices_len 在 indices 被移动前已获取）
+                cached.0 = cached.0.wrapping_add(indices_len).wrapping_sub(entry.triangle_count);
+                entry.triangle_count = indices_len;
+
                 entry.mesh_handle = mesh_handle;
                 entry.material_handle = mat_handle;
             }
@@ -341,7 +349,7 @@ pub fn chunk_loader_system(
             rebuild_load_queue(player_chunk, &mut *loaded, QUEUE_BUILD_STEPS_PER_FRAME)
         {
             loaded.load_queue = built_queue;
-            unload_distant_chunks(player_chunk, &mut *loaded, &*async_mesh, &mut *lod_manager);
+            unload_distant_chunks(player_chunk, &mut *loaded, &*async_mesh, &mut *lod_manager, &mut *cached);
         }
     }
 
@@ -358,7 +366,7 @@ pub fn chunk_loader_system(
         }
     }
 
-    lru_evict(player_chunk, &mut *loaded, &*async_mesh, &mut *lod_manager);
+    lru_evict(player_chunk, &mut *loaded, &*async_mesh, &mut *lod_manager, &mut *cached);
 
     // ── 步骤 3A：收集准备完成的区块数据，创建实体并提交网格生成任务 ──
     // 将地形+树木生成（Prepare 阶段）的结果转化为 ECS 实体和网格生成任务。
@@ -426,6 +434,7 @@ pub fn chunk_loader_system(
                 mesh_handle: placeholder_mesh.clone(),
                 material_handle: placeholder_mat.clone(),
                 lod_level,
+                triangle_count: 0,
             },
         );
 
@@ -576,6 +585,7 @@ fn unload_distant_chunks(
     loaded: &mut LoadedChunks,
     async_mesh: &AsyncMeshManager,
     lod_manager: &mut LodManager,
+    cached: &mut CachedTriangleCount,
 ) {
     let to_remove: Vec<ChunkCoord> = loaded
         .entries
@@ -594,6 +604,7 @@ fn unload_distant_chunks(
         lod_manager.remove(&coord);
 
         if let Some(entry) = loaded.entries.remove(&coord) {
+            cached.0 = cached.0.wrapping_sub(entry.triangle_count);
             loaded.pending_deletions.push(PendingDeletion {
                 entity: entry.entity,
                 mesh_handle: entry.mesh_handle,
@@ -608,6 +619,7 @@ fn lru_evict(
     loaded: &mut LoadedChunks,
     async_mesh: &AsyncMeshManager,
     lod_manager: &mut LodManager,
+    cached: &mut CachedTriangleCount,
 ) {
     if loaded.entries.len() <= MAX_CACHED_CHUNKS {
         return;
@@ -643,6 +655,7 @@ fn lru_evict(
         lod_manager.remove(&coord);
 
         if let Some(entry) = loaded.entries.remove(&coord) {
+            cached.0 = cached.0.wrapping_sub(entry.triangle_count);
             loaded.pending_deletions.push(PendingDeletion {
                 entity: entry.entity,
                 mesh_handle: entry.mesh_handle,
