@@ -354,7 +354,7 @@ pub fn chunk_loader_system(
     }
 
     // ── 步骤 2.5：更新 LOD 管理器 ─────────────────────────────
-    let to_rebuild = lod_manager.update(player_chunk, &*loaded);
+    let to_rebuild = lod_manager.update_incremental(player_chunk, &*loaded);
     for (coord, new_lod) in to_rebuild {
         if let Some(entry) = loaded.entries.get(&coord) {
             commands

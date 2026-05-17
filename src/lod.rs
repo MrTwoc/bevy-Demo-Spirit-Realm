@@ -105,6 +105,10 @@ impl LodLevel {
 pub struct LodManager {
     chunk_lods: HashMap<ChunkCoord, LodLevel>,
     hysteresis: f32,
+    /// 分帧更新：上次检查到的索引位置
+    last_checked: usize,
+    /// 每帧最多检查的区块数量
+    chunks_per_frame: usize,
 }
 
 impl LodManager {
@@ -112,7 +116,15 @@ impl LodManager {
         Self {
             chunk_lods: HashMap::new(),
             hysteresis: 0.5,
+            last_checked: 0,
+            chunks_per_frame: 50,
         }
+    }
+
+    /// 设置每帧检查的区块数量
+    pub fn with_chunks_per_frame(mut self, n: usize) -> Self {
+        self.chunks_per_frame = n;
+        self
     }
 
     pub fn update(
@@ -139,6 +151,61 @@ impl LodManager {
                 }
             }
         }
+
+        to_rebuild
+    }
+
+    /// 分帧更新 LOD
+    ///
+    /// 每帧只检查 `chunks_per_frame` 个区块，避免一次性遍历所有区块导致的 CPU 开销。
+    /// 遍历完所有区块后会自动回到起始位置，实现循环滚动更新。
+    pub fn update_incremental(
+        &mut self,
+        player_chunk: ChunkCoord,
+        loaded: &super::chunk_manager::LoadedChunks,
+    ) -> Vec<(ChunkCoord, LodLevel)> {
+        let mut to_rebuild = Vec::new();
+        let total_chunks = loaded.entries.len();
+
+        if total_chunks == 0 {
+            self.last_checked = 0;
+            return to_rebuild;
+        }
+
+        let mut checked = 0;
+        let mut current_idx = self.last_checked;
+
+        while checked < self.chunks_per_frame && checked < total_chunks {
+            let Some(coord) = loaded.entries.keys().nth(current_idx) else {
+                break;
+            };
+            let coord = *coord;
+
+            let dist = self.chunk_distance(coord, player_chunk);
+            let new_lod = LodLevel::from_chunk_distance(dist);
+
+            let current_lod = self
+                .chunk_lods
+                .get(&coord)
+                .copied()
+                .unwrap_or(LodLevel::Lod0);
+
+            if new_lod != current_lod {
+                if self.should_switch(current_lod, new_lod, dist) {
+                    self.chunk_lods.insert(coord, new_lod);
+                    to_rebuild.push((coord, new_lod));
+                }
+            }
+
+            current_idx += 1;
+            checked += 1;
+
+            if current_idx >= total_chunks {
+                current_idx = 0;
+            }
+        }
+
+        self.last_checked = current_idx;
 
         to_rebuild
     }
