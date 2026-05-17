@@ -1,15 +1,24 @@
 //! Dirty-flag driven chunk mesh rebuild system.
 //!
-//! 脏块重建现在通过异步网格生成系统处理：
-//! 1. 检测到 DirtyChunk 组件时，提交异步网格生成任务
-//! 2. 移除 DirtyChunk 组件（标记为已提交）
+//! 脏块重建通过异步网格生成系统处理：
+//! 1. 检测到 DirtyChunk 组件（附带变更标记）时，提交异步网格生成任务
+//! 2. 移除 DirtyChunk 及对应变更标记（标记为已提交）
 //! 3. 异步结果由 `chunk_loader_system` 统一收集并上传 GPU
+//!
+//! # 变更标记
+//!
+//! 每个 DirtyChunk 都附带一个细粒度标记，说明触发原因：
+//! - `DataChangedFlag`    : 方块数据修改（破坏/放置）
+//! - `LodChangedFlag`     : LOD 级别变更
+//! - `NeighborChangedFlag`: 邻居变更（新加载 / 边界修改）
+//! 见 `chunk_changes` 模块。
 
 use bevy::prelude::*;
 use std::sync::Arc;
 
 use crate::async_mesh::{AsyncMeshManager, MeshTask};
 use crate::chunk::{ChunkComponent, ChunkCoord, ChunkData, ChunkNeighbors};
+use crate::chunk_changes::clear_change_markers;
 use crate::chunk_manager::LoadedChunks;
 use crate::lod::LodManager;
 use crate::resource_pack::VoxelMaterial;
@@ -138,6 +147,7 @@ pub fn rebuild_dirty_chunks(
             }
 
             commands.entity(entity).remove::<DirtyChunk>();
+            clear_change_markers(&mut commands, entity);
             continue;
         }
 
@@ -162,6 +172,7 @@ pub fn rebuild_dirty_chunks(
         // 旧任务完成后会上传过时网格，但脏标记保留确保会再次重建。
         if submitted {
             commands.entity(entity).remove::<DirtyChunk>();
+            clear_change_markers(&mut commands, entity);
         }
     }
 }

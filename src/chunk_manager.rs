@@ -40,6 +40,7 @@ use std::sync::Arc;
 
 use crate::async_mesh::{AsyncMeshManager, MESH_UPLOADS_PER_FRAME, MeshTask};
 use crate::chunk::{Chunk, ChunkComponent, ChunkCoord, ChunkNeighbors};
+use crate::chunk_changes::{LodChangedFlag, NeighborChangedFlag};
 use crate::chunk_dirty::{
     ChunkAtlasHandle, ChunkCoordComponent, ChunkMeshHandle, DirtyChunk, is_air_chunk,
 };
@@ -348,7 +349,9 @@ pub fn chunk_loader_system(
     let to_rebuild = lod_manager.update(player_chunk, &*loaded);
     for (coord, new_lod) in to_rebuild {
         if let Some(entry) = loaded.entries.get(&coord) {
-            commands.entity(entry.entity).insert(DirtyChunk);
+            commands
+                .entity(entry.entity)
+                .insert((DirtyChunk, LodChangedFlag));
             if let Some(entry) = loaded.entries.get_mut(&coord) {
                 entry.lod_level = new_lod;
             }
@@ -458,9 +461,9 @@ pub fn chunk_loader_system(
         }
     }
 
-    // 批量应用脏标记
+    // 批量应用脏标记（附带邻居变更标记）
     for entity in dirty_neighbors {
-        commands.entity(entity).insert(DirtyChunk);
+        commands.entity(entity).insert((DirtyChunk, NeighborChangedFlag));
     }
 
     // ── 步骤 3B：提交区块数据准备任务（地形生成 + 树木生成，在工作线程执行） ──

@@ -18,6 +18,7 @@ use bevy::prelude::*;
 use std::sync::Arc;
 
 use crate::chunk::{BlockId, BlockPos, CHUNK_SIZE, ChunkComponent, ChunkCoord, ChunkData};
+use crate::chunk_changes::{DataChangedFlag, NeighborChangedFlag};
 use crate::chunk_dirty::{ChunkCoordComponent, ChunkMeshHandle, DirtyChunk};
 use crate::chunk_manager::LoadedChunks;
 use crate::raycast::RayHitState;
@@ -159,14 +160,16 @@ fn destroy_block(
             // chunk_comp: Mut<ChunkComponent>，通过 .0 访问内部的 Arc
             Arc::make_mut(&mut chunk_comp.as_mut().0).set(lx, ly, lz, 0);
         }
-        // 标记为脏
-        commands.entity(entity).insert(DirtyChunk);
+        // 标记为脏（附带数据变更标记）
+        commands.entity(entity).insert((DirtyChunk, DataChangedFlag));
     }
 
-    // 标记边界邻居为脏
+    // 标记边界邻居为脏（附带邻居变更标记）
     for nc in boundary_neighbor_coords(coord, (lx, ly, lz)) {
         if let Some(neighbor_entry) = loaded.entries.get(&nc) {
-            commands.entity(neighbor_entry.entity).insert(DirtyChunk);
+            commands
+                .entity(neighbor_entry.entity)
+                .insert((DirtyChunk, NeighborChangedFlag));
         }
     }
 }
@@ -215,8 +218,8 @@ fn place_block(
                     .set(lx, ly, lz, PLACE_BLOCK_ID);
             }
 
-            // 标记为脏
-            commands.entity(entity).insert(DirtyChunk);
+            // 标记为脏（附带数据变更标记）
+            commands.entity(entity).insert((DirtyChunk, DataChangedFlag));
         }
     } else {
         // 目标区块不存在（被全空气跳过优化跳过），按需创建
@@ -241,7 +244,7 @@ fn place_block(
                     mesh: placeholder_mesh.clone(),
                     material: placeholder_mat.clone(),
                 },
-                DirtyChunk,
+                (DirtyChunk, DataChangedFlag),
             ))
             .id();
 
@@ -259,10 +262,12 @@ fn place_block(
         );
     }
 
-    // 标记边界邻居为脏
+    // 标记边界邻居为脏（附带邻居变更标记）
     for nc in boundary_neighbor_coords(coord, (lx, ly, lz)) {
         if let Some(neighbor_entry) = loaded.entries.get(&nc) {
-            commands.entity(neighbor_entry.entity).insert(DirtyChunk);
+            commands
+                .entity(neighbor_entry.entity)
+                .insert((DirtyChunk, NeighborChangedFlag));
         }
     }
 }
