@@ -40,6 +40,22 @@ pub fn is_block_solid(block_id: BlockId) -> bool {
     }
 }
 
+/// 核心剔除规则：判断两个方块之间的面是否应该被剔除。
+///
+/// 所有网格生成模块（同步、异步、LOD）共享此规则，避免逻辑重复。
+#[inline]
+pub fn should_cull_face(current_id: BlockId, neighbor_id: BlockId) -> bool {
+    // 相同类型的非空气方块：内部面完全剔除（水体相邻面不再渲染）
+    if neighbor_id == current_id && neighbor_id != 0 {
+        return true;
+    }
+    // 实体方块完全遮挡相邻面
+    if is_block_solid(neighbor_id) {
+        return true;
+    }
+    false
+}
+
 /// 调色板压缩的区块数据。
 #[derive(Clone)]
 pub struct PalettedChunkData {
@@ -319,19 +335,7 @@ impl ChunkData {
 
         let current_id = self.get(x, y, z);
 
-        // 优化1：相同类型的相邻方块（包括水）之间的面完全剔除
-        // 防止水体内部方块渲染冗余面
-        if neighbor_id == current_id && neighbor_id != 0 {
-            return false;
-        }
-
-        // 优化2：实体方块（草地、石头、泥土、沙）完全遮挡相邻面
-        if is_block_solid(neighbor_id) {
-            return false;
-        }
-
-        // 邻居是空气或不同类型的非实体方块时，渲染面
-        true
+        !should_cull_face(current_id, neighbor_id)
     }
 
     pub fn memory_usage(&self) -> usize {

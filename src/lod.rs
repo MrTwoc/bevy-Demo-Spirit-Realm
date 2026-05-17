@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 
 use crate::async_mesh::UvLookupTable;
-use crate::chunk::{BlockId, ChunkCoord, ChunkData, ChunkNeighbors, is_block_solid, CHUNK_SIZE};
+use crate::chunk::{BlockId, ChunkCoord, ChunkData, ChunkNeighbors, should_cull_face, CHUNK_SIZE};
 use bevy::prelude::Resource;
 
 // ============================================================================
@@ -365,19 +365,7 @@ fn is_face_visible_lod(
     // 获取当前位置降采样后的主导方块ID
     let current_id = sample_dominant_block(chunk, x, y, z, step);
 
-    // 优化1：相同类型的相邻方块（包括水）之间的面完全剔除
-    // 防止水体内部方块渲染冗余面
-    if neighbor_id == current_id && current_id != 0 {
-        return false;
-    }
-
-    // 优化2：实体方块（草地、石头、泥土、沙）完全遮挡相邻面
-    if is_block_solid(neighbor_id) {
-        return false;
-    }
-
-    // 邻居是空气或不同类型的非实体方块时，渲染面
-    true
+    !should_cull_face(current_id, neighbor_id)
 }
 
 fn sample_dominant_block_from_neighbors(

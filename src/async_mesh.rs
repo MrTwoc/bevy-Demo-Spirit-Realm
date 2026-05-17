@@ -25,7 +25,7 @@ use std::collections::{HashSet, VecDeque};
 use std::sync::{mpsc, Arc};
 use std::thread;
 
-use crate::chunk::{ChunkCoord, ChunkData, ChunkNeighbors, fill_terrain, is_block_solid, CHUNK_SIZE};
+use crate::chunk::{ChunkCoord, ChunkData, ChunkNeighbors, fill_terrain, should_cull_face, CHUNK_SIZE};
 use crate::chunk_dirty::is_air_chunk;
 use crate::lod::{generate_lod_mesh, LodLevel};
 use crate::tree_gen::{generate_trees_in_chunk, TreeConfig, TreeNoise};
@@ -493,18 +493,7 @@ fn is_face_visible_async(
 
     let current_id = chunk.get(x, y, z);
 
-    // 优化1：相同类型的相邻方块（包括水）之间的面完全剔除
-    if neighbor_id == current_id && neighbor_id != 0 {
-        return false;
-    }
-
-    // 优化2：实体方块（草地、石头、泥土、沙）完全遮挡相邻面
-    if is_block_solid(neighbor_id) {
-        return false;
-    }
-
-    // 邻居是空气或不同类型的非实体方块时，渲染面
-    true
+    !should_cull_face(current_id, neighbor_id)
 }
 
 /// 异步版本的面四边形生成。
