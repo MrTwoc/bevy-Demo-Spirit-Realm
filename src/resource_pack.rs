@@ -121,11 +121,26 @@ pub struct VoxelMaterial {
     #[texture(0, dimension = "2d_array")]
     #[sampler(1)]
     pub array_texture: Handle<Image>,
+    /// 半透明混合模式，用于水方块等透明物体
+    pub alpha_mode: AlphaMode,
+}
+
+impl Default for VoxelMaterial {
+    fn default() -> Self {
+        Self {
+            array_texture: Handle::default(),
+            alpha_mode: AlphaMode::Opaque,
+        }
+    }
 }
 
 impl Material for VoxelMaterial {
     fn fragment_shader() -> ShaderRef {
         "shaders/voxel.wgsl".into()
+    }
+
+    fn alpha_mode(&self) -> AlphaMode {
+        self.alpha_mode
     }
 }
 

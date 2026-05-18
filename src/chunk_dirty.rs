@@ -108,7 +108,12 @@ pub fn rebuild_dirty_chunks(
     // 实体组件已改为 ChunkComponent(Arc<ChunkData>)，避免脏块重建时深拷贝
     // 通过 ChunkComponent 的 Deref 实现可自动解引用到 &ChunkData
     dirty_chunks: Query<
-        (Entity, &ChunkComponent, &ChunkCoordComponent, &ChunkMeshHandle),
+        (
+            Entity,
+            &ChunkComponent,
+            &ChunkCoordComponent,
+            &ChunkMeshHandle,
+        ),
         With<DirtyChunk>,
     >,
     shared_material: Res<crate::chunk_manager::SharedVoxelMaterial>,
@@ -150,8 +155,8 @@ pub fn rebuild_dirty_chunks(
 
             // 更新 LoadedChunks 中的句柄
             if let Some(entry) = loaded.entries.get_mut(&coord) {
-                entry.mesh_handle = empty_mesh;
-                entry.material_handle = empty_mat;
+                entry.solid_mesh_handle = empty_mesh;
+                entry.solid_material_handle = empty_mat;
             }
 
             commands.entity(entity).remove::<DirtyChunk>();

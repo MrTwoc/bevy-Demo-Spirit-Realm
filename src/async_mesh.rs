@@ -29,7 +29,7 @@ use crate::chunk::{
     CHUNK_SIZE, ChunkCoord, ChunkData, ChunkNeighbors, fill_terrain, should_cull_face,
 };
 use crate::chunk_dirty::is_air_chunk;
-use crate::lod::{LodLevel, generate_lod_mesh};
+use crate::lod::{LodLevel, generate_lod_mesh_separated};
 use crate::tree_gen::{TreeConfig, TreeNoise, generate_trees_in_chunk};
 
 /// 每帧最多从异步结果中收集并上传 GPU 的网格数。
@@ -122,13 +122,44 @@ pub enum MeshTask {
     Cancel(ChunkCoord),
 }
 
-/// 工作线程返回的网格生成结果。
-pub struct MeshResult {
-    pub coord: ChunkCoord,
+/// 单个 Mesh 的数据（用于固体或水方块）
+#[derive(Clone, Debug)]
+pub struct SubMeshData {
     pub positions: Vec<[f32; 3]>,
     pub uvs: Vec<[f32; 2]>,
     pub normals: Vec<[f32; 3]>,
     pub indices: Vec<u32>,
+    pub triangle_count: u32,
+}
+
+impl SubMeshData {
+    pub fn new() -> Self {
+        Self {
+            positions: Vec::new(),
+            uvs: Vec::new(),
+            normals: Vec::new(),
+            indices: Vec::new(),
+            triangle_count: 0,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.positions.is_empty()
+    }
+}
+
+/// 工作线程返回的网格生成结果。
+///
+/// 包含两个独立的 Mesh 数据：
+/// - solid: 固体方块（草、泥土、石头等）→ 使用 Opaque 材质
+/// - water: 水方块 → 使用 Blend 材质（可选，仅当区块包含水时生成）
+#[derive(Clone, Debug)]
+pub struct MeshResult {
+    pub coord: ChunkCoord,
+    /// 固体方块的 Mesh 数据
+    pub solid: SubMeshData,
+    /// 水方块的 Mesh 数据（仅当区块包含水时存在）
+    pub water: Option<SubMeshData>,
 }
 
 // ---------------------------------------------------------------------------
@@ -234,30 +265,33 @@ impl AsyncMeshManager {
                     if is_air_chunk(data.as_ref()) {
                         let _ = mesh_sender.send(MeshResult {
                             coord,
-                            positions: Vec::new(),
-                            uvs: Vec::new(),
-                            normals: Vec::new(),
-                            indices: Vec::new(),
+                            solid: SubMeshData::new(),
+                            water: None,
                         });
                         continue;
                     }
 
-                    let (positions, uvs, normals, indices) = match lod_level {
+                    let (solid, water) = match lod_level {
                         Some(LodLevel::Lod0) | None => {
-                            // 使用组合网格生成：水方块用 greedy_mesh，其他方块用标准算法
-                            generate_combined_mesh(data.as_ref(), uv_table.as_ref(), &neighbors)
+                            // 使用分离网格生成：固体方块和水方块分开处理
+                            generate_chunk_mesh_separated(
+                                data.as_ref(),
+                                uv_table.as_ref(),
+                                &neighbors,
+                            )
                         }
-                        Some(lod) => {
-                            generate_lod_mesh(data.as_ref(), uv_table.as_ref(), &neighbors, lod)
-                        }
+                        Some(lod) => generate_lod_mesh_separated(
+                            data.as_ref(),
+                            uv_table.as_ref(),
+                            &neighbors,
+                            lod,
+                        ),
                     };
 
                     let _ = mesh_sender.send(MeshResult {
                         coord,
-                        positions,
-                        uvs,
-                        normals,
-                        indices,
+                        solid,
+                        water,
                     });
                 }
                 MeshTask::Cancel(_) => {}
@@ -464,43 +498,99 @@ fn generate_chunk_mesh_async(
     (positions, uvs, normals, indices)
 }
 
-/// 组合网格生成：水方块使用 Greedy Mesh，其他方块使用标准算法。
+/// 分离 Mesh 生成：水方块和固体方块分开处理。
 ///
-/// 优势：
-/// - 水方块：合并相邻面，减少顶点数（500-1500 vs 4000-8000）
-/// - 其他方块：保持原有算法，UV 映射正确
-fn generate_combined_mesh(
+/// 返回两个独立的 Mesh 数据：
+/// - solid: 固体方块（草、泥土、石头等）→ 使用 Opaque 材质
+/// - water: 水方块（使用 Greedy Mesh）→ 使用 Blend 材质（可选）
+pub fn generate_chunk_mesh_separated(
     chunk: &ChunkData,
     uv_table: &UvLookupTable,
     neighbors: &ChunkNeighbors,
-) -> (Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<[f32; 3]>, Vec<u32>) {
-    // 1. 使用 greedy_mesh 生成水方块的网格
-    let water_result =
-        crate::greedy_mesh::generate_greedy_mesh(chunk, neighbors, |block_id, face_name| {
-            let face_index = face_name_to_index(face_name);
-            uv_table.get_uv(block_id, face_index)
-        });
+) -> (SubMeshData, Option<SubMeshData>) {
+    // 1. 生成固体方块的 Mesh（跳过水方块）
+    let solid = generate_solid_mesh(chunk, uv_table, neighbors);
 
-    // 2. 使用标准算法生成其他方块的网格（已跳过水方块）
-    let (mut positions, mut uvs, mut normals, mut indices) =
-        generate_chunk_mesh_async(chunk, uv_table, neighbors);
+    // 2. 生成水方块的 Mesh（使用 Greedy Mesh）
+    let water = if chunk.contains_block(5) {
+        let water_result =
+            crate::greedy_mesh::generate_greedy_mesh(chunk, neighbors, |block_id, face_name| {
+                let face_index = face_name_to_index(face_name);
+                uv_table.get_uv(block_id, face_index)
+            });
+        let water_triangle_count = water_result.indices.len() as u32 / 3;
+        Some(SubMeshData {
+            positions: water_result.positions,
+            uvs: water_result.uvs,
+            normals: water_result.normals,
+            indices: water_result.indices,
+            triangle_count: water_triangle_count,
+        })
+    } else {
+        None
+    };
 
-    // 3. 合并结果（调整 indices 偏移量）
-    let index_offset = positions.len() as u32;
+    (solid, water)
+}
 
-    positions.extend(water_result.positions);
-    uvs.extend(water_result.uvs);
-    normals.extend(water_result.normals);
+/// 生成固体方块的 Mesh（水方块被跳过）
+fn generate_solid_mesh(
+    chunk: &ChunkData,
+    uv_table: &UvLookupTable,
+    neighbors: &ChunkNeighbors,
+) -> SubMeshData {
+    if matches!(chunk, ChunkData::Empty | ChunkData::Uniform(0)) {
+        return SubMeshData::new();
+    }
 
-    // 调整水方块网格的索引偏移量
-    let water_indices: Vec<u32> = water_result
-        .indices
-        .into_iter()
-        .map(|idx| idx + index_offset)
-        .collect();
-    indices.extend(water_indices);
+    let capacity = estimate_vertex_capacity(chunk);
+    let mut positions = Vec::with_capacity(capacity);
+    let mut uvs = Vec::with_capacity(capacity);
+    let mut normals = Vec::with_capacity(capacity);
+    let mut indices = Vec::with_capacity(capacity * 3 / 2);
 
-    (positions, uvs, normals, indices)
+    for z in 0..CHUNK_SIZE {
+        for y in 0..CHUNK_SIZE {
+            for x in 0..CHUNK_SIZE {
+                let block_id = chunk.get(x, y, z);
+                // 跳过空气和水方块（水方块由 generate_chunk_mesh_separated 单独处理）
+                if block_id == 0 || block_id == 5 {
+                    continue;
+                }
+
+                for (face_index, (face, offset, uv_idx)) in FACES_ASYNC.iter().cloned().enumerate()
+                {
+                    if !is_face_visible_async(chunk, x, y, z, &offset, face_index, neighbors) {
+                        continue;
+                    }
+
+                    let base_index = positions.len() as u32;
+                    let uv = uv_table.get_uv(block_id, uv_idx);
+
+                    let (face_verts, face_uvs, face_normal) = face_quad_async(x, y, z, face, uv);
+                    positions.extend(face_verts);
+                    uvs.extend(face_uvs);
+                    normals.extend([face_normal; 4]);
+                    indices.extend([
+                        base_index,
+                        base_index + 2,
+                        base_index + 1,
+                        base_index,
+                        base_index + 3,
+                        base_index + 2,
+                    ]);
+                }
+            }
+        }
+    }
+
+    SubMeshData {
+        triangle_count: indices.len() as u32 / 3,
+        positions,
+        uvs,
+        normals,
+        indices,
+    }
 }
 
 /// 异步版本的面可见性检查。

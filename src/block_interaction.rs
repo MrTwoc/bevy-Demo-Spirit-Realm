@@ -161,7 +161,9 @@ fn destroy_block(
             Arc::make_mut(&mut chunk_comp.as_mut().0).set(lx, ly, lz, 0);
         }
         // 标记为脏（附带数据变更标记）
-        commands.entity(entity).insert((DirtyChunk, DataChangedFlag));
+        commands
+            .entity(entity)
+            .insert((DirtyChunk, DataChangedFlag));
     }
 
     // 标记边界邻居为脏（附带邻居变更标记）
@@ -214,12 +216,13 @@ fn place_block(
 
             // 同步更新 ECS ChunkComponent（通过 .0 访问内部 Arc）
             if let Ok(mut chunk_comp) = chunk_query.get_mut(entity) {
-                Arc::make_mut(&mut chunk_comp.as_mut().0)
-                    .set(lx, ly, lz, PLACE_BLOCK_ID);
+                Arc::make_mut(&mut chunk_comp.as_mut().0).set(lx, ly, lz, PLACE_BLOCK_ID);
             }
 
             // 标记为脏（附带数据变更标记）
-            commands.entity(entity).insert((DirtyChunk, DataChangedFlag));
+            commands
+                .entity(entity)
+                .insert((DirtyChunk, DataChangedFlag));
         }
     } else {
         // 目标区块不存在（被全空气跳过优化跳过），按需创建
@@ -255,8 +258,11 @@ fn place_block(
                 entity,
                 data: shared,
                 last_accessed: loaded.frame_counter,
-                mesh_handle: placeholder_mesh,
-                material_handle: placeholder_mat,
+                solid_mesh_handle: placeholder_mesh,
+                solid_material_handle: placeholder_mat,
+                water_mesh_handle: None,
+                water_entity: None,
+                water_triangle_count: 0,
                 lod_level: crate::lod::LodLevel::Lod0,
                 triangle_count: 0,
             },

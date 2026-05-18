@@ -13,8 +13,8 @@
 
 use std::collections::HashMap;
 
-use crate::async_mesh::UvLookupTable;
-use crate::chunk::{BlockId, ChunkCoord, ChunkData, ChunkNeighbors, should_cull_face, CHUNK_SIZE};
+use crate::async_mesh::{SubMeshData, UvLookupTable};
+use crate::chunk::{BlockId, CHUNK_SIZE, ChunkCoord, ChunkData, ChunkNeighbors, should_cull_face};
 use bevy::prelude::Resource;
 
 // ============================================================================
@@ -68,9 +68,9 @@ impl LodLevel {
     #[inline]
     pub fn from_chunk_distance_sq(dist_sq: i32) -> Self {
         match dist_sq {
-            d if d < 81 => LodLevel::Lod0,    // < 9²
-            d if d < 289 => LodLevel::Lod1,   // < 17²
-            d if d < 625 => LodLevel::Lod2,   // < 25²
+            d if d < 81 => LodLevel::Lod0,  // < 9²
+            d if d < 289 => LodLevel::Lod1, // < 17²
+            d if d < 625 => LodLevel::Lod2, // < 25²
             _ => LodLevel::Lod3,
         }
     }
@@ -271,14 +271,18 @@ enum FaceLod {
     Back,
 }
 
-pub fn generate_lod_mesh(
+/// LOD 级别的分离 Mesh 生成。
+///
+/// 对于 LOD1+，降采样后水的 Greedy Mesh 优化效果不明显，
+/// 因此统一使用标准算法生成固体 Mesh，水方块同样参与降采样。
+pub fn generate_lod_mesh_separated(
     chunk: &ChunkData,
     uv_table: &UvLookupTable,
     neighbors: &ChunkNeighbors,
     lod: LodLevel,
-) -> (Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<[f32; 3]>, Vec<u32>) {
+) -> (SubMeshData, Option<SubMeshData>) {
     if matches!(lod, LodLevel::Lod0) {
-        return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        return (SubMeshData::new(), None);
     }
 
     let step = lod.step();
@@ -286,7 +290,7 @@ pub fn generate_lod_mesh(
     let sample_size = lod.sampling_size();
 
     if matches!(chunk, ChunkData::Empty | ChunkData::Uniform(0)) {
-        return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        return (SubMeshData::new(), None);
     }
 
     let capacity = match lod {
@@ -309,7 +313,8 @@ pub fn generate_lod_mesh(
                 let z = sz * step;
 
                 let block_id = sample_dominant_block(chunk, x, y, z, step);
-                if block_id == 0 {
+                // LOD 级别跳过空气和水方块（水方块对远处 LOD 影响不大）
+                if block_id == 0 || block_id == 5 {
                     continue;
                 }
 
@@ -357,7 +362,16 @@ pub fn generate_lod_mesh(
         }
     }
 
-    (positions, uvs, normals, indices)
+    let solid = SubMeshData {
+        positions,
+        uvs,
+        normals,
+        indices,
+        triangle_count: 0, // LOD 不精确统计三角形数
+    };
+
+    // LOD 级别水方块被合并到固体 Mesh 中（简化处理）
+    (solid, None)
 }
 
 fn sample_dominant_block(
@@ -413,12 +427,7 @@ fn is_face_visible_lod(
             && neighbor_z + step <= CHUNK_SIZE
         {
             if let Some(sampled) = sample_dominant_block_from_neighbors(
-                neighbors,
-                face_index,
-                neighbor_x,
-                neighbor_y,
-                neighbor_z,
-                step,
+                neighbors, face_index, neighbor_x, neighbor_y, neighbor_z, step,
             ) {
                 sampled
             } else {

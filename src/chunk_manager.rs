@@ -32,7 +32,7 @@
 
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::visibility::NoCpuCulling;
-use bevy::image::{ImageSampler, ImageSamplerDescriptor, ImageAddressMode, ImageFilterMode};
+use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::prelude::*;
 use bevy::render::render_resource::Extent3d;
 use bevy::render::render_resource::TextureDimension;
@@ -77,8 +77,14 @@ pub struct ChunkEntry {
     /// 提交异步任务时仅执行 Arc::clone（引用计数 +1，O(1) 开销）。
     pub data: Arc<Chunk>,
     pub last_accessed: u64,
-    pub mesh_handle: Handle<Mesh>,
-    pub material_handle: Handle<VoxelMaterial>,
+    /// 固体方块的 Mesh Handle
+    pub solid_mesh_handle: Handle<Mesh>,
+    pub solid_material_handle: Handle<VoxelMaterial>,
+    /// 水方块的 Mesh Handle（仅当区块包含水时存在）
+    pub water_mesh_handle: Option<Handle<Mesh>>,
+    /// 水 Mesh 的实体（用于独立管理）
+    pub water_entity: Option<Entity>,
+    pub water_triangle_count: u32,
     pub lod_level: LodLevel,
     pub triangle_count: u32,
 }
@@ -126,6 +132,12 @@ pub struct AtlasTextureHandle {
 /// 全局共享的 VoxelMaterial 实例。
 #[derive(Resource, Clone)]
 pub struct SharedVoxelMaterial {
+    pub handle: Handle<VoxelMaterial>,
+}
+
+/// 透明VoxelMaterial 实例（水方块使用）。
+#[derive(Resource, Clone)]
+pub struct TransparentVoxelMaterial {
     pub handle: Handle<VoxelMaterial>,
 }
 
@@ -203,7 +215,7 @@ pub fn setup_world(
             size,
             TextureDimension::D2,
             pixel_data,
-            TextureFormat::Rgba8UnormSrgb,
+            TextureFormat::Rgba8Unorm,
             RenderAssetUsages::default(),
         );
         // 使用重复模式采样器，支持纹理平铺
@@ -229,9 +241,17 @@ pub fn setup_world(
 
     let shared_material = materials.add(VoxelMaterial {
         array_texture: atlas_handle.clone(),
+        alpha_mode: AlphaMode::Opaque,
+    });
+    let transparent_material = materials.add(VoxelMaterial {
+        array_texture: atlas_handle.clone(),
+        alpha_mode: AlphaMode::Blend,
     });
     commands.insert_resource(SharedVoxelMaterial {
         handle: shared_material,
+    });
+    commands.insert_resource(TransparentVoxelMaterial {
+        handle: transparent_material,
     });
 
     let worker_count = crate::async_mesh::default_worker_count();
@@ -278,6 +298,7 @@ pub fn chunk_loader_system(
     camera_query: Query<&Transform, With<Camera3d>>,
     atlas_handle: Res<AtlasTextureHandle>,
     shared_material: Res<SharedVoxelMaterial>,
+    transparent_material: Res<TransparentVoxelMaterial>,
     mut lod_manager: ResMut<LodManager>,
 ) {
     let Ok(cam_transform) = camera_query.single() else {
@@ -304,39 +325,106 @@ pub fn chunk_loader_system(
 
         if let Some(entry) = loaded.entries.get(&result.coord) {
             let entity = entry.entity;
-            let indices_len = result.indices.len() as u32 / 3;
 
-            meshes.remove(&entry.mesh_handle);
+            // 1. 处理固体 Mesh
+            let solid_triangle_count = result.solid.triangle_count;
+            meshes.remove(&entry.solid_mesh_handle);
 
-            let mesh_handle = meshes.add(
+            let solid_mesh_handle = meshes.add(
                 Mesh::new(
                     bevy::render::render_resource::PrimitiveTopology::TriangleList,
                     RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
                 )
-                .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, result.positions)
-                .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, result.uvs)
-                .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, result.normals)
-                .with_inserted_indices(bevy::mesh::Indices::U32(result.indices)),
+                .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, result.solid.positions)
+                .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, result.solid.uvs)
+                .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, result.solid.normals)
+                .with_inserted_indices(bevy::mesh::Indices::U32(result.solid.indices)),
             );
 
-            let mat_handle = shared_material.handle.clone();
-
+            // 更新固体实体
             commands.entity(entity).insert((
-                Mesh3d(mesh_handle.clone()),
-                MeshMaterial3d(mat_handle.clone()),
+                Mesh3d(solid_mesh_handle.clone()),
+                MeshMaterial3d(shared_material.handle.clone()),
                 ChunkMeshHandle {
-                    mesh: mesh_handle.clone(),
-                    material: mat_handle.clone(),
+                    mesh: solid_mesh_handle.clone(),
+                    material: shared_material.handle.clone(),
                 },
             ));
 
-            if let Some(entry) = loaded.entries.get_mut(&result.coord) {
-                // ⭐ 增量更新三角形数（indices_len 在 indices 被移动前已获取）
-                cached.0 = cached.0.wrapping_add(indices_len).wrapping_sub(entry.triangle_count);
-                entry.triangle_count = indices_len;
+            // 2. 处理水 Mesh
+            if let Some(water_data) = result.water {
+                let water_triangle_count = water_data.triangle_count;
+                let water_mesh_handle = meshes.add(
+                    Mesh::new(
+                        bevy::render::render_resource::PrimitiveTopology::TriangleList,
+                        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+                    )
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, water_data.positions)
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, water_data.uvs)
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, water_data.normals)
+                    .with_inserted_indices(bevy::mesh::Indices::U32(water_data.indices)),
+                );
 
-                entry.mesh_handle = mesh_handle;
-                entry.material_handle = mat_handle;
+                if let Some(water_entity) = entry.water_entity {
+                    // 更新已有水实体
+                    commands.entity(water_entity).insert((
+                        Mesh3d(water_mesh_handle.clone()),
+                        MeshMaterial3d(transparent_material.handle.clone()),
+                        Transform::from_translation(result.coord.to_world_origin()),
+                    ));
+                } else {
+                    // 创建新的水实体
+                    let water_entity = commands
+                        .spawn((
+                            Mesh3d(water_mesh_handle.clone()),
+                            MeshMaterial3d(transparent_material.handle.clone()),
+                            Transform::from_translation(result.coord.to_world_origin()),
+                            Visibility::default(),
+                        ))
+                        .id();
+
+                    if let Some(entry) = loaded.entries.get_mut(&result.coord) {
+                        entry.water_entity = Some(water_entity);
+                    }
+                }
+
+                if let Some(entry) = loaded.entries.get_mut(&result.coord) {
+                    entry.water_mesh_handle = Some(water_mesh_handle);
+                    entry.water_triangle_count = water_triangle_count;
+                }
+            } else {
+                // 区块不再包含水，移除水实体
+                let (water_entity_to_remove, water_handle_to_remove) = {
+                    if let Some(entry) = loaded.entries.get(&result.coord) {
+                        (entry.water_entity, entry.water_mesh_handle.clone())
+                    } else {
+                        (None, None)
+                    }
+                };
+
+                if let Some(water_entity) = water_entity_to_remove {
+                    if let Some(water_handle) = water_handle_to_remove {
+                        meshes.remove(&water_handle);
+                    }
+                    commands.entity(water_entity).despawn();
+                }
+                if let Some(entry) = loaded.entries.get_mut(&result.coord) {
+                    entry.water_entity = None;
+                    entry.water_mesh_handle = None;
+                    entry.water_triangle_count = 0;
+                }
+            }
+
+            if let Some(entry) = loaded.entries.get_mut(&result.coord) {
+                // ⭐ 增量更新三角形数
+                cached.0 = cached
+                    .0
+                    .wrapping_add(solid_triangle_count)
+                    .wrapping_sub(entry.triangle_count);
+                entry.triangle_count = solid_triangle_count;
+
+                entry.solid_mesh_handle = solid_mesh_handle;
+                entry.solid_material_handle = shared_material.handle.clone();
             }
         }
     }
@@ -362,7 +450,13 @@ pub fn chunk_loader_system(
             rebuild_load_queue(player_chunk, &mut *loaded, QUEUE_BUILD_STEPS_PER_FRAME)
         {
             loaded.load_queue = built_queue;
-            unload_distant_chunks(player_chunk, &mut *loaded, &*async_mesh, &mut *lod_manager, &mut *cached);
+            unload_distant_chunks(
+                player_chunk,
+                &mut *loaded,
+                &*async_mesh,
+                &mut *lod_manager,
+                &mut *cached,
+            );
         }
     }
 
@@ -379,7 +473,13 @@ pub fn chunk_loader_system(
         }
     }
 
-    lru_evict(player_chunk, &mut *loaded, &*async_mesh, &mut *lod_manager, &mut *cached);
+    lru_evict(
+        player_chunk,
+        &mut *loaded,
+        &*async_mesh,
+        &mut *lod_manager,
+        &mut *cached,
+    );
 
     // ── 步骤 3A：收集准备完成的区块数据，创建实体并提交网格生成任务 ──
     // 将地形+树木生成（Prepare 阶段）的结果转化为 ECS 实体和网格生成任务。
@@ -444,8 +544,11 @@ pub fn chunk_loader_system(
                 entity,
                 data: shared,
                 last_accessed: current_frame,
-                mesh_handle: placeholder_mesh.clone(),
-                material_handle: placeholder_mat.clone(),
+                solid_mesh_handle: placeholder_mesh.clone(),
+                solid_material_handle: placeholder_mat.clone(),
+                water_mesh_handle: None,
+                water_entity: None,
+                water_triangle_count: 0,
                 lod_level,
                 triangle_count: 0,
             },
@@ -485,7 +588,9 @@ pub fn chunk_loader_system(
 
     // 批量应用脏标记（附带邻居变更标记）
     for entity in dirty_neighbors {
-        commands.entity(entity).insert((DirtyChunk, NeighborChangedFlag));
+        commands
+            .entity(entity)
+            .insert((DirtyChunk, NeighborChangedFlag));
     }
 
     // ── 步骤 3B：提交区块数据准备任务（地形生成 + 树木生成，在工作线程执行） ──
@@ -618,10 +723,18 @@ fn unload_distant_chunks(
 
         if let Some(entry) = loaded.entries.remove(&coord) {
             cached.0 = cached.0.wrapping_sub(entry.triangle_count);
+            cached.0 = cached.0.wrapping_sub(entry.water_triangle_count);
             loaded.pending_deletions.push(PendingDeletion {
                 entity: entry.entity,
-                mesh_handle: entry.mesh_handle,
+                mesh_handle: entry.solid_mesh_handle,
             });
+            // 如果存在水实体，也加入待删除队列
+            if let Some(water_entity) = entry.water_entity {
+                loaded.pending_deletions.push(PendingDeletion {
+                    entity: water_entity,
+                    mesh_handle: entry.water_mesh_handle.unwrap_or_default(),
+                });
+            }
         }
     }
 }
@@ -669,10 +782,18 @@ fn lru_evict(
 
         if let Some(entry) = loaded.entries.remove(&coord) {
             cached.0 = cached.0.wrapping_sub(entry.triangle_count);
+            cached.0 = cached.0.wrapping_sub(entry.water_triangle_count);
             loaded.pending_deletions.push(PendingDeletion {
                 entity: entry.entity,
-                mesh_handle: entry.mesh_handle,
+                mesh_handle: entry.solid_mesh_handle,
             });
+            // 如果存在水实体，也加入待删除队列
+            if let Some(water_entity) = entry.water_entity {
+                loaded.pending_deletions.push(PendingDeletion {
+                    entity: water_entity,
+                    mesh_handle: entry.water_mesh_handle.unwrap_or_default(),
+                });
+            }
         }
     }
 }

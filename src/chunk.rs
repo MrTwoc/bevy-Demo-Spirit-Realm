@@ -715,6 +715,11 @@ pub fn spawn_chunk_entity(
 
     let mat_handle = materials.add(VoxelMaterial {
         array_texture: array_texture.clone(),
+        alpha_mode: if chunk.contains_block(5) {
+            AlphaMode::Blend
+        } else {
+            AlphaMode::Opaque
+        },
     });
 
     let entity = commands
