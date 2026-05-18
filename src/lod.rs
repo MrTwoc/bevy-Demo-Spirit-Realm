@@ -363,11 +363,11 @@ pub fn generate_lod_mesh_separated(
     }
 
     let solid = SubMeshData {
+        triangle_count: indices.len() as u32 / 3,
         positions,
         uvs,
         normals,
         indices,
-        triangle_count: 0, // LOD 不精确统计三角形数
     };
 
     // LOD 级别水方块被合并到固体 Mesh 中（简化处理）
