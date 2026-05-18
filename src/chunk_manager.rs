@@ -56,11 +56,11 @@ pub const RENDER_DISTANCE: i32 = 16;
 /// 卸载距离：超过此距离的区块会被卸载。比渲染距离大 1 避免边界闪烁。
 pub const UNLOAD_DISTANCE: i32 = RENDER_DISTANCE + 1;
 /// 每帧最多提交到异步队列的区块数。控制任务提交速率，避免工作线程积压。
-pub const CHUNKS_PER_FRAME: usize = 16;
+pub const CHUNKS_PER_FRAME: usize = 32;
 /// 最大缓存区块数。当超过此数量时，使用LRU策略淘汰最久未访问的区块。
 pub const MAX_CACHED_CHUNKS: usize = 2000;
 /// LRU淘汰时每帧最多卸载的区块数。避免一帧内卸载太多导致卡顿。
-pub const LRU_UNLOADS_PER_FRAME: usize = 16;
+pub const LRU_UNLOADS_PER_FRAME: usize = 32;
 /// 每帧最多标记邻居为脏的数量。
 /// 设为较大值以确保所有新加载区块的邻居都能被正确标记重建。
 /// 移除旧版 16 的限制，因为此限制导致超出部分的邻居永久性缺少重建（Bug #1）。
@@ -327,10 +327,11 @@ pub fn chunk_loader_system(
             let entity = entry.entity;
             let water_entity = entry.water_entity;
 
-            // 1. 处理固体 Mesh（仅当有实际内容时）
+            // 1. 处理固体 Mesh
             let solid_triangle_count = result.solid.triangle_count;
 
             if solid_triangle_count > 0 {
+                // 有可见面 → 创建新的 Mesh
                 meshes.remove(&entry.solid_mesh_handle);
 
                 let solid_mesh_handle = meshes.add(
@@ -357,6 +358,30 @@ pub fn chunk_loader_system(
                 if let Some(entry) = loaded.entries.get_mut(&result.coord) {
                     entry.solid_mesh_handle = solid_mesh_handle;
                     entry.solid_material_handle = shared_material.handle.clone();
+                }
+            } else {
+                // 三角形数为 0（所有面被遮挡），替换为空 Mesh
+                // 修复：之前区块有几何体时，旧 Mesh 不会被清除，导致被遮挡的面持续渲染
+                meshes.remove(&entry.solid_mesh_handle);
+
+                let empty_mesh = meshes.add(Mesh::new(
+                    bevy::render::render_resource::PrimitiveTopology::TriangleList,
+                    RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+                ));
+                let empty_mat = shared_material.handle.clone();
+
+                commands.entity(entity).insert((
+                    Mesh3d(empty_mesh.clone()),
+                    MeshMaterial3d(empty_mat.clone()),
+                    ChunkMeshHandle {
+                        mesh: empty_mesh.clone(),
+                        material: empty_mat.clone(),
+                    },
+                ));
+
+                if let Some(entry) = loaded.entries.get_mut(&result.coord) {
+                    entry.solid_mesh_handle = empty_mesh;
+                    entry.solid_material_handle = empty_mat;
                 }
             }
 
