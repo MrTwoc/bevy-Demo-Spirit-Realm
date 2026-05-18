@@ -325,31 +325,40 @@ pub fn chunk_loader_system(
 
         if let Some(entry) = loaded.entries.get(&result.coord) {
             let entity = entry.entity;
+            let water_entity = entry.water_entity;
 
-            // 1. 处理固体 Mesh
+            // 1. 处理固体 Mesh（仅当有实际内容时）
             let solid_triangle_count = result.solid.triangle_count;
-            meshes.remove(&entry.solid_mesh_handle);
 
-            let solid_mesh_handle = meshes.add(
-                Mesh::new(
-                    bevy::render::render_resource::PrimitiveTopology::TriangleList,
-                    RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
-                )
-                .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, result.solid.positions)
-                .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, result.solid.uvs)
-                .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, result.solid.normals)
-                .with_inserted_indices(bevy::mesh::Indices::U32(result.solid.indices)),
-            );
+            if solid_triangle_count > 0 {
+                meshes.remove(&entry.solid_mesh_handle);
 
-            // 更新固体实体
-            commands.entity(entity).insert((
-                Mesh3d(solid_mesh_handle.clone()),
-                MeshMaterial3d(shared_material.handle.clone()),
-                ChunkMeshHandle {
-                    mesh: solid_mesh_handle.clone(),
-                    material: shared_material.handle.clone(),
-                },
-            ));
+                let solid_mesh_handle = meshes.add(
+                    Mesh::new(
+                        bevy::render::render_resource::PrimitiveTopology::TriangleList,
+                        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+                    )
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, result.solid.positions)
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, result.solid.uvs)
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, result.solid.normals)
+                    .with_inserted_indices(bevy::mesh::Indices::U32(result.solid.indices)),
+                );
+
+                // 更新固体实体
+                commands.entity(entity).insert((
+                    Mesh3d(solid_mesh_handle.clone()),
+                    MeshMaterial3d(shared_material.handle.clone()),
+                    ChunkMeshHandle {
+                        mesh: solid_mesh_handle.clone(),
+                        material: shared_material.handle.clone(),
+                    },
+                ));
+
+                if let Some(entry) = loaded.entries.get_mut(&result.coord) {
+                    entry.solid_mesh_handle = solid_mesh_handle;
+                    entry.solid_material_handle = shared_material.handle.clone();
+                }
+            }
 
             // 2. 处理水 Mesh
             if let Some(water_data) = result.water {
@@ -365,7 +374,7 @@ pub fn chunk_loader_system(
                     .with_inserted_indices(bevy::mesh::Indices::U32(water_data.indices)),
                 );
 
-                if let Some(water_entity) = entry.water_entity {
+                if let Some(water_entity) = water_entity {
                     // 更新已有水实体
                     commands.entity(water_entity).insert((
                         Mesh3d(water_mesh_handle.clone()),
@@ -394,17 +403,11 @@ pub fn chunk_loader_system(
                 }
             } else {
                 // 区块不再包含水，移除水实体
-                let (water_entity_to_remove, water_handle_to_remove) = {
+                if let Some(water_entity) = water_entity {
                     if let Some(entry) = loaded.entries.get(&result.coord) {
-                        (entry.water_entity, entry.water_mesh_handle.clone())
-                    } else {
-                        (None, None)
-                    }
-                };
-
-                if let Some(water_entity) = water_entity_to_remove {
-                    if let Some(water_handle) = water_handle_to_remove {
-                        meshes.remove(&water_handle);
+                        if let Some(water_handle) = entry.water_mesh_handle.clone() {
+                            meshes.remove(&water_handle);
+                        }
                     }
                     commands.entity(water_entity).despawn();
                 }
@@ -422,9 +425,6 @@ pub fn chunk_loader_system(
                     .wrapping_add(solid_triangle_count)
                     .wrapping_sub(entry.triangle_count);
                 entry.triangle_count = solid_triangle_count;
-
-                entry.solid_mesh_handle = solid_mesh_handle;
-                entry.solid_material_handle = shared_material.handle.clone();
             }
         }
     }
