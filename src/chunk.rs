@@ -598,7 +598,7 @@ const DIRT_LAYER_DEPTH: i32 = 4;
 pub const WATER_LEVEL: i32 = 80;
 
 /// Minimum terrain generation height
-const TERRAIN_MIN_Y: i32 = 256;
+const TERRAIN_MIN_Y: i32 = -256;
 /// Maximum terrain generation height
 const TERRAIN_MAX_Y: i32 = 256;
 
