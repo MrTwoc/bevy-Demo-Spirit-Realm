@@ -313,8 +313,8 @@ pub fn generate_lod_mesh_separated(
                 let z = sz * step;
 
                 let block_id = sample_dominant_block(chunk, x, y, z, step);
-                // LOD 级别跳过空气和水方块（水方块对远处 LOD 影响不大）
-                if block_id == 0 || block_id == 5 {
+                // LOD 级别只跳过空气方块，水方块同样参与降采样
+                if block_id == 0 {
                     continue;
                 }
 
