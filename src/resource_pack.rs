@@ -72,12 +72,12 @@ use std::path::{Path, PathBuf};
 /// 原始像素 RGB × 着色颜色 RGB = 最终颜色
 /// 例如：灰度值 (0.8, 0.8, 0.8) × (0.54, 0.71, 0.34) = (0.43, 0.57, 0.27)
 const BIOME_TINTED_TEXTURES: &[(&str, [f32; 3])] = &[
-    // grass_block_top: 平原生物群系默认草色 #8AB656
-    ("grass_block_top", [0.54, 0.71, 0.34]),
-    // grass_block_side: 侧面也需要轻微着色
-    ("grass_block_side", [0.75, 0.88, 0.60]),
-    // oak_leaves: 树叶默认绿色 #4A8B3C
-    ("oak_leaves", [0.29, 0.55, 0.24]),
+    // grass_block_top: 鲜绿色（降低 G 通道）
+    ("grass_block_top", [0.5, 0.7, 0.22]),
+    // grass_block_side: 侧面草调整为适中的绿色
+    ("grass_block_side", [0.55, 0.85, 0.6]),
+    // oak_leaves: 树叶调整为适中的绿色
+    ("oak_leaves", [0.45, 0.8, 0.45]),
 ];
 
 /// 材质包根目录（所有材质包存放于此）

@@ -8,7 +8,7 @@ pub fn setup_lighting(mut commands: Commands) {
     commands.spawn((
         DirectionalLight {
             color: Color::srgb(1.0, 0.95, 0.8), // warm sunlight tint
-            illuminance: 500.0,                 // bright enough for outdoor scene
+            illuminance: 800.0,                 // bright enough for outdoor scene
             shadows_enabled: false,
             ..default()
         },
@@ -18,7 +18,7 @@ pub fn setup_lighting(mut commands: Commands) {
     // Soft ambient light so shadowed faces aren't pitch-black.
     commands.spawn(AmbientLight {
         color: Color::srgb(0.7, 0.75, 0.9), // cool blue-ish ambient
-        brightness: 200.0,
+        brightness: 100.0,
         affects_lightmapped_meshes: true,
     });
 }
