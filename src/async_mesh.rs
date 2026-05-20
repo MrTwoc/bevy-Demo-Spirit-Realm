@@ -534,6 +534,11 @@ pub fn generate_chunk_mesh_separated(
 }
 
 /// 生成固体方块的 Mesh（水方块被跳过）
+///
+/// 扫描线优化算法：
+/// - 不遍历每个体素的6个面，而是按面方向独立处理
+/// - 每个方向只检查边界体素（暴露在空气/不同方块旁的体素）
+/// - 大幅减少 `is_face_visible` 调用次数
 fn generate_solid_mesh(
     chunk: &ChunkData,
     uv_table: &UvLookupTable,
@@ -543,45 +548,35 @@ fn generate_solid_mesh(
         return SubMeshData::new();
     }
 
+    // Uniform 固体区块（如石头深入层）所有面被自身遮挡，直接返回
+    if let ChunkData::Uniform(id) = chunk {
+        if *id != 0 && *id != 5 {
+            return SubMeshData::new();
+        }
+    }
+
     let capacity = estimate_vertex_capacity(chunk);
     let mut positions = Vec::with_capacity(capacity);
     let mut uvs = Vec::with_capacity(capacity);
     let mut normals = Vec::with_capacity(capacity);
     let mut indices = Vec::with_capacity(capacity * 3 / 2);
 
-    for z in 0..CHUNK_SIZE {
-        for y in 0..CHUNK_SIZE {
-            for x in 0..CHUNK_SIZE {
-                let block_id = chunk.get(x, y, z);
-                // 跳过空气和水方块（水方块由 generate_chunk_mesh_separated 单独处理）
-                if block_id == 0 || block_id == 5 {
-                    continue;
-                }
-
-                for (face_index, (face, offset, uv_idx)) in FACES_ASYNC.iter().cloned().enumerate()
-                {
-                    if !is_face_visible_async(chunk, x, y, z, &offset, face_index, neighbors) {
-                        continue;
-                    }
-
-                    let base_index = positions.len() as u32;
-                    let uv = uv_table.get_uv(block_id, uv_idx);
-
-                    let (face_verts, face_uvs, face_normal) = face_quad_async(x, y, z, face, uv);
-                    positions.extend(face_verts);
-                    uvs.extend(face_uvs);
-                    normals.extend([face_normal; 4]);
-                    indices.extend([
-                        base_index,
-                        base_index + 2,
-                        base_index + 1,
-                        base_index,
-                        base_index + 3,
-                        base_index + 2,
-                    ]);
-                }
-            }
-        }
+    // 对每个面方向独立处理
+    // 面方向定义：0=+X, 1=-X, 2=+Y, 3=-Y, 4=+Z, 5=-Z
+    for (face_index, (face, offset, uv_idx)) in FACES_ASYNC.iter().cloned().enumerate() {
+        process_solid_face_direction(
+            chunk,
+            neighbors,
+            face,
+            &offset,
+            face_index,
+            uv_idx,
+            uv_table,
+            &mut positions,
+            &mut uvs,
+            &mut normals,
+            &mut indices,
+        );
     }
 
     SubMeshData {
@@ -590,6 +585,93 @@ fn generate_solid_mesh(
         uvs,
         normals,
         indices,
+    }
+}
+
+/// 按面方向处理固体方块的暴露面
+///
+/// 扫描线算法：只检查边界体素，不遍历内部体素
+fn process_solid_face_direction(
+    chunk: &ChunkData,
+    neighbors: &ChunkNeighbors,
+    face: FaceAsync,
+    offset: &[i32; 3],
+    face_index: usize,
+    uv_idx: usize,
+    uv_table: &UvLookupTable,
+    positions: &mut Vec<[f32; 3]>,
+    uvs: &mut Vec<[f32; 2]>,
+    normals: &mut Vec<[f32; 3]>,
+    indices: &mut Vec<u32>,
+) {
+    // 根据面方向选择扫描轴和边界
+    // +X/-X 面：扫描 YZ 平面
+    // +Y/-Y 面：扫描 XZ 平面
+    // +Z/-Z 面：扫描 XY 平面
+    let (axis1, axis2, normal_axis) = match face {
+        FaceAsync::Right | FaceAsync::Left => (1, 2, 0), // Y, Z 轴
+        FaceAsync::Top | FaceAsync::Bottom => (0, 2, 1), // X, Z 轴
+        FaceAsync::Front | FaceAsync::Back => (0, 1, 2), // X, Y 轴
+    };
+
+    for i in 0..CHUNK_SIZE {
+        for j in 0..CHUNK_SIZE {
+            // 构建当前扫描线的坐标
+            let mut pos = [0usize; 3];
+            pos[axis1] = i;
+            pos[axis2] = j;
+
+            // 沿法线方向扫描，找到暴露面
+            // 扫描线起点：法线方向最外层
+            let start_layer = if offset[normal_axis] > 0 {
+                0
+            } else {
+                CHUNK_SIZE - 1
+            };
+
+            let step: isize = if offset[normal_axis] as i32 > 0 {
+                1
+            } else {
+                -1
+            };
+            let end_layer: isize = if offset[normal_axis] as i32 > 0 {
+                CHUNK_SIZE as isize
+            } else {
+                -1
+            };
+
+            let mut layer = start_layer as isize;
+            while layer != end_layer {
+                pos[normal_axis] = layer as usize;
+                let (x, y, z) = (pos[0], pos[1], pos[2]);
+
+                let block_id = chunk.get(x, y, z);
+
+                // 跳过空气和水方块
+                if block_id != 0 && block_id != 5 {
+                    // 检查该面的可见性
+                    if is_face_visible_async(chunk, x, y, z, offset, face_index, neighbors) {
+                        let base_index = positions.len() as u32;
+                        let uv = uv_table.get_uv(block_id, uv_idx);
+                        let (face_verts, face_uvs, face_normal) =
+                            face_quad_async(x, y, z, face, uv);
+                        positions.extend(face_verts);
+                        uvs.extend(face_uvs);
+                        normals.extend([face_normal; 4]);
+                        indices.extend([
+                            base_index,
+                            base_index + 2,
+                            base_index + 1,
+                            base_index,
+                            base_index + 3,
+                            base_index + 2,
+                        ]);
+                    }
+                }
+
+                layer += step;
+            }
+        }
     }
 }
 
