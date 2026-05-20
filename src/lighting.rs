@@ -8,7 +8,7 @@ pub fn setup_lighting(mut commands: Commands) {
     commands.spawn((
         DirectionalLight {
             color: Color::srgb(1.0, 0.95, 0.8), // warm sunlight tint
-            illuminance: 2500.0,                // bright enough for outdoor scene
+            illuminance: 500.0,                 // bright enough for outdoor scene
             shadows_enabled: false,
             ..default()
         },
