@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::Arc;
 
+use crate::biome::{BiomeId, get_biome, select_biome};
 use crate::chunk_dirty::ChunkMeshHandle;
 use crate::resource_pack::{ResourcePackManager, VoxelMaterial};
 
@@ -606,6 +607,8 @@ const TERRAIN_MAX_Y: i32 = 256;
 ///
 /// 使用 std::sync::OnceLock 缓存噪声函数，避免每次调用 fill_terrain 都重新创建。
 static TERRAIN_NOISE: std::sync::OnceLock<Fbm<Simplex>> = std::sync::OnceLock::new();
+static TEMPERATURE_NOISE: std::sync::OnceLock<Fbm<Simplex>> = std::sync::OnceLock::new();
+static HUMIDITY_NOISE: std::sync::OnceLock<Fbm<Simplex>> = std::sync::OnceLock::new();
 
 /// 获取缓存的噪声函数
 fn get_terrain_noise() -> &'static Fbm<Simplex> {
@@ -613,6 +616,28 @@ fn get_terrain_noise() -> &'static Fbm<Simplex> {
         Fbm::<Simplex>::new(TERRAIN_SEED)
             .set_octaves(5)
             .set_frequency(0.003)
+            .set_lacunarity(2.0)
+            .set_persistence(0.5)
+    })
+}
+
+/// 获取缓存的温度噪声函数（公开供其他模块使用）
+pub fn get_temperature_noise() -> &'static Fbm<Simplex> {
+    TEMPERATURE_NOISE.get_or_init(|| {
+        Fbm::<Simplex>::new(TERRAIN_SEED + 1000)
+            .set_octaves(3)
+            .set_frequency(0.005)
+            .set_lacunarity(2.0)
+            .set_persistence(0.5)
+    })
+}
+
+/// 获取缓存的湿度噪声函数（公开供其他模块使用）
+pub fn get_humidity_noise() -> &'static Fbm<Simplex> {
+    HUMIDITY_NOISE.get_or_init(|| {
+        Fbm::<Simplex>::new(TERRAIN_SEED + 2000)
+            .set_octaves(3)
+            .set_frequency(0.006)
             .set_lacunarity(2.0)
             .set_persistence(0.5)
     })
@@ -636,9 +661,13 @@ pub fn get_surface_height(world_x: f64, world_z: f64) -> i32 {
 /// 使用 Simplex FBM 噪声在 XZ 平面采样，生成有起伏的自然地形。
 /// 地形分层：地表=草地/沙子，浅层=泥土，深层=石头。
 ///
+/// 集成群系系统：根据温度和湿度噪声选择群系，使用群系参数决定地表方块。
+///
 /// 优化：使用缓存的噪声函数，避免每次创建。
 pub fn fill_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
     let noise = get_terrain_noise();
+    let temp_noise = get_temperature_noise();
+    let humid_noise = get_humidity_noise();
 
     for z in 0..CHUNK_SIZE {
         for x in 0..CHUNK_SIZE {
@@ -647,6 +676,14 @@ pub fn fill_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
 
             let noise_val = noise.get([world_x, world_z]);
             let surface_height = TERRAIN_BASE_HEIGHT + (noise_val * TERRAIN_AMPLITUDE) as i32;
+
+            // 获取温度和湿度噪声
+            let temperature = temp_noise.get([world_x, world_z]);
+            let humidity = humid_noise.get([world_x, world_z]);
+
+            // 选择群系
+            let biome_id = select_biome(temperature, humidity, surface_height as f64);
+            let biome = get_biome(biome_id);
 
             for y in 0..CHUNK_SIZE {
                 let world_y = coord.cy as i32 * CHUNK_SIZE as i32 + y as i32;
@@ -667,15 +704,15 @@ pub fn fill_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
                     continue; // 空气，不需要设置（默认就是 0）
                 }
 
+                // 使用群系参数决定方块
                 let block_id = if world_y == surface_height {
-                    if surface_height < SAND_HEIGHT_THRESHOLD {
-                        4 // sand
-                    } else {
-                        1 // grass
-                    }
-                } else if world_y > surface_height - DIRT_LAYER_DEPTH {
-                    3 // dirt
+                    // 地表层：使用群系的地表方块
+                    biome.surface_block
+                } else if world_y > surface_height - biome.soil_thickness {
+                    // 表土层：使用群系的次表层方块
+                    biome.under_surface_block
                 } else {
+                    // 深层：石头
                     2 // stone
                 };
 

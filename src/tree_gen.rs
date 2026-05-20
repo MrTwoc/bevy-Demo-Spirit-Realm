@@ -17,12 +17,13 @@
 //! 3. 对每个候选树干位置，计算树木结构（树干 + 树冠）
 //! 4. 只放置落在本区块 XZY 范围内的方块
 
-use crate::chunk::{BlockId, ChunkCoord, ChunkData, get_surface_height, CHUNK_SIZE, WATER_LEVEL};
+use crate::biome::{get_biome, select_biome};
+use crate::chunk::{BlockId, CHUNK_SIZE, ChunkCoord, ChunkData, WATER_LEVEL, get_surface_height};
 use bevy::prelude::Resource;
 use noise::{NoiseFn, Perlin};
 
 // 树木方块类型 ID
-pub const TREE_TRUNK: BlockId = 6;  // oak_log
+pub const TREE_TRUNK: BlockId = 6; // oak_log
 pub const TREE_LEAVES: BlockId = 7; // oak_leaves
 
 /// 树木生成配置
@@ -239,9 +240,12 @@ fn is_water_environment(
     // 可以读取实际方块数据验证。
     for check_y_offset in [0, 1] {
         let check_wy = surface_y + check_y_offset;
-        if check_wy >= chunk_oy && check_wy < chunk_oy + CHUNK_SIZE as i32
-            && trunk_wx >= chunk_ox && trunk_wx < chunk_ox + CHUNK_SIZE as i32
-            && trunk_wz >= chunk_oz && trunk_wz < chunk_oz + CHUNK_SIZE as i32
+        if check_wy >= chunk_oy
+            && check_wy < chunk_oy + CHUNK_SIZE as i32
+            && trunk_wx >= chunk_ox
+            && trunk_wx < chunk_ox + CHUNK_SIZE as i32
+            && trunk_wz >= chunk_oz
+            && trunk_wz < chunk_oz + CHUNK_SIZE as i32
         {
             let lx = (trunk_wx - chunk_ox) as usize;
             let ly = (check_wy - chunk_oy) as usize;
@@ -260,9 +264,12 @@ fn is_water_environment(
     for &(dx, dz) in NEIGHBOR_OFFSETS {
         let wx = trunk_wx + dx;
         let wz = trunk_wz + dz;
-        if trunk_base_y >= chunk_oy && trunk_base_y < chunk_oy + CHUNK_SIZE as i32
-            && wx >= chunk_ox && wx < chunk_ox + CHUNK_SIZE as i32
-            && wz >= chunk_oz && wz < chunk_oz + CHUNK_SIZE as i32
+        if trunk_base_y >= chunk_oy
+            && trunk_base_y < chunk_oy + CHUNK_SIZE as i32
+            && wx >= chunk_ox
+            && wx < chunk_ox + CHUNK_SIZE as i32
+            && wz >= chunk_oz
+            && wz < chunk_oz + CHUNK_SIZE as i32
         {
             let lx = (wx - chunk_ox) as usize;
             let ly = (trunk_base_y - chunk_oy) as usize;
@@ -317,22 +324,39 @@ pub fn generate_trees_in_chunk(
     while trunk_x <= search_max_x {
         let mut trunk_z = search_min_z;
         while trunk_z <= search_max_z {
-            // 使用 Perlin 噪声判断是否在该位置生成树木
-            // 频率较低使树木呈聚落状分布
-            let noise_val = noise.distribution.get([
-                trunk_x as f64 * 0.035,
-                trunk_z as f64 * 0.035,
-            ]);
+            // 计算地表高度（使用与地形生成相同的确定性噪声）
+            let surface_y = get_surface_height(trunk_x as f64, trunk_z as f64);
 
-            // noise_val 范围 [-1, 1]，映射到 [0, 1]
-            let spawn_prob = noise_val * 0.5 + 0.5;
-            if spawn_prob > config.spawn_chance {
+            // 获取该位置的群系，用于决定树木密度
+            let temp_noise = crate::chunk::get_temperature_noise();
+            let humid_noise = crate::chunk::get_humidity_noise();
+            let temperature = temp_noise.get([trunk_x as f64, trunk_z as f64]);
+            let humidity = humid_noise.get([trunk_x as f64, trunk_z as f64]);
+            let biome = get_biome(select_biome(temperature, humidity, surface_y as f64));
+
+            // 如果群系树木密度为0，跳过
+            if biome.tree_density <= 0.0 {
                 trunk_z += step;
                 continue;
             }
 
-            // 计算地表高度（使用与地形生成相同的确定性噪声）
-            let surface_y = get_surface_height(trunk_x as f64, trunk_z as f64);
+            // 使用 Perlin 噪声判断是否在该位置生成树木
+            // 频率较低使树木呈聚落状分布
+            let noise_val = noise
+                .distribution
+                .get([trunk_x as f64 * 0.035, trunk_z as f64 * 0.035]);
+
+            // noise_val 范围 [-1, 1]，映射到 [0, 1]
+            let spawn_prob = noise_val * 0.5 + 0.5;
+
+            // 考虑群系树木密度进行调整
+            // tree_density = 0.0 表示无树木，1.0 表示密集树林
+            // 密度越高，越容易生成树木（spawn_chance / tree_density）
+            let effective_chance = config.spawn_chance / (biome.tree_density as f64).max(0.01);
+            if spawn_prob > effective_chance {
+                trunk_z += step;
+                continue;
+            }
 
             // 跳过地表高度超出树木能触及范围的候选项
             if surface_y < min_trunk_y || surface_y > max_trunk_y {
@@ -354,17 +378,24 @@ pub fn generate_trees_in_chunk(
             }
 
             // 树干高度：使用第二个噪声维度获得变化
-            let height_scale = noise.height_variation.get([
-                trunk_x as f64 * 0.2,
-                trunk_z as f64 * 0.2,
-            ]);
+            let height_scale = noise
+                .height_variation
+                .get([trunk_x as f64 * 0.2, trunk_z as f64 * 0.2]);
             // height_scale 范围 [-1, 1]，映射到 [trunk_min, trunk_max]
             let height_range = (config.trunk_max_height - config.trunk_min_height + 1) as f64;
-            let trunk_height = config.trunk_min_height
-                + ((height_scale * 0.5 + 0.5) * height_range) as i32;
+            let trunk_height =
+                config.trunk_min_height + ((height_scale * 0.5 + 0.5) * height_range) as i32;
             let trunk_height = trunk_height.clamp(config.trunk_min_height, config.trunk_max_height);
 
-            place_tree_blocks(chunk, coord, trunk_x, trunk_z, surface_y, trunk_height, config);
+            place_tree_blocks(
+                chunk,
+                coord,
+                trunk_x,
+                trunk_z,
+                surface_y,
+                trunk_height,
+                config,
+            );
 
             trunk_z += step;
         }
