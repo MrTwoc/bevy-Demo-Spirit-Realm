@@ -308,9 +308,359 @@ impl ResourcePackManager {
         // block_id = 7: 树叶 (Oak Leaves)
         // ─────────────────────────────────────────────────────────────
         // 所有面使用相同树叶纹理
-        map.insert((7, "top".to_string()), "oak_leaves".to_string());
-        map.insert((7, "bottom".to_string()), "oak_leaves".to_string());
-        map.insert((7, "side".to_string()), "oak_leaves".to_string());
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 8: 橡木原木 (Oak Log)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((8, "top".to_string()), "oak_log_top".to_string());
+        map.insert((8, "bottom".to_string()), "oak_log_top".to_string());
+        map.insert((8, "side".to_string()), "oak_log".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 9: 云杉原木 (Spruce Log)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((9, "top".to_string()), "spruce_log_top".to_string());
+        map.insert((9, "bottom".to_string()), "spruce_log_top".to_string());
+        map.insert((9, "side".to_string()), "spruce_log".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 10: 白桦原木 (Birch Log)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((10, "top".to_string()), "birch_log_top".to_string());
+        map.insert((10, "bottom".to_string()), "birch_log_top".to_string());
+        map.insert((10, "side".to_string()), "birch_log".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 11: 丛林原木 (Jungle Log)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((11, "top".to_string()), "jungle_log_top".to_string());
+        map.insert((11, "bottom".to_string()), "jungle_log_top".to_string());
+        map.insert((11, "side".to_string()), "jungle_log".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 12: 深色橡木原木 (Dark Oak Log)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((12, "top".to_string()), "dark_oak_log_top".to_string());
+        map.insert((12, "bottom".to_string()), "dark_oak_log_top".to_string());
+        map.insert((12, "side".to_string()), "dark_oak_log".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 13: 金合欢原木 (Acacia Log)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((13, "top".to_string()), "acacia_log_top".to_string());
+        map.insert((13, "bottom".to_string()), "acacia_log_top".to_string());
+        map.insert((13, "side".to_string()), "acacia_log".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 14: 橡木木板 (Oak Planks)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((14, "top".to_string()), "oak_planks".to_string());
+        map.insert((14, "bottom".to_string()), "oak_planks".to_string());
+        map.insert((14, "side".to_string()), "oak_planks".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 15: 云杉木板 (Spruce Planks)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((15, "top".to_string()), "spruce_planks".to_string());
+        map.insert((15, "bottom".to_string()), "spruce_planks".to_string());
+        map.insert((15, "side".to_string()), "spruce_planks".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 16: 白桦木板 (Birch Planks)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((16, "top".to_string()), "birch_planks".to_string());
+        map.insert((16, "bottom".to_string()), "birch_planks".to_string());
+        map.insert((16, "side".to_string()), "birch_planks".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 17: 丛林木板 (Jungle Planks)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((17, "top".to_string()), "jungle_planks".to_string());
+        map.insert((17, "bottom".to_string()), "jungle_planks".to_string());
+        map.insert((17, "side".to_string()), "jungle_planks".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 18: 深色橡木木板 (Dark Oak Planks)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((18, "top".to_string()), "dark_oak_planks".to_string());
+        map.insert((18, "bottom".to_string()), "dark_oak_planks".to_string());
+        map.insert((18, "side".to_string()), "dark_oak_planks".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 19: 金合欢木板 (Acacia Planks)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((19, "top".to_string()), "acacia_planks".to_string());
+        map.insert((19, "bottom".to_string()), "acacia_planks".to_string());
+        map.insert((19, "side".to_string()), "acacia_planks".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 20: 红树木板 (Mangrove Planks)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((20, "top".to_string()), "mangrove_planks".to_string());
+        map.insert((20, "bottom".to_string()), "mangrove_planks".to_string());
+        map.insert((20, "side".to_string()), "mangrove_planks".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 21: 深板岩 (Deepslate)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((21, "top".to_string()), "deepslate".to_string());
+        map.insert((21, "bottom".to_string()), "deepslate".to_string());
+        map.insert((21, "side".to_string()), "deepslate".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 22: 鹅卵石 (Cobblestone)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((22, "top".to_string()), "cobblestone".to_string());
+        map.insert((22, "bottom".to_string()), "cobblestone".to_string());
+        map.insert((22, "side".to_string()), "cobblestone".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 23: 苔藓鹅卵石 (Mossy Cobblestone)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((23, "top".to_string()), "mossy_cobblestone".to_string());
+        map.insert((23, "bottom".to_string()), "mossy_cobblestone".to_string());
+        map.insert((23, "side".to_string()), "mossy_cobblestone".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 24: 橡木木板按钮 (Oak Log Button) - 使用 oak_log_button 纹理
+        // ─────────────────────────────────────────────────────────────
+        map.insert((24, "top".to_string()), "oak_log_button".to_string());
+        map.insert((24, "bottom".to_string()), "oak_log_button".to_string());
+        map.insert((24, "side".to_string()), "oak_log_button".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 25: 去皮橡木原木 (Stripped Oak Log)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((25, "top".to_string()), "oak_log_top".to_string());
+        map.insert((25, "bottom".to_string()), "oak_log_top".to_string());
+        map.insert((25, "side".to_string()), "stripped_oak_log".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 26: 去皮金合欢原木 (Stripped Acacia Log)
+        // ─────────────────────────────────────────────────────────────
+        map.insert(
+            (26, "top".to_string()),
+            "stripped_acacia_log_top".to_string(),
+        );
+        map.insert(
+            (26, "bottom".to_string()),
+            "stripped_acacia_log_top".to_string(),
+        );
+        map.insert((26, "side".to_string()), "stripped_acacia_log".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 27: 开花杜鹃花灌木 (Flowering Azalea)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((27, "top".to_string()), "flowering_azalea_top".to_string());
+        map.insert(
+            (27, "bottom".to_string()),
+            "flowering_azalea_side".to_string(),
+        );
+        map.insert(
+            (27, "side".to_string()),
+            "flowering_azalea_side".to_string(),
+        );
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 28: 开花杜鹃花树叶 (Flowering Azalea Leaves)
+        // ─────────────────────────────────────────────────────────────
+        map.insert(
+            (28, "top".to_string()),
+            "flowering_azalea_leaves".to_string(),
+        );
+        map.insert(
+            (28, "bottom".to_string()),
+            "flowering_azalea_leaves".to_string(),
+        );
+        map.insert(
+            (28, "side".to_string()),
+            "flowering_azalea_leaves".to_string(),
+        );
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 29: 甜浆果丛 Stage2 (Sweet Berry Bush Stage2)
+        // ─────────────────────────────────────────────────────────────
+        map.insert(
+            (29, "top".to_string()),
+            "sweet_berry_bush_stage2".to_string(),
+        );
+        map.insert(
+            (29, "bottom".to_string()),
+            "sweet_berry_bush_stage2".to_string(),
+        );
+        map.insert(
+            (29, "side".to_string()),
+            "sweet_berry_bush_stage2".to_string(),
+        );
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 30: 甜浆果丛 Stage3 (Sweet Berry Bush Stage3)
+        // ─────────────────────────────────────────────────────────────
+        map.insert(
+            (30, "top".to_string()),
+            "sweet_berry_bush_stage3".to_string(),
+        );
+        map.insert(
+            (30, "bottom".to_string()),
+            "sweet_berry_bush_stage3".to_string(),
+        );
+        map.insert(
+            (30, "side".to_string()),
+            "sweet_berry_bush_stage3".to_string(),
+        );
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 31: 泥土路顶部 (Dirt Path Top)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((31, "top".to_string()), "dirt_path_top".to_string());
+        map.insert((31, "bottom".to_string()), "dirt".to_string());
+        map.insert((31, "side".to_string()), "dirt_path_side".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 32: 粗泥土 (Coarse Dirt)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((32, "top".to_string()), "coarse_dirt".to_string());
+        map.insert((32, "bottom".to_string()), "coarse_dirt".to_string());
+        map.insert((32, "side".to_string()), "coarse_dirt".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 33: 深板岩煤矿石 (Deepslate Coal Ore)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((33, "top".to_string()), "deepslate_coal_ore".to_string());
+        map.insert((33, "bottom".to_string()), "deepslate_coal_ore".to_string());
+        map.insert((33, "side".to_string()), "deepslate_coal_ore".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 34: 深板岩铁矿石 (Deepslate Iron Ore)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((34, "top".to_string()), "deepslate_iron_ore".to_string());
+        map.insert((34, "bottom".to_string()), "deepslate_iron_ore".to_string());
+        map.insert((34, "side".to_string()), "deepslate_iron_ore".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 35: 深板岩金矿石 (Deepslate Gold Ore)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((35, "top".to_string()), "deepslate_gold_ore".to_string());
+        map.insert((35, "bottom".to_string()), "deepslate_gold_ore".to_string());
+        map.insert((35, "side".to_string()), "deepslate_gold_ore".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 36: 深板岩红石矿石 (Deepslate Redstone Ore)
+        // ─────────────────────────────────────────────────────────────
+        map.insert(
+            (36, "top".to_string()),
+            "deepslate_redstone_ore".to_string(),
+        );
+        map.insert(
+            (36, "bottom".to_string()),
+            "deepslate_redstone_ore".to_string(),
+        );
+        map.insert(
+            (36, "side".to_string()),
+            "deepslate_redstone_ore".to_string(),
+        );
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 37: 深板岩青金石矿石 (Deepslate Lapis Ore)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((37, "top".to_string()), "deepslate_lapis_ore".to_string());
+        map.insert(
+            (37, "bottom".to_string()),
+            "deepslate_lapis_ore".to_string(),
+        );
+        map.insert((37, "side".to_string()), "deepslate_lapis_ore".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 38: 深板岩钻石矿石 (Deepslate Diamond Ore)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((38, "top".to_string()), "deepslate_diamond_ore".to_string());
+        map.insert(
+            (38, "bottom".to_string()),
+            "deepslate_diamond_ore".to_string(),
+        );
+        map.insert(
+            (38, "side".to_string()),
+            "deepslate_diamond_ore".to_string(),
+        );
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 39: 深板岩绿宝石矿石 (Deepslate Emerald Ore)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((39, "top".to_string()), "deepslate_emerald_ore".to_string());
+        map.insert(
+            (39, "bottom".to_string()),
+            "deepslate_emerald_ore".to_string(),
+        );
+        map.insert(
+            (39, "side".to_string()),
+            "deepslate_emerald_ore".to_string(),
+        );
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 40: 深板岩铜矿石 (Deepslate Copper Ore)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((40, "top".to_string()), "deepslate_copper_ore".to_string());
+        map.insert(
+            (40, "bottom".to_string()),
+            "deepslate_copper_ore".to_string(),
+        );
+        map.insert((40, "side".to_string()), "deepslate_copper_ore".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 41: 深板岩砖块 (Deepslate Tiles)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((41, "top".to_string()), "deepslate_tiles".to_string());
+        map.insert((41, "bottom".to_string()), "deepslate_tiles".to_string());
+        map.insert((41, "side".to_string()), "deepslate_tiles".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 42: 苔藓石砖 (Mossy Stone Bricks)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((42, "top".to_string()), "mossy_stone_bricks".to_string());
+        map.insert((42, "bottom".to_string()), "mossy_stone_bricks".to_string());
+        map.insert((42, "side".to_string()), "mossy_stone_bricks".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 43: 蒲公英 (Dandelion)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((43, "top".to_string()), "dandelion".to_string());
+        map.insert((43, "bottom".to_string()), "dandelion".to_string());
+        map.insert((43, "side".to_string()), "dandelion".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 44: 红色郁金香 (Red Tulip)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((44, "top".to_string()), "red_tulip".to_string());
+        map.insert((44, "bottom".to_string()), "red_tulip".to_string());
+        map.insert((44, "side".to_string()), "red_tulip".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 45: 玫瑰灌木 (Rose Bush)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((45, "top".to_string()), "rose_bush_top".to_string());
+        map.insert((45, "bottom".to_string()), "rose_bush_top".to_string());
+        map.insert((45, "side".to_string()), "rose_bush_top".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 46:  pale_oak 原木 (Pale Oak Log)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((46, "top".to_string()), "pale_oak_log_top".to_string());
+        map.insert((46, "bottom".to_string()), "pale_oak_log_top".to_string());
+        map.insert((46, "side".to_string()), "pale_oak_log".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 47: 红树木 (Mangrove Log)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((47, "top".to_string()), "mangrove_log_top".to_string());
+        map.insert((47, "bottom".to_string()), "mangrove_log_top".to_string());
+        map.insert((47, "side".to_string()), "mangrove_log".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 48: 樱花原木 (Cherry Log)
+        // ─────────────────────────────────────────────────────────────
+        map.insert((48, "top".to_string()), "cherry_log_top".to_string());
+        map.insert((48, "bottom".to_string()), "cherry_log_top".to_string());
+        // cherry_log.png 不存在，使用 cherry_log_top 代替
+        map.insert((48, "side".to_string()), "cherry_log_top".to_string());
 
         map
     }
