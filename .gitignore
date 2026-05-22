@@ -1,3 +1,5 @@
 /target
 /perf_logs
 项目参考
+# AtomCode local-scope configs (machine-specific)
+.atomcode/local/

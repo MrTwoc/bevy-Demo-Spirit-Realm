@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "PostToolUse": {
+      "command": "cargo check --message-format short 2>&1 | head -30",
+      "trigger": "(Edit|Write|ParallelEdit)"
+    },
+    "PreToolUse": {
+      "command": "if echo \"%ATOMCODE_FILE_PATH%\" | findstr \"Cargo\\.lock assets\\\\\" >nul; then echo \"❌ 禁止编辑 Cargo.lock 和 assets 目录下的文件\"; exit 1; fi"
+    }
+  }
+}
