@@ -251,7 +251,7 @@ impl ResourcePackManager {
         // 若材质包文件更新，请同步修改此处。
         // 当前可用纹理：cobblestone, dirt, dirt_path_side, grass_block_side,
         //   grass_block_side_overlay, grass_block_top, oak_leaves,
-        //   oak_log, oak_log_button, oak_log_top, sand, stone, water
+        //   oak_log, oak_log_bottom, oak_log_top, sand, stone, water
         // ═════════════════════════════════════════════════════════════
 
         // ─────────────────────────────────────────────────────────────
@@ -313,9 +313,9 @@ impl ResourcePackManager {
         // ─────────────────────────────────────────────────────────────
         // block_id = 24: 橡木按钮 (Oak Log Button)
         // ─────────────────────────────────────────────────────────────
-        map.insert((24, "top".to_string()), "oak_log_button".to_string());
-        map.insert((24, "bottom".to_string()), "oak_log_button".to_string());
-        map.insert((24, "side".to_string()), "oak_log_button".to_string());
+        map.insert((24, "top".to_string()), "oak_log_bottom".to_string());
+        map.insert((24, "bottom".to_string()), "oak_log_bottom".to_string());
+        map.insert((24, "side".to_string()), "oak_log_bottom".to_string());
 
         // ─────────────────────────────────────────────────────────────
         // block_id = 31: 泥径 (Dirt Path)
