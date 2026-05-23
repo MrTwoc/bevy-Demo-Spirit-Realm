@@ -17,6 +17,8 @@ mod node_manager;
 mod section;
 mod section_tracker;
 mod render_distance;
+mod terrain_bridge;
+mod gpu_traversal;
 
 pub use node_manager::*;
 pub use section::*;
@@ -34,7 +36,14 @@ impl Plugin for SvoPlugin {
         app.init_resource::<NodeManager>();
         app.init_resource::<RenderDistanceController>();
 
+        // 设置 section 创建回调 (自动填充地形数据)
+        let mut tracker = app.world_mut().resource_mut::<SectionTracker>();
+        tracker.on_create_section = Some(terrain_bridge::make_section_filler());
+
         app.add_systems(Update, render_distance::process_render_distance);
+
+        // 注册 GPU 遍历插件
+        app.add_plugins(gpu_traversal::SvoGpuTraversalPlugin);
     }
 }
 

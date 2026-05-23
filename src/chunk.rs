@@ -583,27 +583,27 @@ impl BlockPos {
 // ============================================================================
 
 /// Terrain noise seed
-const TERRAIN_SEED: u32 = 12345;
+pub const TERRAIN_SEED: u32 = 12345;
 
 /// Base terrain height (world Y coordinate)
-const TERRAIN_BASE_HEIGHT: i32 = 96;
+pub const TERRAIN_BASE_HEIGHT: i32 = 96;
 
 /// Terrain height amplitude (max deviation from base)
-const TERRAIN_AMPLITUDE: f64 = 80.0;
+pub const TERRAIN_AMPLITUDE: f64 = 80.0;
 
 /// Height threshold for sand vs grass
-const SAND_HEIGHT_THRESHOLD: i32 = 22;
+pub const SAND_HEIGHT_THRESHOLD: i32 = 22;
 
 /// Depth of dirt layer below surface
-const DIRT_LAYER_DEPTH: i32 = 4;
+pub const DIRT_LAYER_DEPTH: i32 = 4;
 
 /// Water level (base height for water to appear)
 pub const WATER_LEVEL: i32 = 80;
 
 /// Minimum terrain generation height
-const TERRAIN_MIN_Y: i32 = -256;
+pub const TERRAIN_MIN_Y: i32 = -256;
 /// Maximum terrain generation height
-const TERRAIN_MAX_Y: i32 = 256;
+pub const TERRAIN_MAX_Y: i32 = 256;
 
 /// 全局噪声缓存（线程安全）
 ///
@@ -613,7 +613,7 @@ static TEMPERATURE_NOISE: std::sync::OnceLock<Fbm<Simplex>> = std::sync::OnceLoc
 static HUMIDITY_NOISE: std::sync::OnceLock<Fbm<Simplex>> = std::sync::OnceLock::new();
 
 /// 获取缓存的噪声函数
-fn get_terrain_noise() -> &'static Fbm<Simplex> {
+pub fn get_terrain_noise() -> &'static Fbm<Simplex> {
     TERRAIN_NOISE.get_or_init(|| {
         Fbm::<Simplex>::new(TERRAIN_SEED)
             .set_octaves(5)

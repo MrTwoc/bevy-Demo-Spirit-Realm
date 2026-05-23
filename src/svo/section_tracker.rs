@@ -35,6 +35,8 @@ pub struct SectionTracker {
 
     // 回调
     on_unload: Option<Box<dyn FnMut(SectionId) + Send + Sync>>,
+    /// 新 Section 创建回调 (用于地形填充等)
+    pub on_create_section: Option<Box<dyn FnMut(&mut Section) + Send + Sync>>,
 }
 
 impl Default for SectionTracker {
@@ -47,6 +49,7 @@ impl Default for SectionTracker {
             lru_prev: HashMap::new(),
             lru_next: HashMap::new(),
             on_unload: None,
+            on_create_section: None,
         }
     }
 }
@@ -81,7 +84,12 @@ impl SectionTracker {
             cached.ref_count = 1;
             cached
         } else {
-            Section::new(coord)
+            let mut new_section = Section::new(coord);
+            // 如果有创建回调，调用它来填充数据
+            if let Some(ref mut cb) = self.on_create_section {
+                cb(&mut new_section);
+            }
+            new_section
         };
 
         self.active.insert(id, section);
