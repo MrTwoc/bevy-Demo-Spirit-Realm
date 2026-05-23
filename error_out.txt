@@ -1,0 +1,859 @@
+warning: unused import: `BiomeId`
+  --> src\chunk.rs:16:20
+   |
+16 | use crate::biome::{BiomeId, get_biome, select_biome};
+   |                    ^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `bevy::camera::visibility::NoCpuCulling`
+  --> src\chunk_manager.rs:34:5
+   |
+34 | use bevy::camera::visibility::NoCpuCulling;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `format_pos`
+  --> src\svo\render_distance.rs:12:22
+   |
+12 |     encode_position, format_pos,
+   |                      ^^^^^^^^^^
+
+warning: unused import: `Operations`
+  --> src\voxel_render\pipeline.rs:16:48
+   |
+16 |             Face, FrontFace, MultisampleState, Operations, PolygonMode, PrimitiveState,
+   |                                                ^^^^^^^^^^
+
+warning: unused imports: `VoxelBindGroup` and `VoxelRenderPipeline`
+  --> src\voxel_render\plugin.rs:16:5
+   |
+16 |     VoxelBindGroup, VoxelRenderPipeline, create_voxel_render_pipeline,
+   |     ^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `ExtractSchedule`, `Extract`, `RenderSystems`, `Render`, and `self`
+  --> src\voxel_render\queue.rs:11:24
+   |
+11 |         render_graph::{self, RenderGraph},
+   |                        ^^^^
+...
+14 |         ExtractSchedule, Extract, Render, RenderApp, RenderStartup, RenderSystems,
+   |         ^^^^^^^^^^^^^^^  ^^^^^^^  ^^^^^^                            ^^^^^^^^^^^^^
+
+warning: unused import: `RawChunkMeshes`
+  --> src\voxel_render\mod.rs:12:18
+   |
+12 | pub use bridge::{RawChunkMeshes, RenderBridgePlugin};
+   |                  ^^^^^^^^^^^^^^
+
+warning: unused import: `VoxelBuffers`
+  --> src\voxel_render\mod.rs:13:34
+   |
+13 | pub use buffers::{ChunkMeshData, VoxelBuffers};
+   |                                  ^^^^^^^^^^^^
+
+warning: unused variable: `cy_max`
+   --> src\chunk_manager.rs:177:45
+    |
+177 |     fn new(center: ChunkCoord, cy_min: i32, cy_max: i32) -> Self {
+    |                                             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_cy_max`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `cy_min`
+   --> src\chunk_manager.rs:784:13
+    |
+784 |         let cy_min = center.cy - Y_LOAD_RADIUS;
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_cy_min`
+
+warning: unused variable: `cy_max`
+   --> src\chunk_manager.rs:785:13
+    |
+785 |         let cy_max = center.cy + Y_LOAD_RADIUS;
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_cy_max`
+
+warning: unused variable: `x`
+   --> src\svo\node_manager.rs:183:17
+    |
+183 |             let x = decode_x(pos);
+    |                 ^ help: if this is intentional, prefix it with an underscore: `_x`
+
+warning: unused variable: `y`
+   --> src\svo\node_manager.rs:184:17
+    |
+184 |             let y = decode_y(pos);
+    |                 ^ help: if this is intentional, prefix it with an underscore: `_y`
+
+warning: unused variable: `z`
+   --> src\svo\node_manager.rs:185:17
+    |
+185 |             let z = decode_z(pos);
+    |                 ^ help: if this is intentional, prefix it with an underscore: `_z`
+
+warning: unused variable: `half`
+   --> src\svo\node_manager.rs:199:17
+    |
+199 |             let half = 1 << (lvl - 1);
+    |                 ^^^^ help: if this is intentional, prefix it with an underscore: `_half`
+
+warning: unused variable: `step`
+   --> src\svo\node_manager.rs:259:17
+    |
+259 |             let step = 1 << (lvl - 1);
+    |                 ^^^^ help: if this is intentional, prefix it with an underscore: `_step`
+
+warning: variable does not need to be mutable
+   --> src\svo\section_tracker.rs:216:21
+    |
+216 |         if let Some(mut section) = self.cache.remove(&id) {
+    |                     ----^^^^^^^
+    |                     |
+    |                     help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `section`
+   --> src\svo\section_tracker.rs:216:21
+    |
+216 |         if let Some(mut section) = self.cache.remove(&id) {
+    |                     ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_section`
+
+warning: unused variable: `y`
+   --> src\svo\render_distance.rs:133:71
+    |
+133 |         let new_xz: HashSet<(i32, i32)> = new_loaded.iter().map(|&(x, y, z)| (x, z)).collect();
+    |                                                                       ^ help: if this is intentional, prefix it with an underscore: `_y`
+
+warning: unused variable: `tx`
+  --> src\svo\render_distance.rs:90:13
+   |
+90 |         let tx = (self.last_px as i32) >> (MAX_LOD + 5); // 32*32 = 1024 >> (9+LOD)
+   |             ^^ help: if this is intentional, prefix it with an underscore: `_tx`
+
+warning: unused variable: `tz`
+  --> src\svo\render_distance.rs:91:13
+   |
+91 |         let tz = (self.last_pz as i32) >> (MAX_LOD + 5);
+   |             ^^ help: if this is intentional, prefix it with an underscore: `_tz`
+
+warning: unused variable: `coord`
+   --> src\svo\render_distance.rs:171:13
+    |
+171 |         let coord = SectionCoord::new(
+    |             ^^^^^ help: if this is intentional, prefix it with an underscore: `_coord`
+
+warning: variable `visible_count` is assigned to, but never used
+   --> src\svo\visibility_bridge.rs:307:9
+    |
+307 |     let mut visible_count = 0usize;
+    |         ^^^^^^^^^^^^^^^^^
+    |
+    = note: consider using `_visible_count` instead
+
+warning: value assigned to `visible_count` is never read
+   --> src\svo\visibility_bridge.rs:327:17
+    |
+327 |                 visible_count += 1;
+    |                 ^^^^^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `half`
+   --> src\svo\mod.rs:126:9
+    |
+126 |     let half = 1i32 << (child_lvl); // 父节点的一半大小
+    |         ^^^^ help: if this is intentional, prefix it with an underscore: `_half`
+
+warning: unused variable: `render_device`
+  --> src\voxel_render\pipeline.rs:45:9
+   |
+45 |     let render_device = world.resource::<RenderDevice>();
+   |         ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_render_device`
+
+warning: variant `Cancel` is never constructed
+   --> src\async_mesh.rs:122:5
+    |
+110 | pub enum MeshTask {
+    |          -------- variant in this enum
+...
+122 |     Cancel(ChunkCoord),
+    |     ^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `is_empty` is never used
+   --> src\async_mesh.rs:146:12
+    |
+135 | impl SubMeshData {
+    | ---------------- method in this implementation
+...
+146 |     pub fn is_empty(&self) -> bool {
+    |            ^^^^^^^^
+
+warning: fields `uv_table`, `tree_config`, and `tree_noise` are never read
+   --> src\async_mesh.rs:178:5
+    |
+171 | pub struct AsyncMeshManager {
+    |            ---------------- fields in this struct
+...
+178 |     uv_table: Arc<UvLookupTable>,
+    |     ^^^^^^^^
+179 |     tree_config: Arc<TreeConfig>,
+    |     ^^^^^^^^^^^
+180 |     tree_noise: Arc<TreeNoise>,
+    |     ^^^^^^^^^^
+
+warning: methods `flush_cancel_queue` and `pending_count` are never used
+   --> src\async_mesh.rs:335:8
+    |
+183 | impl AsyncMeshManager {
+    | --------------------- methods in this implementation
+...
+335 |     fn flush_cancel_queue(&self) {
+    |        ^^^^^^^^^^^^^^^^^^
+...
+382 |     pub fn pending_count(&self) -> usize {
+    |            ^^^^^^^^^^^^^
+
+warning: function `generate_chunk_mesh_async` is never used
+   --> src\async_mesh.rs:447:4
+    |
+447 | fn generate_chunk_mesh_async(
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: associated function `from_u8` is never used
+  --> src\biome.rs:23:12
+   |
+21 | impl BiomeId {
+   | ------------ associated function in this implementation
+22 |     /// 从 u8 值转换为 BiomeId
+23 |     pub fn from_u8(value: u8) -> Option<Self> {
+   |            ^^^^^^^
+
+warning: multiple fields are never read
+  --> src\biome.rs:53:9
+   |
+51 | pub struct Biome {
+   |            ----- fields in this struct
+52 |     /// 群系ID
+53 |     pub id: BiomeId,
+   |         ^^
+54 |     /// 群系名称
+55 |     pub name: &'static str,
+   |         ^^^^
+...
+58 |     pub temperature: f64,
+   |         ^^^^^^^^^^^
+59 |     /// 基础湿度 (-1.0 ~ 1.0)
+60 |     pub humidity: f64,
+   |         ^^^^^^^^
+...
+72 |     pub tree_type: TreeType,
+   |         ^^^^^^^^^
+73 |     /// 草地覆盖度 (0.0 ~ 1.0)
+74 |     pub grass_density: f32,
+   |         ^^^^^^^^^^^^^
+...
+77 |     pub is_snowy: bool,
+   |         ^^^^^^^^
+78 |     /// 是否湿润（水体）
+79 |     pub is_wet: bool,
+   |         ^^^^^^
+80 |     /// 是否贫瘠（无植被）
+81 |     pub is_sparse: bool,
+   |         ^^^^^^^^^
+   |
+   = note: `Biome` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: function `get_all_biome_ids` is never used
+   --> src\biome.rs:261:8
+    |
+261 | pub fn get_all_biome_ids() -> [BiomeId; 9] {
+    |        ^^^^^^^^^^^^^^^^^
+
+warning: function `get_biome_by_name` is never used
+   --> src\biome.rs:276:8
+    |
+276 | pub fn get_biome_by_name(name: &str) -> Option<BiomeId> {
+    |        ^^^^^^^^^^^^^^^^^
+
+warning: function `get_biome_weight` is never used
+   --> src\biome.rs:365:8
+    |
+365 | pub fn get_biome_weight(biome_id: BiomeId, temperature: f64, humidity: f64) -> f64 {
+    |        ^^^^^^^^^^^^^^^^
+
+warning: associated items `from_blocks`, `to_blocks`, `is_uniform`, and `uniform_block` are never used
+   --> src\chunk.rs:82:12
+    |
+ 68 | impl PalettedChunkData {
+    | ---------------------- associated items in this implementation
+...
+ 82 |     pub fn from_blocks(blocks: &[BlockId]) -> Self {
+    |            ^^^^^^^^^^^
+...
+136 |     pub fn to_blocks(&self) -> Vec<BlockId> {
+    |            ^^^^^^^^^
+...
+158 |     pub fn is_uniform(&self) -> bool {
+    |            ^^^^^^^^^^
+...
+162 |     pub fn uniform_block(&self) -> Option<BlockId> {
+    |            ^^^^^^^^^^^^^
+
+warning: enum `Face` is never used
+   --> src\chunk.rs:173:10
+    |
+173 | pub enum Face {
+    |          ^^^^
+
+warning: methods `to_face_name` and `face_index` are never used
+   --> src\chunk.rs:183:12
+    |
+182 | impl Face {
+    | --------- methods in this implementation
+183 |     pub fn to_face_name(&self) -> &'static str {
+    |            ^^^^^^^^^^^^
+...
+191 |     pub const fn face_index(&self) -> usize {
+    |                  ^^^^^^^^^^
+
+warning: constant `FACES` is never used
+   --> src\chunk.rs:201:7
+    |
+201 | const FACES: [(Face, [i32; 3]); 6] = [
+    |       ^^^^^
+
+warning: constant `FACE_UV_INDICES` is never used
+   --> src\chunk.rs:210:7
+    |
+210 | const FACE_UV_INDICES: [usize; 6] = [2, 2, 0, 1, 2, 2];
+    |       ^^^^^^^^^^^^^^^
+
+warning: associated items `new`, `flatten`, `to_shared_vec`, `to_vec`, `is_face_visible`, and `memory_usage` are never used
+   --> src\chunk.rs:249:12
+    |
+248 | impl ChunkData {
+    | -------------- associated items in this implementation
+249 |     pub fn new() -> Self {
+    |            ^^^
+...
+257 |     fn flatten(x: usize, y: usize, z: usize) -> usize {
+    |        ^^^^^^^
+...
+295 |     pub fn to_shared_vec(&self) -> Arc<Vec<BlockId>> {
+    |            ^^^^^^^^^^^^^
+...
+303 |     pub fn to_vec(&self) -> Vec<BlockId> {
+    |            ^^^^^^
+...
+311 |     pub fn is_face_visible(
+    |            ^^^^^^^^^^^^^^^
+...
+344 |     pub fn memory_usage(&self) -> usize {
+    |            ^^^^^^^^^^^^
+
+warning: function `generate_chunk_mesh` is never used
+   --> src\chunk.rs:389:8
+    |
+389 | pub fn generate_chunk_mesh(
+    |        ^^^^^^^^^^^^^^^^^^^
+
+warning: function `face_quad` is never used
+   --> src\chunk.rs:442:4
+    |
+442 | fn face_quad(
+    |    ^^^^^^^^^
+
+warning: associated items `from_world`, `to_chunk_coord`, and `to_local` are never used
+   --> src\chunk.rs:556:12
+    |
+555 | impl BlockPos {
+    | ------------- associated items in this implementation
+556 |     pub fn from_world(world_pos: Vec3) -> Self {
+    |            ^^^^^^^^^^
+...
+564 |     pub fn to_chunk_coord(self) -> ChunkCoord {
+    |            ^^^^^^^^^^^^^^
+...
+572 |     pub fn to_local(self) -> (usize, usize, usize) {
+    |            ^^^^^^^^
+
+warning: constant `SAND_HEIGHT_THRESHOLD` is never used
+   --> src\chunk.rs:595:11
+    |
+595 | pub const SAND_HEIGHT_THRESHOLD: i32 = 22;
+    |           ^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `DIRT_LAYER_DEPTH` is never used
+   --> src\chunk.rs:598:11
+    |
+598 | pub const DIRT_LAYER_DEPTH: i32 = 4;
+    |           ^^^^^^^^^^^^^^^^
+
+warning: function `spawn_chunk_entity` is never used
+   --> src\chunk.rs:737:8
+    |
+737 | pub fn spawn_chunk_entity(
+    |        ^^^^^^^^^^^^^^^^^^
+
+warning: field `0` is never read
+  --> src\chunk_dirty.rs:33:29
+   |
+33 | pub struct ChunkAtlasHandle(pub Handle<Image>);
+   |            ---------------- ^^^^^^^^^^^^^^^^^
+   |            |
+   |            field in this struct
+   |
+   = help: consider removing this field
+   = note: `ChunkAtlasHandle` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: field `material` is never read
+  --> src\chunk_dirty.rs:43:9
+   |
+41 | pub struct ChunkMeshHandle {
+   |            --------------- field in this struct
+42 |     pub mesh: Handle<Mesh>,
+43 |     pub material: Handle<VoxelMaterial>,
+   |         ^^^^^^^^
+   |
+   = note: `ChunkMeshHandle` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: function `mark_chunk_dirty` is never used
+  --> src\chunk_dirty.rs:47:8
+   |
+47 | pub fn mark_chunk_dirty(commands: &mut Commands, entity: Entity) {
+   |        ^^^^^^^^^^^^^^^^
+
+warning: associated constant `MAX` is never used
+  --> src\lod.rs:33:15
+   |
+32 | impl LodLevel {
+   | ------------- associated constant in this implementation
+33 |     pub const MAX: usize = 3;
+   |               ^^^
+
+warning: methods `with_chunks_per_frame` and `update` are never used
+   --> src\lod.rs:125:12
+    |
+114 | impl LodManager {
+    | --------------- methods in this implementation
+...
+125 |     pub fn with_chunks_per_frame(mut self, n: usize) -> Self {
+    |            ^^^^^^^^^^^^^^^^^^^^^
+...
+130 |     pub fn update(
+    |            ^^^^^^
+
+warning: field `diagnostics_printed` is never read
+  --> src\perf_logger.rs:43:5
+   |
+37 | struct PerfLoggerState {
+   |        --------------- field in this struct
+...
+43 |     diagnostics_printed: bool,
+   |     ^^^^^^^^^^^^^^^^^^^
+
+warning: function `discover_triangle_diagnostics` is never used
+   --> src\perf_logger.rs:184:4
+    |
+184 | fn discover_triangle_diagnostics(diagnostics: &DiagnosticsStore) -> Vec<DiagnosticPath> {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `distance` is never read
+  --> src\raycast.rs:68:9
+   |
+62 | pub struct VoxelHit {
+   |            -------- field in this struct
+...
+68 |     pub distance: f32,
+   |         ^^^^^^^^
+
+warning: fields `position`, `size`, and `layer_index` are never read
+  --> src\resource_pack.rs:89:9
+   |
+88 | pub struct TextureInfo {
+   |            ----------- fields in this struct
+89 |     pub position: (u32, u32),
+   |         ^^^^^^^^
+90 |     pub size: (u32, u32),
+   |         ^^^^
+...
+94 |     pub layer_index: u32,
+   |         ^^^^^^^^^^^
+   |
+   = note: `TextureInfo` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: fields `width`, `height`, and `texture_index_map` are never read
+   --> src\resource_pack.rs:101:9
+    |
+ 99 | pub struct TextureAtlas {
+    |            ------------ fields in this struct
+100 |     pub image: Vec<u8>,
+101 |     pub width: u32,
+    |         ^^^^^
+102 |     pub height: u32,
+    |         ^^^^^^
+...
+110 |     pub texture_index_map: HashMap<String, u32>,
+    |         ^^^^^^^^^^^^^^^^^
+    |
+    = note: `TextureAtlas` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: methods `switch_pack`, `get_block_uv`, and `get_block_uv_by_index` are never used
+   --> src\resource_pack.rs:420:12
+    |
+211 | impl ResourcePackManager {
+    | ------------------------ methods in this implementation
+...
+420 |     pub fn switch_pack(&mut self, pack_name: &str) -> Result<(), String> {
+    |            ^^^^^^^^^^^
+...
+633 |     pub fn get_block_uv(&self, block_id: u8, face: &str) -> Option<(f32, f32, f32, f32)> {
+    |            ^^^^^^^^^^^^
+...
+645 |     pub fn get_block_uv_by_index(&self, block_id: u8, face_index: usize) -> (f32, f32, f32, f32) {
+    |            ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `make_parent_pos` is never used
+   --> src\svo\mod.rs:141:8
+    |
+141 | pub fn make_parent_pos(child_pos: u64) -> u64 {
+    |        ^^^^^^^^^^^^^^^
+
+warning: constant `FLAG_ALL_CHILDREN_LEAF` is never used
+  --> src\svo\node_store.rs:31:7
+   |
+31 | const FLAG_ALL_CHILDREN_LEAF: u8 = 0x10; // 所有子节点都是叶子
+   |       ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: methods `is_in_flight`, `is_dirty`, and `raw_data` are never used
+   --> src\svo\node_store.rs:222:12
+    |
+ 61 | impl NodeStore {
+    | -------------- methods in this implementation
+...
+222 |     pub fn is_in_flight(&self, node_id: u32) -> bool {
+    |            ^^^^^^^^^^^^
+...
+238 |     pub fn is_dirty(&self, node_id: u32) -> bool {
+    |            ^^^^^^^^
+...
+244 |     pub fn raw_data(&self) -> &[u64] {
+    |            ^^^^^^^^
+
+warning: fields `node_id` and `gpu_data` are never read
+  --> src\svo\node_manager.rs:26:9
+   |
+25 | pub struct DirtyNode {
+   |            --------- fields in this struct
+26 |     pub node_id: u32,
+   |         ^^^^^^^
+27 |     pub gpu_data: GpuNode,
+   |         ^^^^^^^^
+   |
+   = note: `DirtyNode` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: associated items `new`, `drain_dirty_nodes`, and `top_level_ids` are never used
+   --> src\svo\node_manager.rs:61:12
+    |
+ 60 | impl NodeManager {
+    | ---------------- associated items in this implementation
+ 61 |     pub fn new() -> Self {
+    |            ^^^
+...
+303 |     pub fn drain_dirty_nodes(&mut self) -> Vec<DirtyNode> {
+    |            ^^^^^^^^^^^^^^^^^
+...
+312 |     pub fn top_level_ids(&self) -> &[u32] {
+    |            ^^^^^^^^^^^^^
+
+warning: method `distance_sq` is never used
+  --> src\svo\section.rs:45:12
+   |
+24 | impl SectionCoord {
+   | ----------------- method in this implementation
+...
+45 |     pub fn distance_sq(&self, px: f64, py: f64, pz: f64) -> f64 {
+   |            ^^^^^^^^^^^
+
+warning: methods `get_voxel`, `set_voxels`, `acquire`, and `release` are never used
+   --> src\svo\section.rs:84:12
+    |
+ 70 | impl Section {
+    | ------------ methods in this implementation
+...
+ 84 |     pub fn get_voxel(&self, x: u32, y: u32, z: u32) -> Voxel {
+    |            ^^^^^^^^^
+...
+108 |     pub fn set_voxels(&mut self, data: &[Voxel]) {
+    |            ^^^^^^^^^^
+...
+152 |     pub fn acquire(&mut self) {
+    |            ^^^^^^^
+...
+157 |     pub fn release(&mut self) -> bool {
+    |            ^^^^^^^
+
+warning: struct `CacheEntry` is never constructed
+  --> src\svo\section_tracker.rs:14:8
+   |
+14 | struct CacheEntry {
+   |        ^^^^^^^^^^
+
+warning: associated items `new`, `set_on_unload`, `get_active_mut`, `is_cached`, `mark_dirty`, and `clear` are never used
+   --> src\svo\section_tracker.rs:58:12
+    |
+ 57 | impl SectionTracker {
+    | ------------------- associated items in this implementation
+ 58 |     pub fn new() -> Self {
+    |            ^^^
+...
+ 63 |     pub fn set_on_unload<F>(&mut self, callback: F)
+    |            ^^^^^^^^^^^^^
+...
+133 |     pub fn get_active_mut(&mut self, id: SectionId) -> Option<&mut Section> {
+    |            ^^^^^^^^^^^^^^
+...
+138 |     pub fn is_cached(&self, id: SectionId) -> bool {
+    |            ^^^^^^^^^
+...
+148 |     pub fn mark_dirty(&mut self, id: SectionId) {
+    |            ^^^^^^^^^^
+...
+155 |     pub fn clear(&mut self) {
+    |            ^^^^^
+
+warning: fields `current_tx` and `current_tz` are never read
+  --> src\svo\render_distance.rs:29:5
+   |
+21 | pub struct RenderDistanceController {
+   |            ------------------------ fields in this struct
+...
+29 |     current_tx: i32,
+   |     ^^^^^^^^^^
+30 |     current_tz: i32,
+   |     ^^^^^^^^^^
+
+warning: method `set_render_distance` is never used
+  --> src\svo\render_distance.rs:61:12
+   |
+59 | impl RenderDistanceController {
+   | ----------------------------- method in this implementation
+60 |     /// 设置渲染距离
+61 |     pub fn set_render_distance(&mut self, distance: i32) {
+   |            ^^^^^^^^^^^^^^^^^^^
+
+warning: constant `NODE_SIZE_BYTES` is never used
+  --> src\svo\mod.rs:61:15
+   |
+61 |     pub const NODE_SIZE_BYTES: usize = 16;
+   |               ^^^^^^^^^^^^^^^
+
+warning: constant `NODE_BUFFER_SIZE` is never used
+  --> src\svo\mod.rs:64:15
+   |
+64 |     pub const NODE_BUFFER_SIZE: usize = MAX_NODES * NODE_SIZE_BYTES;
+   |               ^^^^^^^^^^^^^^^^
+
+warning: fields `coord`, `positions`, `normals`, `uvs`, and `indices` are never read
+  --> src\voxel_render\bridge.rs:14:9
+   |
+13 | pub struct RawChunkMesh {
+   |            ------------ fields in this struct
+14 |     pub coord: ChunkCoord,
+   |         ^^^^^
+15 |     pub positions: Vec<[f32; 3]>,
+   |         ^^^^^^^^^
+16 |     pub normals: Vec<[f32; 3]>,
+   |         ^^^^^^^
+17 |     pub uvs: Vec<[f32; 2]>,
+   |         ^^^
+18 |     pub indices: Vec<u32>,
+   |         ^^^^^^^
+   |
+   = note: `RawChunkMesh` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: fields `meshes` and `dirty` are never read
+  --> src\voxel_render\bridge.rs:27:9
+   |
+25 | pub struct RawChunkMeshes {
+   |            -------------- fields in this struct
+26 |     /// 区块坐标 → Mesh 数据
+27 |     pub meshes: std::collections::HashMap<ChunkCoord, RawChunkMesh>,
+   |         ^^^^^^
+28 |     /// 是否有更新
+29 |     pub dirty: bool,
+   |         ^^^^^
+
+warning: field `lod_level` is never read
+  --> src\voxel_render\buffers.rs:47:9
+   |
+35 | pub struct ChunkMeshData {
+   |            ------------- field in this struct
+...
+47 |     pub lod_level: crate::lod::LodLevel,
+   |         ^^^^^^^^^
+   |
+   = note: `ChunkMeshData` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: struct `PreparedVoxelData` is never constructed
+  --> src\voxel_render\prepare.rs:12:12
+   |
+12 | pub struct PreparedVoxelData {
+   |            ^^^^^^^^^^^^^^^^^
+
+warning: constant `VERTEX_BUFFER_SIZE` is never used
+  --> src\voxel_render\mod.rs:22:15
+   |
+22 |     pub const VERTEX_BUFFER_SIZE: usize = MAX_CHUNKS * MAX_VERTICES_PER_CHUNK;
+   |               ^^^^^^^^^^^^^^^^^^
+
+warning: constant `INDEX_BUFFER_SIZE` is never used
+  --> src\voxel_render\mod.rs:23:15
+   |
+23 |     pub const INDEX_BUFFER_SIZE: usize = MAX_CHUNKS * MAX_INDICES_PER_CHUNK;
+   |               ^^^^^^^^^^^^^^^^^
+
+warning: `bevygame1` (bin "bevygame1") generated 78 warnings (run `cargo fix --bin "bevygame1" -p bevygame1` to apply 24 suggestions)
+    Finished `release` profile [optimized] target(s) in 0.48s
+     Running `target\release\bevygame1.exe`
+[2m2026-05-23T16:14:24.772833Z[0m [32m INFO[0m [2mbevy_render::renderer[0m[2m:[0m AdapterInfo { name: "NVIDIA GeForce GTX 1060 6GB", vendor: 4318, device: 7171, device_type: DiscreteGpu, driver: "NVIDIA", driver_info: "582.28", backend: Vulkan }
+[2m2026-05-23T16:14:24.895475Z[0m [32m INFO[0m [2mbevygame1::voxel_render::draw[0m[2m:[0m VoxelRenderCommandPlugin loaded (indirect draw is active)
+[2m2026-05-23T16:14:24.910410Z[0m [32m INFO[0m [2mbevy_render::batching::gpu_preprocessing[0m[2m:[0m GPU preprocessing is fully supported on this device.
+[2m2026-05-23T16:14:24.921507Z[0m [32m INFO[0m [2mbevygame1::voxel_render::buffers[0m[2m:[0m VoxelBuffers created: vertex=1572864000, index=294912000, indirect=40960, offset=32768
+[2m2026-05-23T16:14:24.921535Z[0m [32m INFO[0m [2mbevygame1::voxel_render::plugin[0m[2m:[0m VoxelRenderPlugin initialized
+[2m2026-05-23T16:14:24.921641Z[0m [32m INFO[0m [2mbevy_winit::system[0m[2m:[0m Creating new window bevygame1 (0v0)
+[2m2026-05-23T16:14:25.029195Z[0m [32m INFO[0m [2mbevygame1::resource_pack[0m[2m:[0m Available resource packs: ["1号材质包"]
+[2m2026-05-23T16:14:25.029244Z[0m [32m INFO[0m [2mbevygame1::resource_pack[0m[2m:[0m Auto-selected resource pack: '1号材质包'
+[2m2026-05-23T16:14:25.029254Z[0m [32m INFO[0m [2mbevygame1::resource_pack[0m[2m:[0m Loading resource pack from: "assets/resourcepacks\\1号材质包"
+[2m2026-05-23T16:14:25.029351Z[0m [32m INFO[0m [2mbevygame1::perf_logger[0m[2m:[0m 性能记录器已启动，输出文件: "perf_logs\\2026-05-23_16-14-25-perf_log.csv"，间隔: 1s
+[2m2026-05-23T16:14:25.029498Z[0m [32m INFO[0m [2mbevygame1::resource_pack[0m[2m:[0m   Loaded texture: cobblestone (16x16)
+[2m2026-05-23T16:14:25.029577Z[0m [32m INFO[0m [2mbevygame1::resource_pack[0m[2m:[0m   Loaded texture: dirt (16x16)
+[2m2026-05-23T16:14:25.029648Z[0m [32m INFO[0m [2mbevygame1::resource_pack[0m[2m:[0m   Loaded texture: dirt_path_side (16x16)
+[2m2026-05-23T16:14:25.029722Z[0m [32m INFO[0m [2mbevygame1::resource_pack[0m[2m:[0m   Loaded texture: grass_block_side (16x16) [biome tinted]
+[2m2026-05-23T16:14:25.029799Z[0m [32m INFO[0m [2mbevygame1::resource_pack[0m[2m:[0m   Loaded texture: grass_block_side_overlay (16x16)
+[2m2026-05-23T16:14:25.029878Z[0m [32m INFO[0m [2mbevygame1::resource_pack[0m[2m:[0m   Loaded texture: grass_block_top (16x16) [biome tinted]
+[2m2026-05-23T16:14:25.029948Z[0m [32m INFO[0m [2mbevygame1::resource_pack[0m[2m:[0m   Loaded texture: oak_leaves (16x16) [biome tinted]
+[2m2026-05-23T16:14:25.030016Z[0m [32m INFO[0m [2mbevygame1::resource_pack[0m[2m:[0m   Loaded texture: oak_log (16x16)
+[2m2026-05-23T16:14:25.030084Z[0m [32m INFO[0m [2mbevygame1::resource_pack[0m[2m:[0m   Loaded texture: oak_log_bottom (16x16)
+[2m2026-05-23T16:14:25.030146Z[0m [32m INFO[0m [2mbevygame1::resource_pack[0m[2m:[0m   Loaded texture: oak_log_top (16x16)
+[2m2026-05-23T16:14:25.030206Z[0m [32m INFO[0m [2mbevygame1::resource_pack[0m[2m:[0m   Loaded texture: sand (16x16)
+[2m2026-05-23T16:14:25.030303Z[0m [32m INFO[0m [2mbevygame1::resource_pack[0m[2m:[0m   Loaded texture: stone (16x16)
+[2m2026-05-23T16:14:25.030369Z[0m [32m INFO[0m [2mbevygame1::resource_pack[0m[2m:[0m   Loaded texture: water (16x16)
+[2m2026-05-23T16:14:25.030390Z[0m [32m INFO[0m [2mbevygame1::resource_pack[0m[2m:[0m Loaded 13 textures from "assets/resourcepacks\\1号材质包"
+[2m2026-05-23T16:14:25.030443Z[0m [32m INFO[0m [2mbevygame1::resource_pack[0m[2m:[0m Resource pack loaded: 13 textures, atlas size Some((256, 16))
+[2m2026-05-23T16:14:25.030449Z[0m [32m INFO[0m [2mbevygame1::resource_pack[0m[2m:[0m Resource pack loaded successfully
+[2m2026-05-23T16:14:25.030452Z[0m [32m INFO[0m [2mbevygame1::resource_pack[0m[2m:[0m   Texture 'grass_block_side': UV (3.000, 4.000, 0.000, 1.000)
+[2m2026-05-23T16:14:25.030461Z[0m [32m INFO[0m [2mbevygame1::resource_pack[0m[2m:[0m   Texture 'stone': UV (11.000, 12.000, 0.000, 1.000)
+[2m2026-05-23T16:14:25.030464Z[0m [32m INFO[0m [2mbevygame1::resource_pack[0m[2m:[0m   Texture 'oak_log_bottom': UV (8.000, 9.000, 0.000, 1.000)
+[2m2026-05-23T16:14:25.030468Z[0m [32m INFO[0m [2mbevygame1::resource_pack[0m[2m:[0m   Texture 'cobblestone': UV (0.000, 1.000, 0.000, 1.000)
+[2m2026-05-23T16:14:25.030471Z[0m [32m INFO[0m [2mbevygame1::resource_pack[0m[2m:[0m   Texture 'oak_log_top': UV (9.000, 10.000, 0.000, 1.000)
+[2m2026-05-23T16:14:25.030475Z[0m [32m INFO[0m [2mbevygame1::resource_pack[0m[2m:[0m   Texture 'dirt': UV (1.000, 2.000, 0.000, 1.000)
+[2m2026-05-23T16:14:25.030478Z[0m [32m INFO[0m [2mbevygame1::resource_pack[0m[2m:[0m   Texture 'water': UV (12.000, 13.000, 0.000, 1.000)
+[2m2026-05-23T16:14:25.030481Z[0m [32m INFO[0m [2mbevygame1::resource_pack[0m[2m:[0m   Texture 'grass_block_side_overlay': UV (4.000, 5.000, 0.000, 1.000)
+[2m2026-05-23T16:14:25.030485Z[0m [32m INFO[0m [2mbevygame1::resource_pack[0m[2m:[0m   Texture 'oak_leaves': UV (6.000, 7.000, 0.000, 1.000)
+[2m2026-05-23T16:14:25.030488Z[0m [32m INFO[0m [2mbevygame1::resource_pack[0m[2m:[0m   Texture 'sand': UV (10.000, 11.000, 0.000, 1.000)
+[2m2026-05-23T16:14:25.030494Z[0m [32m INFO[0m [2mbevygame1::resource_pack[0m[2m:[0m   Texture 'oak_log': UV (7.000, 8.000, 0.000, 1.000)
+[2m2026-05-23T16:14:25.030498Z[0m [32m INFO[0m [2mbevygame1::resource_pack[0m[2m:[0m   Texture 'grass_block_top': UV (5.000, 6.000, 0.000, 1.000)
+[2m2026-05-23T16:14:25.030502Z[0m [32m INFO[0m [2mbevygame1::resource_pack[0m[2m:[0m   Texture 'dirt_path_side': UV (2.000, 3.000, 0.000, 1.000)
+[2m2026-05-23T16:14:25.030622Z[0m [33m WARN[0m [2mbevy_render::camera[0m[2m:[0m Entity 18v0 has a `Camera` component, but it doesn't have a render graph configured. Usually, adding a `Camera2d` or `Camera3d` component will work.
+        However, you may instead need to enable `bevy_core_pipeline`, or may want to manually add a `CameraRenderGraph` component to create a custom render graph.
+[2m2026-05-23T16:14:25.034055Z[0m [32m INFO[0m [2mbevygame1::svo::render_distance[0m[2m:[0m [SVO] Loaded 985 sections, unloaded 0, total: 0 active, 0 cached, 144 nodes
+
+thread '<unnamed>' (17552) panicked at I:\rust\.cargo\registry\src\mirror.xuanwu.openatom.cn-4e6db2b003e739b3\bevy_render-0.18.1\src\render_graph\context.rs:172:26:
+called `Option::unwrap()` on a `None` value
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+Encountered a panic in system `<Enable the debug feature to see the name>`!
+
+thread '<unnamed>' (17552) panicked at I:\rust\.cargo\registry\src\mirror.xuanwu.openatom.cn-4e6db2b003e739b3\wgpu-hal-27.0.4\src\vulkan\instance.rs:194:58:
+Trying to destroy a SurfaceAcquireSemaphores that is still in use by a SurfaceTexture
+stack backtrace:
+   0:     0x7ffb752bf7e2 - std::backtrace_rs::backtrace::win64::trace
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library\std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1:     0x7ffb752bf7e2 - std::backtrace_rs::backtrace::trace_unsynchronized
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library\std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2:     0x7ffb752bf7e2 - std::sys::backtrace::_print_fmt
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library\std\src\sys\backtrace.rs:74
+   3:     0x7ffb752bf7e2 - std::sys::backtrace::impl$0::print::impl$0::fmt
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library\std\src\sys\backtrace.rs:44
+   4:     0x7ffb752d4af1 - core::fmt::write
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library\core\src\fmt\mod.rs:0
+   5:     0x7ffb75286e54 - std::io::default_write_fmt
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library\std\src\io\mod.rs:639
+   6:     0x7ffb75286e54 - std::io::Write::write_fmt<std::sys::stdio::windows::Stderr>
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library\std\src\io\mod.rs:1994
+   7:     0x7ffb752a8150 - std::sys::backtrace::BacktraceLock::print
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library\std\src\sys\backtrace.rs:47
+   8:     0x7ffb752a8150 - std::panicking::default_hook::closure$0
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library\std\src\panicking.rs:292
+   9:     0x7ffb752a7f68 - std::panicking::default_hook
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library\std\src\panicking.rs:319
+  10:     0x7ffb752a84c1 - std::panicking::panic_with_hook
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library\std\src\panicking.rs:833
+  11:     0x7ffb752a8224 - std::panicking::panic_handler::closure$0
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library\std\src\panicking.rs:698
+  12:     0x7ffb7529fcef - std::sys::backtrace::__rust_end_short_backtrace<std::panicking::panic_handler::closure_env$0,never$>
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library\std\src\sys\backtrace.rs:182
+  13:     0x7ffb752812ee - std::panicking::panic_handler
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library\std\src\panicking.rs:689
+  14:     0x7ffb752fa3bd - core::panicking::panic_fmt
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library\core\src\panicking.rs:80
+  15:     0x7ffb752f9d55 - core::panicking::panic_display
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library\core\src\panicking.rs:259
+  16:     0x7ffb752f9d55 - core::option::expect_failed
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library\core\src\option.rs:2208
+  17:     0x7ffb09f886cd - wgpu_hal::vulkan::instance::<impl wgpu_hal::vulkan::Instance>::from_raw::h2cb713c8cf3eaafb
+  18:     0x7ffb09f88833 - wgpu_hal::vulkan::instance::<impl wgpu_hal::Surface for wgpu_hal::vulkan::Surface>::unconfigure::h4da36818c811a1db
+  19:     0x7ffb09df7127 - <wgpu_core::instance::Surface as core::ops::drop::Drop>::drop::hd7b23bc29e1caad7
+  20:     0x7ffb09ef0fc6 - alloc::sync::Arc<T,A>::drop_slow::hc7a132c0b4f37175
+  21:     0x7ffb09e7d106 - wgpu_core::instance::<impl wgpu_core::global::Global>::surface_drop::h23888f1aafbb0357
+  22:     0x7ffb09da6202 - alloc::sync::Arc<T,A>::drop_slow::h6e6d30d958ee331a
+  23:     0x7ffb09cb5f6e - core::ptr::drop_in_place<std::collections::hash::set::HashSet<alloc::string::String>>::h9540265474cb78b7
+  24:     0x7ffb09cb81e0 - bevy_ecs::component::info::ComponentDescriptor::drop_ptr::h46d386e5d40aa63b
+  25:     0x7ffb0b4d88e6 - bevy_ecs::storage::blob_array::BlobArray::drop::h2efba55f8a49116c
+  26:     0x7ffb07aa3744 - core::ptr::drop_in_place<bevy_ecs::storage::resource::Resources<_>>::h34ad86caf6df8f52
+  27:     0x7ffb09b62081 - core::ptr::drop_in_place<bevy_app::sub_app::SubApp>::h396348e7fc6ac1bd
+  28:     0x7ffb09b61a4e - core::ptr::drop_in_place<bevy_app::sub_app::SubApp>::h396348e7fc6ac1bd
+  29:     0x7ffb09bd04fe - std::sys::backtrace::__rust_begin_short_backtrace::hcbc89b54bd2a2615
+  30:     0x7ffbed3df730 - _CxxFrameHandler3
+  31:     0x7ffbed3d3a86 - is_exception_typeof
+  32:     0x7ffbed3dec04 - _C_specific_handler
+  33:     0x7ffbed3d2c94 - is_exception_typeof
+  34:     0x7ffbed3df541 - _CxxFrameHandler3
+  35:     0x7ffbf75529ef - _chkstk
+  36:     0x7ffbf74e0939 - RtlUnwindEx
+  37:     0x7ffbed3df0ca - _C_specific_handler
+  38:     0x7ffbed3d18e5 - is_exception_typeof
+  39:     0x7ffbed3d1d00 - is_exception_typeof
+  40:     0x7ffbed3d2d90 - is_exception_typeof
+  41:     0x7ffbed3df541 - _CxxFrameHandler3
+  42:     0x7ffbf755296f - _chkstk
+  43:     0x7ffbf7502554 - RtlRaiseException
+  44:     0x7ffbf75022a7 - RtlRaiseException
+  45:     0x7ffbf4b65369 - RaiseException
+  46:     0x7ffb752ebd57 - _CxxThrowException
+                               at D:\a\_work\1\s\src\vctools\crt\vcruntime\src\eh\throw.cpp:79
+  47:     0x7ffb752bfdcd - panic_unwind::imp::throw_exception
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library\panic_unwind\src\seh.rs:368
+  48:     0x7ffb752bfca5 - panic_unwind::imp::panic
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library\panic_unwind\src\seh.rs:302
+  49:     0x7ffb752bfca5 - panic_unwind::__rust_start_panic
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library\panic_unwind\src\lib.rs:108
+  50:     0x7ffb7528100f - std::panicking::rust_panic
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library\std\src\panicking.rs:886
+  51:     0x7ffb752a8300 - std::panicking::resume_unwind
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library\std\src\panicking.rs:877
+  52:     0x7ffb752a50cf - std::panic::resume_unwind
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library\std\src\panic.rs:391
+  53:     0x7ffb0b4ef1b5 - <bevy_ecs::schedule::executor::multi_threaded::MultiThreadedExecutor as bevy_ecs::schedule::executor::SystemExecutor>::run::h6048813998646d90
+  54:     0x7ffb0b5479bf - bevy_ecs::schedule::schedule::Schedule::run::h2acf72fa6c5e60b4
+  55:     0x7ffb0b4b65a8 - bevy_ecs::world::World::schedule_scope::h6ba39d1b8d0d4ee0
+  56:     0x7ffb0b4ac89a - bevy_app::sub_app::SubApp::update::he98af18cb8218d91
+  57:     0x7ffb09bd01dc - std::sys::backtrace::__rust_begin_short_backtrace::hcbc89b54bd2a2615
+  58:     0x7ffb09c1d04f - core::ops::function::FnOnce::call_once{{vtable.shim}}::hcc5f1c9fab01e11e
+  59:     0x7ffb75297848 - std::sys::thread::windows::impl$0::new::thread_start
+                               at /rustc/e408947bfd200af42db322daf0fadfe7e26d3bd1/library\std\src\sys\thread\windows.rs:58
+  60:     0x7ffbf6917374 - BaseThreadInitThunk
+  61:     0x7ffbf74fcc91 - RtlUserThreadStart
+error: process didn't exit successfully: `target\release\bevygame1.exe` (exit code: 0xc0000409, STATUS_STACK_BUFFER_OVERRUN)

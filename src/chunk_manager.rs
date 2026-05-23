@@ -49,6 +49,7 @@ use crate::chunk_dirty::{
 use crate::hud::CachedTriangleCount;
 use crate::lod::{LodLevel, LodManager};
 use crate::resource_pack::{ResourcePackManager, VoxelMaterial};
+use crate::voxel_render::{ChunkMeshData, VoxelRenderState};
 use crate::tree_gen::{TreeConfig, TreeNoise};
 
 /// 渲染距离（区块数）。增大此值可以看到更远的世界，但需要更多区块加载。
@@ -321,6 +322,8 @@ pub fn chunk_loader_system(
     transparent_material: Res<TransparentVoxelMaterial>,
     shared_empty_mesh: Res<SharedEmptyMesh>,
     mut lod_manager: ResMut<LodManager>,
+    // 间接渲染上传队列
+    mut render_state: ResMut<VoxelRenderState>,
 ) {
     let Ok(cam_transform) = camera_query.single() else {
         return;
@@ -345,7 +348,7 @@ pub fn chunk_loader_system(
         }
 
         // 先提取 entry 中的值，避免跨越 get_mut 借用的生命周期
-        let (entity, water_entity, old_handle, old_water_handle, old_tri_count) = {
+        let (entity, water_entity, old_handle, old_water_handle, old_tri_count, chunk_lod) = {
             let entry = loaded.entries.get(&result.coord).unwrap();
             (
                 entry.entity,
@@ -353,8 +356,20 @@ pub fn chunk_loader_system(
                 entry.solid_mesh_handle.clone(),
                 entry.water_mesh_handle.clone(),
                 entry.triangle_count,
+                entry.lod_level,
             )
         };
+
+        // ── 推送网格数据到间接渲染上传队列 ──────────────────────
+        render_state.upload_queue.push(ChunkMeshData {
+            coord: result.coord,
+            positions: result.solid.positions.clone(),
+            normals: result.solid.normals.clone(),
+            uvs: result.solid.uvs.clone(),
+            indices: result.solid.indices.clone(),
+            lod_level: chunk_lod,
+        });
+        render_state.dirty = true;
 
         // 1. 处理固体 Mesh
         let solid_triangle_count = result.solid.triangle_count;

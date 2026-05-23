@@ -1,0 +1,20 @@
+error[E0599]: no method named `input_entity` found for mutable reference `&mut RenderGraphContext<'_>` in the current scope
+error[E0277]: `ViewTarget` is not a `Resource`
+error[E0599]: no variant or associated item named `NodeRunError` found for enum `bevy::bevy_render::render_graph::NodeRunError` in the current scope
+error[E0063]: missing field `depth_slice` in initializer of `bevy::bevy_render::render_resource::RenderPassColorAttachment<'_>`
+error[E0277]: the trait bound `ViewUniformRaw: std::default::Default` is not satisfied
+error[E0599]: no method named `get_single` found for struct `Extract<'_, '_, Query<'_, '_, (&Camera, &GlobalTransform)>>` in the current scope
+error[E0282]: type annotations needed
+error[E0282]: type annotations needed
+error[E0308]: mismatched types
+error[E0599]: no associated item named `MAIN_TEXTURE_FORMAT_DEPTH` found for struct `ViewTarget` in the current scope
+error[E0599]: no associated item named `MAIN_TEXTURE_FORMAT_HDR` found for struct `ViewTarget` in the current scope
+error[E0063]: missing field `zero_initialize_workgroup_memory` in initializer of `bevy::bevy_render::render_resource::RenderPipelineDescriptor`
+error[E0599]: the method `as_ref` exists for reference `&bevy::bevy_render::render_resource::Buffer`, but its trait bounds were not satisfied
+error[E0599]: the method `as_ref` exists for reference `&bevy::bevy_render::render_resource::Buffer`, but its trait bounds were not satisfied
+error[E0599]: the method `as_ref` exists for reference `&bevy::bevy_render::render_resource::Buffer`, but its trait bounds were not satisfied
+error[E0599]: no method named `as_ref` found for struct `bevy::bevy_render::render_resource::Buffer` in the current scope
+error[E0277]: the trait bound `ExtractedVoxelBuffers: ExtractResource` is not satisfied
+error[E0599]: the function or associated item `default` exists for struct `ExtractResourcePlugin<ExtractedVoxelBuffers>`, but its trait bounds were not satisfied
+error[E0277]: the trait bound `ExtractedViewData: ExtractResource` is not satisfied
+error[E0599]: the function or associated item `default` exists for struct `ExtractResourcePlugin<ExtractedViewData>`, but its trait bounds were not satisfied
