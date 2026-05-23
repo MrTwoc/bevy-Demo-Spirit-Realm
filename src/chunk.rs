@@ -210,8 +210,11 @@ const FACES: [(Face, [i32; 3]); 6] = [
 const FACE_UV_INDICES: [usize; 6] = [2, 2, 0, 1, 2, 2];
 
 /// 6 个方向的邻居区块数据，用于跨区块面剔除。
+///
+/// 存储 `Arc<ChunkData>` 引用而非展开的 `Arc<Vec<BlockId>>`，
+/// 避免主线程分配 32KB 容器。工作线程通过 `ChunkData::get()` 按需查询。
 pub struct ChunkNeighbors {
-    pub neighbor_data: [Option<Arc<Vec<BlockId>>>; 6],
+    pub neighbor_data: [Option<Arc<ChunkData>>; 6],
 }
 
 impl ChunkNeighbors {
@@ -224,8 +227,7 @@ impl ChunkNeighbors {
     pub fn get_neighbor_block(&self, face_index: usize, x: usize, y: usize, z: usize) -> BlockId {
         if let Some(ref data) = self.neighbor_data[face_index] {
             if x < CHUNK_SIZE && y < CHUNK_SIZE && z < CHUNK_SIZE {
-                let idx = z * CHUNK_SIZE * CHUNK_SIZE + y * CHUNK_SIZE + x;
-                data[idx]
+                data.get(x, y, z)
             } else {
                 0
             }

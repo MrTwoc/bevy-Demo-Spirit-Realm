@@ -149,21 +149,20 @@ fn destroy_block(
 
     if let Some(entry) = loaded.entries.get_mut(&coord) {
         // Set to air in LoadedChunks copy
-        // entry.data 是 Arc<Chunk>，通过 Arc::make_mut 获得 &mut ChunkData
-        // 若引用计数 >1（Entry + 实体组件共享），Arc::make_mut 按需克隆
+        // Arc::make_mut 使 entry.data 唯一化（若引用计数 >1 则按需克隆）
         Arc::make_mut(&mut entry.data).set(lx, ly, lz, 0);
-    }
 
-    // 同步更新 ECS ChunkComponent 中的 Arc<ChunkData>
-    if let Some(entity) = target_entity {
-        if let Ok(mut chunk_comp) = chunk_query.get_mut(entity) {
-            // chunk_comp: Mut<ChunkComponent>，通过 .0 访问内部的 Arc
-            Arc::make_mut(&mut chunk_comp.as_mut().0).set(lx, ly, lz, 0);
+        // 同步更新 ECS ChunkComponent：用 Arc::clone 替换引用（O(1)）
+        // 此时 entry.data 引用计数为 1，克隆仅增加计数，无深拷贝
+        if let Some(entity) = target_entity {
+            if let Ok(mut chunk_comp) = chunk_query.get_mut(entity) {
+                chunk_comp.as_mut().0 = Arc::clone(&entry.data);
+            }
+            // 标记为脏（附带数据变更标记）
+            commands
+                .entity(entity)
+                .insert((DirtyChunk, DataChangedFlag));
         }
-        // 标记为脏（附带数据变更标记）
-        commands
-            .entity(entity)
-            .insert((DirtyChunk, DataChangedFlag));
     }
 
     // 标记边界邻居为脏（附带邻居变更标记）
@@ -214,9 +213,9 @@ fn place_block(
 
             let entity = entry.entity;
 
-            // 同步更新 ECS ChunkComponent（通过 .0 访问内部 Arc）
+            // 同步更新 ECS ChunkComponent：用 Arc::clone 替换引用（O(1)）
             if let Ok(mut chunk_comp) = chunk_query.get_mut(entity) {
-                Arc::make_mut(&mut chunk_comp.as_mut().0).set(lx, ly, lz, PLACE_BLOCK_ID);
+                chunk_comp.as_mut().0 = Arc::clone(&entry.data);
             }
 
             // 标记为脏（附带数据变更标记）

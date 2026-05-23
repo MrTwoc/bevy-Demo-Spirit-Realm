@@ -144,10 +144,15 @@ pub fn cast_ray(ray: &Ray, loaded: &LoadedChunks) -> Option<VoxelHit> {
     let mut face_normal = IVec3::ZERO;
     let mut t = 0.0;
 
+    // 缓存 ChunkCoord 和局部坐标，避免每步重复 HashMap 查找
+    let mut cached_coord: Option<ChunkCoord> = None;
+    let mut cached_lpos: (usize, usize, usize) = (0, 0, 0);
+
     // 遍历体素
     for _ in 0..(MAX_RAY_DISTANCE * 3.0) as i32 {
-        // 检查当前体素是否为非空气（O(1) HashMap 查找）
-        if let Some(block_id) = get_block_at_hashmap(x, y, z, loaded) {
+        // 检查当前体素是否为非空气（O(1) HashMap 查找，带坐标缓存）
+        if let Some(block_id) = get_block_at_hashmap(x, y, z, loaded, &mut cached_coord, &mut cached_lpos)
+        {
             if block_id != 0 {
                 return Some(VoxelHit {
                     block_pos: BlockPos { x, y, z },
@@ -195,19 +200,42 @@ pub fn cast_ray(ray: &Ray, loaded: &LoadedChunks) -> Option<VoxelHit> {
 
 /// 根据世界坐标查询方块 ID（O(1) HashMap 查找）。
 ///
-/// 通过世界坐标计算 `ChunkCoord`，然后在 `LoadedChunks` 中查找对应区块，
-/// 最后在区块数据中查询局部坐标的方块 ID。
-fn get_block_at_hashmap(x: i32, y: i32, z: i32, loaded: &LoadedChunks) -> Option<u8> {
-    let world_pos = Vec3::new(x as f32 + 0.5, y as f32 + 0.5, z as f32 + 0.5);
-    let coord = ChunkCoord::from_world(world_pos);
-
-    // O(1) HashMap 查找
-    let entry = loaded.entries.get(&coord)?;
-
-    // 计算局部坐标
+/// 缓存 `ChunkCoord` 避免每步重新创建 Vec3 和 HashMap 查找：
+/// 传入 `cached_coord` 和 `cached_lpos`，如果坐标仍在同一区块内则复用上次的 ChunkCoord。
+fn get_block_at_hashmap(
+    x: i32,
+    y: i32,
+    z: i32,
+    loaded: &LoadedChunks,
+    cached_coord: &mut Option<ChunkCoord>,
+    cached_lpos: &mut (usize, usize, usize),
+) -> Option<u8> {
+    // 计算局部坐标（始终需要，轻量 rem_euclid 操作）
     let lx = x.rem_euclid(CHUNK_SIZE as i32) as usize;
     let ly = y.rem_euclid(CHUNK_SIZE as i32) as usize;
     let lz = z.rem_euclid(CHUNK_SIZE as i32) as usize;
+    *cached_lpos = (lx, ly, lz);
+
+    // 仅当跨区块边界时才重新计算 ChunkCoord（约每 32 步一次）
+    let need_new_coord = match cached_coord {
+        Some(cc) => {
+            let cx = x.div_euclid(CHUNK_SIZE as i32);
+            let cy = y.div_euclid(CHUNK_SIZE as i32);
+            let cz = z.div_euclid(CHUNK_SIZE as i32);
+            cc.cx != cx || cc.cy != cy || cc.cz != cz
+        }
+        None => true,
+    };
+
+    if need_new_coord {
+        let world_pos = Vec3::new(x as f32 + 0.5, y as f32 + 0.5, z as f32 + 0.5);
+        *cached_coord = Some(ChunkCoord::from_world(world_pos));
+    }
+
+    let coord = cached_coord.as_ref().unwrap();
+
+    // O(1) HashMap 查找
+    let entry = loaded.entries.get(coord)?;
 
     Some(entry.data.get(lx, ly, lz))
 }

@@ -69,8 +69,8 @@ const NEIGHBOR_OFFSETS: [(i32, i32, i32); 6] = [
 
 /// 从已加载区块中收集指定坐标的 6 个邻居数据。
 ///
-/// 使用 `to_shared_vec()` 返回 `Arc<Vec<BlockId>>`，避免每个邻居
-/// 独立分配 32KB 堆内存。
+/// 使用 `Arc::clone(&entry.data)` 复制 `Arc<ChunkData>` 引用（O(1)），
+/// 避免展开为 32KB 的 `Vec<BlockId>` 和堆内存分配。
 fn collect_neighbors(coord: ChunkCoord, loaded: &LoadedChunks) -> ChunkNeighbors {
     let mut neighbors = ChunkNeighbors::empty();
 
@@ -82,7 +82,7 @@ fn collect_neighbors(coord: ChunkCoord, loaded: &LoadedChunks) -> ChunkNeighbors
         };
 
         if let Some(entry) = loaded.entries.get(&neighbor_coord) {
-            neighbors.neighbor_data[i] = Some(entry.data.to_shared_vec());
+            neighbors.neighbor_data[i] = Some(Arc::clone(&entry.data));
         }
     }
 

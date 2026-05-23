@@ -460,8 +460,7 @@ fn sample_dominant_block_from_neighbors(
                     let y = base_y + dy;
                     let z = base_z + dz;
                     if x < CHUNK_SIZE && y < CHUNK_SIZE && z < CHUNK_SIZE {
-                        let idx = z * CHUNK_SIZE * CHUNK_SIZE + y * CHUNK_SIZE + x;
-                        let id = data[idx];
+                        let id = data.get(x, y, z);
                         if id != 0 {
                             return Some(id);
                         }

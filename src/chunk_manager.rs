@@ -82,7 +82,7 @@ pub struct ChunkEntry {
     pub solid_material_handle: Handle<VoxelMaterial>,
     /// 水方块的 Mesh Handle（仅当区块包含水时存在）
     pub water_mesh_handle: Option<Handle<Mesh>>,
-    /// 水 Mesh 的实体（用于独立管理）
+    /// 水 Mesh 的子实体（作为主区块实体的子节点，随父实体生命周期管理）
     pub water_entity: Option<Entity>,
     pub water_triangle_count: u32,
     pub lod_level: LodLevel,
@@ -183,7 +183,7 @@ fn collect_neighbors(coord: ChunkCoord, loaded: &LoadedChunks) -> ChunkNeighbors
         };
 
         if let Some(entry) = loaded.entries.get(&neighbor_coord) {
-            neighbors.neighbor_data[i] = Some(entry.data.to_shared_vec());
+            neighbors.neighbor_data[i] = Some(Arc::clone(&entry.data));
         }
     }
 
@@ -385,7 +385,7 @@ pub fn chunk_loader_system(
                 }
             }
 
-            // 2. 处理水 Mesh
+            // 2. 处理水 Mesh（作为主实体的子节点）
             if let Some(water_data) = result.water {
                 let water_triangle_count = water_data.triangle_count;
                 let water_mesh_handle = meshes.add(
@@ -400,22 +400,23 @@ pub fn chunk_loader_system(
                 );
 
                 if let Some(water_entity) = water_entity {
-                    // 更新已有水实体
+                    // 更新已有水子实体
                     commands.entity(water_entity).insert((
                         Mesh3d(water_mesh_handle.clone()),
                         MeshMaterial3d(transparent_material.handle.clone()),
-                        Transform::from_translation(result.coord.to_world_origin()),
+                        Transform::IDENTITY,
                     ));
                 } else {
-                    // 创建新的水实体
+                    // 创建新的水子实体（挂载到父区块实体下）
                     let water_entity = commands
                         .spawn((
                             Mesh3d(water_mesh_handle.clone()),
                             MeshMaterial3d(transparent_material.handle.clone()),
-                            Transform::from_translation(result.coord.to_world_origin()),
+                            Transform::IDENTITY,
                             Visibility::default(),
                         ))
                         .id();
+                    commands.entity(entity).add_child(water_entity);
 
                     if let Some(entry) = loaded.entries.get_mut(&result.coord) {
                         entry.water_entity = Some(water_entity);
@@ -427,7 +428,7 @@ pub fn chunk_loader_system(
                     entry.water_triangle_count = water_triangle_count;
                 }
             } else {
-                // 区块不再包含水，移除水实体
+                // 区块不再包含水，移除水子实体
                 if let Some(water_entity) = water_entity {
                     if let Some(entry) = loaded.entries.get(&result.coord) {
                         if let Some(water_handle) = entry.water_mesh_handle.clone() {
@@ -459,6 +460,7 @@ pub fn chunk_loader_system(
     let deletions_this_frame = loaded.pending_deletions.drain(..delete_count);
     for deletion in deletions_this_frame {
         meshes.remove(&deletion.mesh_handle);
+        // despawn 自动清理所有子节点（水实体作为子实体挂载在父实体下）
         commands.entity(deletion.entity).despawn();
     }
 
@@ -753,13 +755,6 @@ fn unload_distant_chunks(
                 entity: entry.entity,
                 mesh_handle: entry.solid_mesh_handle,
             });
-            // 如果存在水实体，也加入待删除队列
-            if let Some(water_entity) = entry.water_entity {
-                loaded.pending_deletions.push(PendingDeletion {
-                    entity: water_entity,
-                    mesh_handle: entry.water_mesh_handle.unwrap_or_default(),
-                });
-            }
         }
     }
 }
@@ -812,13 +807,6 @@ fn lru_evict(
                 entity: entry.entity,
                 mesh_handle: entry.solid_mesh_handle,
             });
-            // 如果存在水实体，也加入待删除队列
-            if let Some(water_entity) = entry.water_entity {
-                loaded.pending_deletions.push(PendingDeletion {
-                    entity: water_entity,
-                    mesh_handle: entry.water_mesh_handle.unwrap_or_default(),
-                });
-            }
         }
     }
 }
