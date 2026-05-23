@@ -23,6 +23,72 @@ const VISIBILITY_UPDATE_INTERVAL: u32 = 2;
 /// 渲染距离（chunk 数量），与 chunk_manager::RENDER_DISTANCE 保持一致
 const RENDER_DIST_CHUNKS: i32 = 16;
 
+// ── 视锥体平面 ─────────────────────────────────────────────────────────
+
+/// 视锥体平面 (nx, ny, nz, d)
+#[derive(Debug, Clone, Copy)]
+struct FrustumPlane {
+    x: f32, y: f32, z: f32, w: f32,
+}
+
+/// 从 Camera 的世界变换 + 投影矩阵提取 6 个世界空间视锥体平面
+fn extract_world_frustum_planes(
+    transform: &GlobalTransform,
+    camera: &Camera,
+) -> [FrustumPlane; 6] {
+    // view_from_world = transform.affine().inverse()
+    let affine = transform.affine();
+    let view_matrix = Mat4::from(affine).inverse();
+    // clip_from_view = projection matrix
+    let proj_matrix = camera.clip_from_view();
+    // clip_from_world = clip_from_view * view_from_world
+    let vp = proj_matrix * view_matrix;
+
+    // 标准 Gribb-Hartmann 平面提取
+    let rows = [
+        vp.row(3) + vp.row(0),  // left
+        vp.row(3) - vp.row(0),  // right
+        vp.row(3) + vp.row(1),  // bottom
+        vp.row(3) - vp.row(1),  // top
+        vp.row(3) + vp.row(2),  // near
+        vp.row(3) - vp.row(2),  // far
+    ];
+
+    let mut planes = [FrustumPlane { x: 0.0, y: 0.0, z: 0.0, w: 0.0 }; 6];
+    for (i, row) in rows.iter().enumerate() {
+        let len = (row.x * row.x + row.y * row.y + row.z * row.z).sqrt();
+        if len > 0.0 {
+            let inv_len = 1.0 / len;
+            planes[i] = FrustumPlane {
+                x: row.x * inv_len,
+                y: row.y * inv_len,
+                z: row.z * inv_len,
+                w: row.w * inv_len,
+            };
+        }
+    }
+    planes
+}
+
+/// AABB vs 平面测试（与 WGSL shader 一致）
+fn test_plane_aabb(plane: &FrustumPlane, center: Vec3, half_size: f32) -> bool {
+    let radius = half_size * plane.x.abs()
+               + half_size * plane.y.abs()
+               + half_size * plane.z.abs();
+    let dist = center.x * plane.x + center.y * plane.y + center.z * plane.z + plane.w;
+    dist >= -radius
+}
+
+/// AABB vs 6 个视锥体平面测试
+fn is_aabb_visible(planes: &[FrustumPlane; 6], center: Vec3, half_size: f32) -> bool {
+    for plane in planes {
+        if !test_plane_aabb(plane, center, half_size) {
+            return false;
+        }
+    }
+    true
+}
+
 // ── 可见性状态 ────────────────────────────────────────────────────────
 
 /// SVO 可见性控制器状态
@@ -88,11 +154,12 @@ struct VisibleRegion {
 
 /// 计算可见的 top-level 节点区域
 ///
-/// 使用与 GPU shader 相同的距离剔除逻辑。
+/// 使用与 GPU shader 相同的距离剔除 + 视锥体剔除逻辑。
 /// 返回可见区域列表，每个区域是 16×16×16 section 的立方体。
 fn compute_visible_regions(
     node_data: &[crate::svo::node_store::GpuNode],
     cam_pos: Vec3,
+    frustum_planes: &[FrustumPlane; 6],
 ) -> Vec<VisibleRegion> {
     let render_dist = RENDER_DIST_CHUNKS as f32 * SECTION_SIZE as f32;
 
@@ -114,16 +181,23 @@ fn compute_visible_regions(
         // 计算节点在世界空间中的中心位置和半边长（与 WGSL 一致）
         let scale = (1u32 << lvl) as f32;
         let half_size = SECTION_SIZE as f32 * scale * 0.5;
-        let center_x = nx as f32 * SECTION_SIZE as f32 * scale + half_size;
-        let center_y = ny as f32 * SECTION_SIZE as f32 * scale + half_size;
-        let center_z = nz as f32 * SECTION_SIZE as f32 * scale + half_size;
+        let center = Vec3::new(
+            nx as f32 * SECTION_SIZE as f32 * scale + half_size,
+            ny as f32 * SECTION_SIZE as f32 * scale + half_size,
+            nz as f32 * SECTION_SIZE as f32 * scale + half_size,
+        );
 
         // ── 距离剔除 ──
-        let dx = center_x - cam_pos.x;
-        let dz = center_z - cam_pos.z;
+        let dx = center.x - cam_pos.x;
+        let dz = center.z - cam_pos.z;
         let dist_sq = dx * dx + dz * dz;
         let radius_sq = render_dist * render_dist;
         if dist_sq > radius_sq + half_size * half_size * 2.0 {
+            continue;
+        }
+
+        // ── 视锥体剔除（仅对 LOD 0-1 精确测试，LOD≥2 跳过以节省开销）──
+        if lvl <= 1 && !is_aabb_visible(frustum_planes, center, half_size) {
             continue;
         }
 
@@ -176,7 +250,7 @@ pub fn apply_svo_visibility(
     mut state: ResMut<SvoVisibilityState>,
     node_manager: Res<NodeManager>,
     loaded_chunks: Res<LoadedChunks>,
-    camera_query: Query<&Transform, With<Camera>>,
+    camera_query: Query<(&Transform, &GlobalTransform, &Camera)>,
     mut visibility_query: Query<&mut Visibility>,
 ) {
     // ── 更新频率控制 ──
@@ -186,13 +260,15 @@ pub fn apply_svo_visibility(
     }
     state.frame_counter = 0;
 
-    // ── 获取相机位置 ──
-    let cam_transform = match camera_query.iter().next() {
+    // ── 获取相机位置 + 视锥体 ──
+    let (cam_transform, cam_global, camera) = match camera_query.iter().next() {
         Some(t) => t,
         None => return,
     };
     let cam_pos = cam_transform.translation;
-    let _cam_world_y = cam_pos.y;
+
+    // 提取世界空间视锥体平面
+    let frustum_planes = extract_world_frustum_planes(cam_global, camera);
 
     // ── 获取 top-level 节点数据 ──
     let node_data = node_manager.gpu_node_data();
@@ -217,7 +293,7 @@ pub fn apply_svo_visibility(
     }
 
     // ── 计算可见区域 ──
-    let regions = compute_visible_regions(&node_data, cam_pos);
+    let regions = compute_visible_regions(&node_data, cam_pos, &frustum_planes);
     state.visible_node_count = regions.len() as u32;
 
     // ── 没有可见区域 → 不修改可见性（fallback 显示） ──
