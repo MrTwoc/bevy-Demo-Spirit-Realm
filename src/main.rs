@@ -16,6 +16,7 @@ mod lod;
 mod perf_logger;
 mod raycast;
 mod resource_pack;
+mod svo;
 mod tree_gen;
 mod voxel_render;
 
@@ -54,6 +55,7 @@ fn main() {
             perf_logger::PerfLoggerPlugin,
             resource_pack::ResourcePackPlugin,
             MaterialPlugin::<VoxelMaterial>::default(),
+            svo::SvoPlugin,
             voxel_render::VoxelRenderPlugin,
             voxel_render::RenderBridgePlugin,
         ))
