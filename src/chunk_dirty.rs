@@ -117,16 +117,20 @@ pub fn rebuild_dirty_chunks(
         With<DirtyChunk>,
     >,
     shared_material: Res<crate::chunk_manager::SharedVoxelMaterial>,
+    shared_empty_mesh: Res<crate::chunk_manager::SharedEmptyMesh>,
     lod_manager: Res<LodManager>,
 ) {
     for (entity, chunk_component, coord_comp, mesh_handle) in &dirty_chunks {
         let coord = coord_comp.0;
 
-        // 全空气区块：清理旧 Mesh 资源，替换为空 Mesh
+        // 全空气区块：清理旧 Mesh 资源，替换为共享空 Mesh
         // ChunkComponent 实现了 Deref<Target=ChunkData>，自动解引用
         if is_air_chunk(chunk_component) {
             // 移除旧的 mesh 资源（材质使用全局共享实例，不单独移除）
-            meshes.remove(&mesh_handle.mesh);
+            // 只清理独立 Handle，不清理共享空 Mesh
+            if mesh_handle.mesh != shared_empty_mesh.handle {
+                meshes.remove(&mesh_handle.mesh);
+            }
 
             // ⭐ 原三角形数归零
             if let Some(entry) = loaded.entries.get_mut(&coord) {
@@ -134,12 +138,8 @@ pub fn rebuild_dirty_chunks(
                 entry.triangle_count = 0;
             }
 
-            // 创建空 Mesh（无顶点数据，不渲染任何内容）
-            let empty_mesh = meshes.add(Mesh::new(
-                bevy::render::render_resource::PrimitiveTopology::TriangleList,
-                bevy::asset::RenderAssetUsages::MAIN_WORLD
-                    | bevy::asset::RenderAssetUsages::RENDER_WORLD,
-            ));
+            // 使用全局共享空 Mesh（所有零几何体区块共用，避免每个区块创建独立 GPU Buffer）
+            let empty_mesh = shared_empty_mesh.handle.clone();
             // 使用全局共享材质实例
             let empty_mat = shared_material.handle.clone();
 
