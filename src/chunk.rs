@@ -687,6 +687,11 @@ pub fn fill_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
             let biome_id = select_biome(temperature, humidity, surface_height as f64);
             let biome = get_biome(biome_id);
 
+            // 在 y 循环之前提取群系参数，避免每层迭代重复查找
+            let surface_block = biome.surface_block;
+            let under_surface_block = biome.under_surface_block;
+            let soil_thickness = biome.soil_thickness;
+
             for y in 0..CHUNK_SIZE {
                 let world_y = coord.cy as i32 * CHUNK_SIZE as i32 + y as i32;
 
@@ -709,10 +714,10 @@ pub fn fill_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
                 // 使用群系参数决定方块
                 let block_id = if world_y == surface_height {
                     // 地表层：使用群系的地表方块
-                    biome.surface_block
-                } else if world_y > surface_height - biome.soil_thickness {
+                    surface_block
+                } else if world_y > surface_height - soil_thickness {
                     // 表土层：使用群系的次表层方块
-                    biome.under_surface_block
+                    under_surface_block
                 } else {
                     // 深层：石头
                     2 // stone

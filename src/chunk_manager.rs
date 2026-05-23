@@ -99,9 +99,11 @@ struct PendingDeletion {
 #[derive(Resource)]
 pub struct LoadedChunks {
     pub entries: HashMap<ChunkCoord, ChunkEntry>,
+    pub entries_ordered: Vec<ChunkCoord>,
     pub load_queue: Vec<ChunkCoord>,
     pub last_player_chunk: Option<ChunkCoord>,
     pub frame_counter: u64,
+    pub needs_unload_check: bool,
     pending_deletions: Vec<PendingDeletion>,
     load_queue_build_state: Option<LoadQueueBuildState>,
 }
@@ -110,9 +112,11 @@ impl Default for LoadedChunks {
     fn default() -> Self {
         Self {
             entries: HashMap::new(),
+            entries_ordered: Vec::new(),
             load_queue: Vec::new(),
             last_player_chunk: None,
             frame_counter: 0,
+            needs_unload_check: false,
             pending_deletions: Vec::new(),
             load_queue_build_state: None,
         }
@@ -526,6 +530,7 @@ pub fn chunk_loader_system(
     if needs_rebuild {
         if loaded.load_queue_build_state.is_none() {
             loaded.last_player_chunk = Some(player_chunk);
+            loaded.needs_unload_check = true;
         }
 
         if let Some(built_queue) =
@@ -635,6 +640,8 @@ pub fn chunk_loader_system(
                 triangle_count: 0,
             },
         );
+
+        loaded.entries_ordered.push(coord);
 
         lod_manager.set_lod(coord, lod_level);
 
@@ -787,6 +794,12 @@ fn unload_distant_chunks(
     lod_manager: &mut LodManager,
     cached: &mut CachedTriangleCount,
 ) {
+    // 仅在玩家移动后才执行全量扫描，静止时跳过
+    if !loaded.needs_unload_check {
+        return;
+    }
+    loaded.needs_unload_check = false;
+
     let to_remove: Vec<ChunkCoord> = loaded
         .entries
         .keys()
@@ -811,6 +824,10 @@ fn unload_distant_chunks(
                 mesh_handle: entry.solid_mesh_handle,
                 water_mesh_handle: entry.water_mesh_handle,
             });
+        }
+        // 同步从 entries_ordered 中删除
+        if let Some(pos) = loaded.entries_ordered.iter().position(|c| *c == coord) {
+            loaded.entries_ordered.swap_remove(pos);
         }
     }
 }
@@ -864,6 +881,10 @@ fn lru_evict(
                 mesh_handle: entry.solid_mesh_handle,
                 water_mesh_handle: entry.water_mesh_handle,
             });
+        }
+        // 同步从 entries_ordered 中删除
+        if let Some(pos) = loaded.entries_ordered.iter().position(|c| *c == coord) {
+            loaded.entries_ordered.swap_remove(pos);
         }
     }
 }

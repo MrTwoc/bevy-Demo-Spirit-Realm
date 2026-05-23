@@ -165,7 +165,7 @@ impl LodManager {
         loaded: &super::chunk_manager::LoadedChunks,
     ) -> Vec<(ChunkCoord, LodLevel)> {
         let mut to_rebuild = Vec::new();
-        let total_chunks = loaded.entries.len();
+        let total_chunks = loaded.entries_ordered.len();
 
         if total_chunks == 0 {
             self.last_checked = 0;
@@ -176,10 +176,9 @@ impl LodManager {
         let mut current_idx = self.last_checked;
 
         while checked < self.chunks_per_frame && checked < total_chunks {
-            let Some(coord) = loaded.entries.keys().nth(current_idx) else {
+            let Some(coord) = loaded.entries_ordered.get(current_idx).copied() else {
                 break;
             };
-            let coord = *coord;
 
             let dist = self.chunk_distance(coord, player_chunk);
             let new_lod = LodLevel::from_chunk_distance(dist);

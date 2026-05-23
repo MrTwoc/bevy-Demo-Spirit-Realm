@@ -4,7 +4,7 @@
 //! 所有区块的Mesh数据存储在共享的Storage Buffer中，
 //! 通过偏移量访问各个区块的数据。
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use bevy::prelude::*;
 use bevy::render::render_resource::*;
@@ -69,8 +69,8 @@ pub struct BufferAllocator {
     pub next_vertex_offset: u32,
     /// 下一个可用的索引偏移
     pub next_index_offset: u32,
-    /// 空闲区域列表（用于碎片整理）
-    pub free_regions: Vec<ChunkBufferRegion>,
+    /// 空闲区域列表（用于碎片整理），按 (vertex_count, index_count) 键控的 BTreeMap
+    pub free_regions: BTreeMap<(u32, u32), Vec<ChunkBufferRegion>>,
 }
 
 impl Default for BufferAllocator {
@@ -78,7 +78,7 @@ impl Default for BufferAllocator {
         Self {
             next_vertex_offset: 0,
             next_index_offset: 0,
-            free_regions: Vec::new(),
+            free_regions: BTreeMap::new(),
         }
     }
 }
@@ -86,29 +86,53 @@ impl Default for BufferAllocator {
 impl BufferAllocator {
     /// 分配一块Buffer区域
     pub fn allocate(&mut self, vertex_count: u32, index_count: u32) -> ChunkBufferRegion {
-        // 优先复用空闲区域
-        for (i, region) in self.free_regions.iter().enumerate() {
-            if region.vertex_count >= vertex_count && region.index_count >= index_count {
+        // 在 BTreeMap 中寻找第一个能满足需求的空闲区域（最佳适配）
+        // range((vertex_count, index_count)..) 返回键 >= (vertex_count, index_count) 的条目
+        let best_key: Option<(u32, u32)> = {
+            let mut result = None;
+            for (&key, regions) in self.free_regions.range((vertex_count, index_count)..) {
+                if !regions.is_empty() {
+                    result = Some(key);
+                    break;
+                }
+            }
+            result
+        };
+
+        if let Some(key) = best_key {
+            // 取出该键对应的 Vec 的所有区域（替换为空 Vec）
+            let mut regions = self.free_regions.remove(&key).unwrap_or_default();
+            if let Some(region) = regions.pop() {
                 let allocated = ChunkBufferRegion {
                     vertex_offset: region.vertex_offset,
                     vertex_count,
                     index_offset: region.index_offset,
                     index_count,
                 };
-                // 如果有剩余空间，保留剩余部分
+                // 如果有剩余空间，将剩余部分作为新的空闲区域插入
                 let remaining_vertex = region.vertex_count - vertex_count;
                 let remaining_index = region.index_count - index_count;
                 if remaining_vertex > 0 || remaining_index > 0 {
-                    self.free_regions[i] = ChunkBufferRegion {
+                    let remaining = ChunkBufferRegion {
                         vertex_offset: region.vertex_offset + vertex_count,
                         vertex_count: remaining_vertex,
                         index_offset: region.index_offset + index_count,
                         index_count: remaining_index,
                     };
-                } else {
-                    self.free_regions.swap_remove(i);
+                    let rem_key = (remaining_vertex, remaining_index);
+                    self.free_regions
+                        .entry(rem_key)
+                        .or_insert_with(Vec::new)
+                        .push(remaining);
+                }
+                // 如果该 key 下还有剩余 regions，重新插入
+                if !regions.is_empty() {
+                    self.free_regions.insert(key, regions);
                 }
                 return allocated;
+            } else {
+                // 理论不会走到这里，因为 best_key 确保 regions 非空
+                // 但 fallthrough 到线性分配也不会有问题
             }
         }
 
@@ -126,7 +150,11 @@ impl BufferAllocator {
 
     /// 释放一块Buffer区域
     pub fn free(&mut self, region: ChunkBufferRegion) {
-        self.free_regions.push(region);
+        let key = (region.vertex_count, region.index_count);
+        self.free_regions
+            .entry(key)
+            .or_insert_with(Vec::new)
+            .push(region);
     }
 }
 
