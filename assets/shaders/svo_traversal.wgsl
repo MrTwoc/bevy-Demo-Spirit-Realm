@@ -144,17 +144,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         }
     }
 
-    // ── 视锥体剔除 (仅对非根节点加速) ─────────────────────────────────
-    // LOD>=2 的节点大概率可见，跳过视锥测试以节省开销
-    // 只有 LOD 0-1 做精确的视锥体测试
-    if (lvl <= 1u || !is_visible(center, half_size)) {
-        // 对于 LOD>1 的节点: 实际是 ALWAYS 保留
-        // 只有小节点(LOD<=1)才做视锥测试
-        if (lvl <= 1u) {
-            if (!is_visible(center, half_size)) {
-                return;
-            }
-        }
+    // ── 视锥体剔除 ─────────────────────────────────────────────────
+    // 只有 LOD 0-1 做精确的视锥体测试；LOD>=2 大概率可见，跳过以节省开销
+    if (lvl <= 1u && !is_visible(center, half_size)) {
+        return;
     }
 
     // ── 写入可见节点列表 ──────────────────────────────────────────────

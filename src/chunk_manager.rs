@@ -272,9 +272,7 @@ pub fn setup_world(
         bevy::render::render_resource::PrimitiveTopology::TriangleList,
         RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
     ));
-    commands.insert_resource(SharedEmptyMesh {
-        handle: empty_mesh,
-    });
+    commands.insert_resource(SharedEmptyMesh { handle: empty_mesh });
 
     let worker_count = crate::async_mesh::default_worker_count();
     let uv_table = crate::async_mesh::UvLookupTable::from_resource_pack(&resource_pack);
@@ -292,7 +290,7 @@ pub fn setup_world(
             Camera3d::default(),
             camera_transform,
             CameraController::default(),
-            NoCpuCulling,
+            // NoCpuCulling,
         ))
         .id();
 

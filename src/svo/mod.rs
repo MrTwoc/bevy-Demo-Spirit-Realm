@@ -19,6 +19,7 @@ mod section_tracker;
 mod render_distance;
 mod terrain_bridge;
 mod gpu_traversal;
+mod visibility_bridge;
 
 pub use node_manager::*;
 pub use section::*;
@@ -41,6 +42,10 @@ impl Plugin for SvoPlugin {
         tracker.on_create_section = Some(terrain_bridge::make_section_filler());
 
         app.add_systems(Update, render_distance::process_render_distance);
+
+        // SVO 可见性系统（每 N 帧运行一次）
+        app.init_resource::<visibility_bridge::SvoVisibilityState>();
+        app.add_systems(Update, visibility_bridge::apply_svo_visibility);
 
         // 注册 GPU 遍历插件
         app.add_plugins(gpu_traversal::SvoGpuTraversalPlugin);
