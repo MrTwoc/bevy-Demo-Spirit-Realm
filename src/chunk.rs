@@ -3,7 +3,7 @@
 //! 使用调色板压缩（PalettedChunkData）优化内存占用：
 //! - Empty: 0 字节（全空气）
 //! - Uniform: 2 字节（全同一种方块）
-//! - Paletted: ~4KB（调色板压缩，32³=32768体素）
+//! - Paletted: ~0.5-32KB（调色板压缩 + 位打包，32³=32768体素）
 
 use bevy::{
     asset::RenderAssetUsages, mesh::Indices, prelude::*, render::render_resource::PrimitiveTopology,
@@ -56,32 +56,98 @@ pub fn should_cull_face(current_id: BlockId, neighbor_id: BlockId) -> bool {
     false
 }
 
-/// 调色板压缩的区块数据。
+// ── P0 位打包辅助函数 ────────────────────────────────────────────
+
+/// 计算调色板大小所需的最低位宽（1/2/4/8 bit）。
+#[inline]
+const fn bits_for_palette(len: usize) -> u8 {
+    if len <= 2 {
+        1
+    } else if len <= 4 {
+        2
+    } else if len <= 16 {
+        4
+    } else {
+        8
+    }
+}
+
+/// 一个 u64 能存多少个指定位宽的索引。
+#[inline]
+const fn indices_per_u64(bits: u8) -> usize {
+    64 / (bits as usize)
+}
+
+/// 存储 CHUNK_VOLUME 个指定位宽索引需要的 u64 数量。
+#[inline]
+const fn total_packed_u64s(bits: u8) -> usize {
+    let per = indices_per_u64(bits);
+    (CHUNK_VOLUME + per - 1) / per
+}
+
+/// 从 packed 存储中读取第 `idx` 个调色板索引。
+#[inline]
+fn read_packed(packed: &[u64], idx: usize, bits: u8) -> u8 {
+    let b = bits as usize;
+    let per = 64 / b;
+    let word = idx / per;
+    let off = (idx % per) * b;
+    ((packed[word] >> off) & ((1u64 << b) - 1)) as u8
+}
+
+/// 将 `value` 写入 packed 存储的第 `idx` 个位置。
+#[inline]
+fn write_packed(packed: &mut [u64], idx: usize, bits: u8, value: u8) {
+    let b = bits as usize;
+    let per = 64 / b;
+    let word = idx / per;
+    let off = (idx % per) * b;
+    let mask = (1u64 << b) - 1;
+    let val = (value as u64) & mask;
+    packed[word] = (packed[word] & !(mask << off)) | (val << off);
+}
+
+/// 将所有索引从 `old_bits` 重新打包为 `new_bits`（位宽扩容时用）。
+fn re_pack(packed: &[u64], old_bits: u8, new_bits: u8) -> Vec<u64> {
+    let mut new_packed = vec![0u64; total_packed_u64s(new_bits)];
+    for i in 0..CHUNK_VOLUME {
+        write_packed(&mut new_packed, i, new_bits, read_packed(packed, i, old_bits));
+    }
+    new_packed
+}
+
+// ── 调色板压缩区块数据 ──────────────────────────────────────────
+
+/// 调色板压缩 + P0 位打包的区块数据。
 #[derive(Clone)]
 pub struct PalettedChunkData {
     palette: Vec<BlockId>,
     reverse_palette: HashMap<BlockId, u8>,
-    indices: Vec<u8>,
+    /// 当前每个索引占用的比特数（1/2/4/8）。
+    bits_per_index: u8,
+    /// 位打包后的索引存储，每个 u64 存放多个索引。
+    packed: Vec<u64>,
 }
 
 impl PalettedChunkData {
     pub fn new() -> Self {
-        let mut palette = Vec::new();
-        palette.push(0);
+        let palette = vec![0];
         let mut reverse_palette = HashMap::new();
         reverse_palette.insert(0, 0);
+
+        let bits_per_index = bits_for_palette(palette.len());
 
         Self {
             palette,
             reverse_palette,
-            indices: vec![0; CHUNK_VOLUME],
+            bits_per_index,
+            packed: vec![0u64; total_packed_u64s(bits_per_index)],
         }
     }
 
     pub fn from_blocks(blocks: &[BlockId]) -> Self {
         let mut palette = Vec::new();
         let mut reverse_palette = HashMap::new();
-        let mut indices = Vec::with_capacity(blocks.len());
 
         for &block_id in blocks {
             if !reverse_palette.contains_key(&block_id) {
@@ -91,15 +157,19 @@ impl PalettedChunkData {
             }
         }
 
-        for &block_id in blocks {
+        let bits_per_index = bits_for_palette(palette.len());
+        let mut packed = vec![0u64; total_packed_u64s(bits_per_index)];
+
+        for (i, &block_id) in blocks.iter().enumerate() {
             let index = reverse_palette[&block_id];
-            indices.push(index);
+            write_packed(&mut packed, i, bits_per_index, index);
         }
 
         Self {
             palette,
             reverse_palette,
-            indices,
+            bits_per_index,
+            packed,
         }
     }
 
@@ -108,19 +178,24 @@ impl PalettedChunkData {
             return 0;
         }
         let idx = z * CHUNK_SIZE * CHUNK_SIZE + y * CHUNK_SIZE + x;
-        let palette_index = self.indices[idx] as usize;
+        let palette_index = read_packed(&self.packed, idx, self.bits_per_index) as usize;
         self.palette[palette_index]
     }
 
     pub fn add_or_get_palette_index(&mut self, id: BlockId) -> u8 {
         if let Some(&index) = self.reverse_palette.get(&id) {
-            index
-        } else {
-            let index = self.palette.len() as u8;
-            self.palette.push(id);
-            self.reverse_palette.insert(id, index);
-            index
+            return index;
         }
+        let new_size = self.palette.len() + 1;
+        let new_bits = bits_for_palette(new_size);
+        if new_bits > self.bits_per_index {
+            self.packed = re_pack(&self.packed, self.bits_per_index, new_bits);
+            self.bits_per_index = new_bits;
+        }
+        let index = self.palette.len() as u8;
+        self.palette.push(id);
+        self.reverse_palette.insert(id, index);
+        index
     }
 
     pub fn set(&mut self, x: usize, y: usize, z: usize, id: BlockId) {
@@ -129,14 +204,28 @@ impl PalettedChunkData {
         }
         let idx = z * CHUNK_SIZE * CHUNK_SIZE + y * CHUNK_SIZE + x;
         let palette_index = self.add_or_get_palette_index(id);
-        self.indices[idx] = palette_index;
+        write_packed(&mut self.packed, idx, self.bits_per_index, palette_index);
+    }
+
+    /// 用指定的调色板索引填充所有位置（从 Uniform 升级时使用）。
+    pub fn fill_all(&mut self, palette_index: u8) {
+        let bits = self.bits_per_index as usize;
+        let per = 64 / bits;
+        let mut pattern = 0u64;
+        for s in 0..per {
+            let shifted = (palette_index as u64) << (s * bits);
+            pattern |= shifted;
+        }
+        self.packed.fill(pattern);
     }
 
     pub fn to_blocks(&self) -> Vec<BlockId> {
-        self.indices
-            .iter()
-            .map(|&idx| self.palette[idx as usize])
-            .collect()
+        let mut blocks = Vec::with_capacity(CHUNK_VOLUME);
+        for i in 0..CHUNK_VOLUME {
+            let idx = read_packed(&self.packed, i, self.bits_per_index) as usize;
+            blocks.push(self.palette[idx]);
+        }
+        blocks
     }
 
     pub fn palette_len(&self) -> usize {
@@ -148,7 +237,12 @@ impl PalettedChunkData {
             return true;
         }
         if let Some(&air_index) = self.reverse_palette.get(&0) {
-            self.indices.iter().all(|&idx| idx == air_index)
+            for i in 0..CHUNK_VOLUME {
+                if read_packed(&self.packed, i, self.bits_per_index) != air_index {
+                    return false;
+                }
+            }
+            true
         } else {
             false
         }
@@ -279,7 +373,7 @@ impl ChunkData {
                     let mut data = PalettedChunkData::new();
                     if *current_id != 0 {
                         let palette_index = data.add_or_get_palette_index(*current_id);
-                        data.indices.fill(palette_index);
+                        data.fill_all(palette_index);
                     }
                     data.set(x, y, z, id);
                     *self = ChunkData::Paletted(data);
@@ -344,7 +438,7 @@ impl ChunkData {
         match self {
             ChunkData::Empty => 0,
             ChunkData::Uniform(_) => 2,
-            ChunkData::Paletted(data) => data.palette_len() * 2 + CHUNK_VOLUME,
+            ChunkData::Paletted(data) => data.palette_len() * 2 + data.packed.len() * 8,
         }
     }
 
