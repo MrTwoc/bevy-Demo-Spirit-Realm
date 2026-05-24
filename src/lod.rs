@@ -117,7 +117,7 @@ impl LodManager {
             chunk_lods: HashMap::new(),
             hysteresis: 0.5,
             last_checked: 0,
-            chunks_per_frame: 50,
+            chunks_per_frame: 200,
         }
     }
 
@@ -172,10 +172,23 @@ impl LodManager {
             return to_rebuild;
         }
 
+        // 保护：如果 last_checked 越界（entries_ordered 收缩所致），从头开始
+        if self.last_checked >= total_chunks {
+            self.last_checked = 0;
+        }
+
         let mut checked = 0;
         let mut current_idx = self.last_checked;
 
         while checked < self.chunks_per_frame && checked < total_chunks {
+            // 实时检查索引边界 — entries_ordered 可能在帧间变化
+            if current_idx >= loaded.entries_ordered.len() {
+                current_idx = 0;
+                if loaded.entries_ordered.is_empty() {
+                    break;
+                }
+            }
+
             let Some(coord) = loaded.entries_ordered.get(current_idx).copied() else {
                 break;
             };
@@ -199,7 +212,7 @@ impl LodManager {
             current_idx += 1;
             checked += 1;
 
-            if current_idx >= total_chunks {
+            if current_idx >= loaded.entries_ordered.len() {
                 current_idx = 0;
             }
         }
