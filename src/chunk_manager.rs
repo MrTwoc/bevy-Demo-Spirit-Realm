@@ -878,11 +878,21 @@ fn lru_evict(
         })
         .collect();
 
-    candidates.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| b.2.cmp(&a.2)));
-
     let evict_count = (loaded.entries.len() - MAX_CACHED_CHUNKS)
         .min(LRU_UNLOADS_PER_FRAME)
         .min(candidates.len());
+
+    if evict_count == 0 {
+        return;
+    }
+
+    // 改用 select_nth_unstable_by 选出前 evict_count 个项（O(N)），再局部排序
+    candidates.select_nth_unstable_by(evict_count - 1, |a, b| {
+        a.1.cmp(&b.1).then_with(|| b.2.cmp(&a.2))
+    });
+    candidates[..evict_count].sort_by(|a, b| {
+        a.1.cmp(&b.1).then_with(|| b.2.cmp(&a.2))
+    });
 
     for i in 0..evict_count {
         let coord = candidates[i].0;
