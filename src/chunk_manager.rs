@@ -842,12 +842,10 @@ fn unload_distant_chunks(
                 water_mesh_handle: entry.water_mesh_handle,
             });
         }
-        // 同步从 entries_ordered 中删除
-        // 使用 remove() 保持轮询顺序（swap_remove 会破坏 update_incremental 的 last_checked 索引）
-        if let Some(pos) = loaded.entries_ordered.iter().position(|c| *c == coord) {
-            loaded.entries_ordered.remove(pos);
-        }
     }
+
+    // 批量同步 entries_ordered：O(N) retain，替代 O(N²) 的逐条 position() + remove
+    loaded.entries_ordered.retain(|c| loaded.entries.contains_key(c));
 }
 
 /// LRU 缓存淘汰
