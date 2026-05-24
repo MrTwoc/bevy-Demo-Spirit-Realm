@@ -93,10 +93,14 @@ pub fn update_voxel_render_state(
     }
 
     // 移除被卸载的区块
+    let has_removed = !render_state.remove_queue.is_empty();
     for coord in render_state.remove_queue.drain(..) {
         if let Some(region) = buffers.chunk_regions.remove(&coord) {
             buffers.allocator.free(region);
         }
+    }
+    if has_removed {
+        buffers.dirty = true;
     }
 
     // 上传新的Mesh数据到GPU

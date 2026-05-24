@@ -556,6 +556,7 @@ pub fn chunk_loader_system(
                 &*async_mesh,
                 &mut *lod_manager,
                 &mut *cached,
+                &mut *render_state,
             );
         }
     }
@@ -579,6 +580,7 @@ pub fn chunk_loader_system(
         &*async_mesh,
         &mut *lod_manager,
         &mut *cached,
+        &mut *render_state,
     );
 
     // ── 步骤 3A：收集准备完成的区块数据，创建实体并提交网格生成任务 ──
@@ -806,6 +808,7 @@ fn unload_distant_chunks(
     async_mesh: &AsyncMeshManager,
     lod_manager: &mut LodManager,
     cached: &mut CachedTriangleCount,
+    render_state: &mut VoxelRenderState,
 ) {
     // 仅在玩家移动后才执行全量扫描，静止时跳过
     if !loaded.needs_unload_check {
@@ -830,6 +833,7 @@ fn unload_distant_chunks(
         lod_manager.remove(&coord);
 
         if let Some(entry) = loaded.entries.remove(&coord) {
+            render_state.remove_queue.push(coord);
             cached.0 = cached.0.wrapping_sub(entry.triangle_count);
             cached.0 = cached.0.wrapping_sub(entry.water_triangle_count);
             loaded.pending_deletions.push(PendingDeletion {
@@ -853,6 +857,7 @@ fn lru_evict(
     async_mesh: &AsyncMeshManager,
     lod_manager: &mut LodManager,
     cached: &mut CachedTriangleCount,
+    render_state: &mut VoxelRenderState,
 ) {
     if loaded.entries.len() <= MAX_CACHED_CHUNKS {
         return;
@@ -888,6 +893,7 @@ fn lru_evict(
         lod_manager.remove(&coord);
 
         if let Some(entry) = loaded.entries.remove(&coord) {
+            render_state.remove_queue.push(coord);
             cached.0 = cached.0.wrapping_sub(entry.triangle_count);
             cached.0 = cached.0.wrapping_sub(entry.water_triangle_count);
             loaded.pending_deletions.push(PendingDeletion {
