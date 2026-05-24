@@ -285,6 +285,19 @@ impl NodeManager {
             if let Some(section) = tracker.get_cached(id) {
                 return section.solid_count > 0;
             }
+            // ── 漏判修复：检查 pending_insert 中是否有此 section 的顶层父节点 ──
+            // 当一批 section 同时插入，tracker 尚未被 request_leaf_node 的
+            // acquire() 填充时，check_region_has_content 会返回 false，
+            // 导致递归分裂提前终止，子节点不被分配，区域不可见。
+            let parent_lvl4 = crate::svo::encode_position(
+                4,          // MAX_LOD
+                x >> 4,     // LOD=0 → LOD=4 坐标转换
+                y >> 4,
+                z >> 4,
+            );
+            if self.pending_insert.contains(&parent_lvl4) {
+                return true;
+            }
             // section 不在缓存中，假设为空
             return false;
         } else {
