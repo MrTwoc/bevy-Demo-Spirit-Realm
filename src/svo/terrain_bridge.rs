@@ -8,20 +8,21 @@ use crate::svo::section::{Section, SectionCoord, Voxel};
 use crate::svo::config::SECTION_SIZE;
 
 // 从 chunk.rs 导入地形生成所需的噪声函数
-use crate::chunk::{get_terrain_noise, get_temperature_noise, get_humidity_noise,
-                    TERRAIN_BASE_HEIGHT, TERRAIN_AMPLITUDE,
+use crate::chunk::{get_terrain_noise, TERRAIN_BASE_HEIGHT, TERRAIN_AMPLITUDE,
                     TERRAIN_MIN_Y, TERRAIN_MAX_Y, WATER_LEVEL};
-use crate::biome::{select_biome, get_biome};
 
 /// 用地形生成数据填充一个 Section
 ///
 /// 逻辑与 `chunk::fill_terrain` 相同，但写入 Section 的 Voxel 数组。
 pub fn fill_section_terrain(section: &mut Section, coord: &SectionCoord) {
     let noise = get_terrain_noise();
-    let temp_noise = get_temperature_noise();
-    let humid_noise = get_humidity_noise();
 
     let size = SECTION_SIZE as usize;
+
+    let surface_block: Voxel = 1;   // grass
+    let under_surface_block: Voxel = 3; // dirt
+    let deep_block: Voxel = 2;      // stone
+    let soil_thickness: i32 = 4;
 
     for z in 0..size {
         for x in 0..size {
@@ -30,18 +31,6 @@ pub fn fill_section_terrain(section: &mut Section, coord: &SectionCoord) {
 
             let noise_val = noise.get([world_x, world_z]);
             let surface_height = TERRAIN_BASE_HEIGHT + (noise_val * TERRAIN_AMPLITUDE) as i32;
-
-            // 获取温度和湿度噪声，用于群系选择
-            let temperature = temp_noise.get([world_x, world_z]);
-            let humidity = humid_noise.get([world_x, world_z]);
-
-            // 选择群系
-            let biome_id = select_biome(temperature, humidity, surface_height as f64);
-            let biome = get_biome(biome_id);
-
-            let surface_block = biome.surface_block;
-            let under_surface_block = biome.under_surface_block;
-            let soil_thickness = biome.soil_thickness;
 
             for y in 0..size {
                 let world_y = coord.y as i32 * SECTION_SIZE as i32 + y as i32;
@@ -62,13 +51,12 @@ pub fn fill_section_terrain(section: &mut Section, coord: &SectionCoord) {
                     continue;
                 }
 
-                // 使用群系参数决定方块
                 let block_id: Voxel = if world_y == surface_height {
-                    surface_block as Voxel
+                    surface_block
                 } else if world_y > surface_height - soil_thickness {
-                    under_surface_block as Voxel
+                    under_surface_block
                 } else {
-                    2 // stone
+                    deep_block
                 };
 
                 section.set_voxel(x as u32, y as u32, z as u32, block_id);

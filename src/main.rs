@@ -1,5 +1,4 @@
 mod async_mesh;
-mod biome;
 mod block_interaction;
 mod camera;
 mod chunk;

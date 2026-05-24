@@ -13,7 +13,6 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::Arc;
 
-use crate::biome::{BiomeId, get_biome, select_biome};
 use crate::chunk_dirty::ChunkMeshHandle;
 use crate::resource_pack::{ResourcePackManager, VoxelMaterial};
 
@@ -591,9 +590,6 @@ pub const TERRAIN_BASE_HEIGHT: i32 = 96;
 /// Terrain height amplitude (max deviation from base)
 pub const TERRAIN_AMPLITUDE: f64 = 80.0;
 
-/// Height threshold for sand vs grass
-pub const SAND_HEIGHT_THRESHOLD: i32 = 22;
-
 /// Depth of dirt layer below surface
 pub const DIRT_LAYER_DEPTH: i32 = 4;
 
@@ -609,8 +605,6 @@ pub const TERRAIN_MAX_Y: i32 = 256;
 ///
 /// 使用 std::sync::OnceLock 缓存噪声函数，避免每次调用 fill_terrain 都重新创建。
 static TERRAIN_NOISE: std::sync::OnceLock<Fbm<Simplex>> = std::sync::OnceLock::new();
-static TEMPERATURE_NOISE: std::sync::OnceLock<Fbm<Simplex>> = std::sync::OnceLock::new();
-static HUMIDITY_NOISE: std::sync::OnceLock<Fbm<Simplex>> = std::sync::OnceLock::new();
 
 /// 获取缓存的噪声函数
 pub fn get_terrain_noise() -> &'static Fbm<Simplex> {
@@ -618,28 +612,6 @@ pub fn get_terrain_noise() -> &'static Fbm<Simplex> {
         Fbm::<Simplex>::new(TERRAIN_SEED)
             .set_octaves(5)
             .set_frequency(0.003)
-            .set_lacunarity(2.0)
-            .set_persistence(0.5)
-    })
-}
-
-/// 获取缓存的温度噪声函数（公开供其他模块使用）
-pub fn get_temperature_noise() -> &'static Fbm<Simplex> {
-    TEMPERATURE_NOISE.get_or_init(|| {
-        Fbm::<Simplex>::new(TERRAIN_SEED + 1000)
-            .set_octaves(3)
-            .set_frequency(0.005)
-            .set_lacunarity(2.0)
-            .set_persistence(0.5)
-    })
-}
-
-/// 获取缓存的湿度噪声函数（公开供其他模块使用）
-pub fn get_humidity_noise() -> &'static Fbm<Simplex> {
-    HUMIDITY_NOISE.get_or_init(|| {
-        Fbm::<Simplex>::new(TERRAIN_SEED + 2000)
-            .set_octaves(3)
-            .set_frequency(0.006)
             .set_lacunarity(2.0)
             .set_persistence(0.5)
     })
@@ -661,15 +633,9 @@ pub fn get_surface_height(world_x: f64, world_z: f64) -> i32 {
 /// Fills a chunk with noise-generated terrain.
 ///
 /// 使用 Simplex FBM 噪声在 XZ 平面采样，生成有起伏的自然地形。
-/// 地形分层：地表=草地/沙子，浅层=泥土，深层=石头。
-///
-/// 集成群系系统：根据温度和湿度噪声选择群系，使用群系参数决定地表方块。
-///
-/// 优化：使用缓存的噪声函数，避免每次创建。
+/// 地形分层：地表=草地(1)，浅层=泥土(3)，深层=石头(2)，土壤厚度=4。
 pub fn fill_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
     let noise = get_terrain_noise();
-    let temp_noise = get_temperature_noise();
-    let humid_noise = get_humidity_noise();
 
     for z in 0..CHUNK_SIZE {
         for x in 0..CHUNK_SIZE {
@@ -679,18 +645,10 @@ pub fn fill_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
             let noise_val = noise.get([world_x, world_z]);
             let surface_height = TERRAIN_BASE_HEIGHT + (noise_val * TERRAIN_AMPLITUDE) as i32;
 
-            // 获取温度和湿度噪声
-            let temperature = temp_noise.get([world_x, world_z]);
-            let humidity = humid_noise.get([world_x, world_z]);
-
-            // 选择群系
-            let biome_id = select_biome(temperature, humidity, surface_height as f64);
-            let biome = get_biome(biome_id);
-
-            // 在 y 循环之前提取群系参数，避免每层迭代重复查找
-            let surface_block = biome.surface_block;
-            let under_surface_block = biome.under_surface_block;
-            let soil_thickness = biome.soil_thickness;
+            // 硬编码地形方块类型：地表=草(1)，表土层=泥土(3)，深层=石头(2)，土壤厚度=4
+            let surface_block: BlockId = 1; // grass
+            let under_surface_block: BlockId = 3; // dirt
+            let soil_thickness = 4;
 
             for y in 0..CHUNK_SIZE {
                 let world_y = coord.cy as i32 * CHUNK_SIZE as i32 + y as i32;
@@ -711,15 +669,11 @@ pub fn fill_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
                     continue; // 空气，不需要设置（默认就是 0）
                 }
 
-                // 使用群系参数决定方块
                 let block_id = if world_y == surface_height {
-                    // 地表层：使用群系的地表方块
                     surface_block
                 } else if world_y > surface_height - soil_thickness {
-                    // 表土层：使用群系的次表层方块
                     under_surface_block
                 } else {
-                    // 深层：石头
                     2 // stone
                 };
 

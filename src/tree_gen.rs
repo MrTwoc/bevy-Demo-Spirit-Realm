@@ -17,7 +17,6 @@
 //! 3. 对每个候选树干位置，计算树木结构（树干 + 树冠）
 //! 4. 只放置落在本区块 XZY 范围内的方块
 
-use crate::biome::{get_biome, select_biome};
 use crate::chunk::{BlockId, CHUNK_SIZE, ChunkCoord, ChunkData, WATER_LEVEL, get_surface_height};
 use bevy::prelude::Resource;
 use noise::{NoiseFn, Perlin};
@@ -327,21 +326,7 @@ pub fn generate_trees_in_chunk(
             // 计算地表高度（使用与地形生成相同的确定性噪声）
             let surface_y = get_surface_height(trunk_x as f64, trunk_z as f64);
 
-            // 获取该位置的群系，用于决定树木密度
-            let temp_noise = crate::chunk::get_temperature_noise();
-            let humid_noise = crate::chunk::get_humidity_noise();
-            let temperature = temp_noise.get([trunk_x as f64, trunk_z as f64]);
-            let humidity = humid_noise.get([trunk_x as f64, trunk_z as f64]);
-            let biome = get_biome(select_biome(temperature, humidity, surface_y as f64));
-
-            // 如果群系树木密度为0，跳过
-            if biome.tree_density <= 0.0 {
-                trunk_z += step;
-                continue;
-            }
-
             // 使用 Perlin 噪声判断是否在该位置生成树木
-            // 频率较低使树木呈聚落状分布
             let noise_val = noise
                 .distribution
                 .get([trunk_x as f64 * 0.035, trunk_z as f64 * 0.035]);
@@ -349,11 +334,7 @@ pub fn generate_trees_in_chunk(
             // noise_val 范围 [-1, 1]，映射到 [0, 1]
             let spawn_prob = noise_val * 0.5 + 0.5;
 
-            // 考虑群系树木密度进行调整
-            // tree_density = 0.0 表示无树木，1.0 表示密集树林
-            // 密度越高，越容易生成树木（spawn_chance / tree_density）
-            let effective_chance = config.spawn_chance / (biome.tree_density as f64).max(0.01);
-            if spawn_prob > effective_chance {
+            if spawn_prob > config.spawn_chance as f64 {
                 trunk_z += step;
                 continue;
             }
