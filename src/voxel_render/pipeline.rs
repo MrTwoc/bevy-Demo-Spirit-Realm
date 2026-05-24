@@ -10,14 +10,14 @@ use bevy::{
     render::{
         render_resource::{
             BindGroup, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry,
-            BindGroupEntry, BindingResource, BufferBinding, BufferBindingType,
-            BufferInitDescriptor, BufferSize, BufferUsages, CachedRenderPipelineId,
-            ColorTargetState, ColorWrites, CompareFunction, DepthBiasState, DepthStencilState,
-            Face, FrontFace, MultisampleState, Operations, PolygonMode, PrimitiveState,
-            PrimitiveTopology, RenderPipelineDescriptor, StencilState, TextureFormat,
-            VertexState,
+            BindGroupEntry, BindingResource, Buffer, BufferBinding, BufferBindingType,
+            BufferDescriptor, BufferSize, BufferUsages,
+            CachedRenderPipelineId, ColorTargetState, ColorWrites, CompareFunction,
+            DepthBiasState, DepthStencilState, Face, FrontFace, MultisampleState, Operations,
+            PolygonMode, PrimitiveState, PrimitiveTopology, RenderPipelineDescriptor,
+            StencilState, TextureFormat, VertexState,
         },
-        renderer::RenderDevice,
+        renderer::{RenderDevice, RenderQueue},
         view::ViewTarget,
     },
 };
@@ -31,6 +31,8 @@ pub struct VoxelRenderPipeline {
     pub pipeline_id: CachedRenderPipelineId,
     /// 绑定组布局
     pub layout: BindGroupLayout,
+    /// 持久化 View Uniform 缓冲区（每帧用 write_buffer 更新，避免重新创建）
+    pub view_uniform_buffer: Buffer,
 }
 
 /// 每帧创建的绑定组
@@ -155,9 +157,19 @@ pub fn create_voxel_render_pipeline(world: &mut World) {
     // 从管线缓存获取 BindGroupLayout（用描述符在缓存中查找/创建）
     let layout = pipeline_cache.get_bind_group_layout(&layout_descriptor);
 
+    // ── 创建持久化 View Uniform 缓冲区 ─────────────────────────
+    // 使用零初始化数据创建，后续每帧通过 write_buffer 更新内容
+    let view_uniform_buffer = render_device.create_buffer(&BufferDescriptor {
+        label: Some("voxel_view_uniform_buffer"),
+        size: view_size,
+        usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
     world.insert_resource(VoxelRenderPipeline {
         pipeline_id,
         layout,
+        view_uniform_buffer,
     });
 }
 
@@ -168,6 +180,7 @@ pub fn prepare_voxel_bind_groups(
     extracted: Res<super::extract::ExtractedVoxelBuffers>,
     view_data: Res<super::extract::ExtractedViewData>,
     render_device: Res<RenderDevice>,
+    render_queue: Res<RenderQueue>,
 ) {
     if !view_data.is_valid {
         return;
@@ -176,13 +189,11 @@ pub fn prepare_voxel_bind_groups(
     let Some(ref index_buffer) = extracted.index_buffer else { return };
     let Some(ref offset_buffer) = extracted.offset_buffer else { return };
 
-    // 每帧创建 view uniform buffer
-    let view_uniform = render_device.create_buffer_with_data(
-        &BufferInitDescriptor {
-            label: Some("voxel_view_uniform_buffer"),
-            contents: bytemuck::bytes_of(&view_data.view_uniform),
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-        },
+    // 更新持久化 View Uniform 缓冲区（避免每帧创建新 buffer）
+    render_queue.write_buffer(
+        &pipeline.view_uniform_buffer,
+        0,
+        bytemuck::bytes_of(&view_data.view_uniform),
     );
 
     // Group(0): b0=vertex, b1=index, b2=offset, b3=view uniform
@@ -218,7 +229,7 @@ pub fn prepare_voxel_bind_groups(
             BindGroupEntry {
                 binding: 3,
                 resource: BindingResource::Buffer(BufferBinding {
-                    buffer: &view_uniform,
+                    buffer: &pipeline.view_uniform_buffer,
                     offset: 0,
                     size: None,
                 }),
