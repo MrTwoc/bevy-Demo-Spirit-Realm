@@ -100,6 +100,10 @@ pub struct SvoVisibilityState {
     pub visible_node_count: u32,
     /// 上一帧隐藏的 chunk 数量（调试用）
     pub hidden_chunk_count: usize,
+    /// 上一帧记录的相机位置（检测移动）
+    last_cam_pos: Vec3,
+    /// 上一帧记录的 SVO generation（检测树变化）
+    svo_generation: u64,
 }
 
 impl Default for SvoVisibilityState {
@@ -108,6 +112,8 @@ impl Default for SvoVisibilityState {
             frame_counter: 0,
             visible_node_count: 0,
             hidden_chunk_count: 0,
+            last_cam_pos: Vec3::ZERO,
+            svo_generation: 0,
         }
     }
 }
@@ -260,14 +266,23 @@ pub fn apply_svo_visibility(
     }
     state.frame_counter = 0;
 
-    // ── 获取相机位置 + 视锥体 ──
+    // ── 获取相机位置 ──
     let (cam_transform, cam_global, camera) = match camera_query.iter().next() {
         Some(t) => t,
         None => return,
     };
     let cam_pos = cam_transform.translation;
 
-    // 提取世界空间视锥体平面
+    // ── 变化跳过：SVO 树未变且相机未移动 → 跳过 ──
+    let tree_changed = node_manager.has_dirty_nodes();
+    let cam_moved = cam_pos.distance(state.last_cam_pos) > 0.001;
+    if !tree_changed && !cam_moved && state.svo_generation > 0 {
+        return;
+    }
+    state.last_cam_pos = cam_pos;
+    state.svo_generation = node_manager.generation();
+
+    // ── 提取世界空间视锥体平面 ──
     let frustum_planes = extract_world_frustum_planes(cam_global, camera);
 
     // ── 获取 top-level 节点数据 ──

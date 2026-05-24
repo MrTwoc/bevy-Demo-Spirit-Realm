@@ -347,6 +347,11 @@ impl NodeManager {
         self.generation != *self.cached_generation.lock().unwrap()
     }
 
+    /// 获取当前代际号（visibility_bridge 用于检测 SVO 树变化）
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
     /// 获取 top-level 节点 ID 列表
     pub fn top_level_ids(&self) -> &[u32] {
         &self.top_level_ids
