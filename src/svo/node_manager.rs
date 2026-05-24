@@ -12,6 +12,7 @@
 
 use bevy::prelude::Resource;
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 use crate::svo::{
     encode_position, decode_level, decode_x, decode_y, decode_z,
@@ -42,6 +43,13 @@ pub struct NodeManager {
     pending_insert: Vec<u64>,
     /// 待处理的 section 移除队列
     pending_remove: Vec<u64>,
+    // ── GPU 数据缓存 (优化：避免每帧全量重建) ──
+    /// 节点数据代际号，任何节点数据变化时递增
+    generation: u64,
+    /// 缓存的 GPU 节点数据 (keyed by node_id)
+    gpu_data_cache: Mutex<Vec<GpuNode>>,
+    /// 缓存对应的 generation，不一致时需要重建
+    cached_generation: Mutex<u64>,
 }
 
 impl Default for NodeManager {
@@ -53,6 +61,9 @@ impl Default for NodeManager {
             dirty_nodes: Vec::with_capacity(256),
             pending_insert: Vec::new(),
             pending_remove: Vec::new(),
+            generation: 0,
+            gpu_data_cache: Mutex::new(Vec::new()),
+            cached_generation: Mutex::new(u64::MAX), // 初始强制重建
         }
     }
 }
@@ -63,6 +74,11 @@ impl NodeManager {
     }
 
     // ===== Top-Level 管理 =====
+
+    /// 标记节点数据发生变化，递增代际号
+    fn mark_generation_dirty(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+    }
 
     /// 插入一个 top-level section (LOD=4)
     pub fn insert_top_level(&mut self, section_pos: u64) {
@@ -108,6 +124,8 @@ impl NodeManager {
         self.pos_to_id.insert(pos, node_id);
         self.top_level_ids.push(node_id);
 
+        self.mark_generation_dirty();
+
         // 启动叶节点请求：逐步展开 octree
         self.request_leaf_node(node_id, tracker);
     }
@@ -120,6 +138,7 @@ impl NodeManager {
 
         self.top_level_ids.retain(|&id| id != node_id);
         self.recurse_remove_node(node_id, tracker);
+        self.mark_generation_dirty();
     }
 
     // ===== 递归节点管理 =====
@@ -150,6 +169,9 @@ impl NodeManager {
     }
 
     /// 请求展开叶节点 (加载/生成子节点数据)
+    ///
+    /// 优化：先检查 8 个子节点的内容，只有非空时才分配写入，
+    /// 避免 "先分配再回退" 浪费。
     fn request_leaf_node(&mut self, node_id: u32, tracker: &mut SectionTracker) {
         let entry = self.store.read_node(node_id);
         let pos = entry.position;
@@ -179,12 +201,32 @@ impl NodeManager {
             self.store.set_in_flight(node_id, false);
             self.mark_node_dirty(node_id);
         } else {
-            // LOD>0: 尝试继续展开
-            let x = decode_x(pos);
-            let y = decode_y(pos);
-            let z = decode_z(pos);
+            // LOD>0: 先检查子节点内容，再分配
+            // Step 1: 检查 8 个子节点哪些有内容
+            let mut existence_mask: u8 = 0;
+            let mut child_has_content = [false; 8];
+            for i in 0..8u32 {
+                let child_pos = make_child_pos(pos, i);
+                let cx = decode_x(child_pos);
+                let cy = decode_y(child_pos);
+                let cz = decode_z(child_pos);
+                let has_content = self.check_region_has_content(lvl - 1, cx, cy, cz, tracker);
+                child_has_content[i as usize] = has_content;
+                if has_content {
+                    existence_mask |= 1u8 << (i as u8);
+                }
+            }
 
-            // 先标记为内部节点
+            // 所有子节点都为空 → 本节点为空叶子，不继续展开
+            if existence_mask == 0 {
+                self.store.set_node_type(node_id, NodeType::Leaf);
+                self.store.set_geometry_handle(node_id, 0);
+                self.store.set_in_flight(node_id, false);
+                self.mark_node_dirty(node_id);
+                return;
+            }
+
+            // Step 2: 分配 8 个连续子节点槽位
             let child_base = match self.store.allocate_contiguous(8) {
                 Some(base) => base,
                 None => {
@@ -194,40 +236,31 @@ impl NodeManager {
                 }
             };
 
+            // 标记为内部节点
             self.store.set_node_type(node_id, NodeType::Inner);
             self.store.set_child_ptr(node_id, child_base);
-            let half = 1 << (lvl - 1);
+            self.store.set_child_existence(node_id, existence_mask);
 
-            // 为每个子节点递归请求
-            for i in 0..8 {
+            // Step 3: 只写入非空子节点（空子节点保持 None 避免 HashMap 污染）
+            for i in 0..8u32 {
                 let child_pos = make_child_pos(pos, i);
                 let child_id = child_base + i;
-                self.store.write_node(child_id, child_pos, NodeType::Pending);
-                self.pos_to_id.insert(child_pos, child_id);
-            }
-
-            // 现在逐个子节点检查非空子节
-            let mut existence_mask: u8 = 0;
-            for i in 0..8 {
-                let child_pos = make_child_pos(pos, i);
-                let child_id = child_base + i;
-                let cx = decode_x(child_pos);
-                let cy = decode_y(child_pos);
-                let cz = decode_z(child_pos);
-
-                // 检查该子区域是否有体素 (通过 tracker)
-                let has_content = self.check_region_has_content(lvl - 1, cx, cy, cz, tracker);
-                if has_content {
-                    existence_mask |= 1 << i;
-                    self.request_leaf_node(child_id, tracker);
+                if child_has_content[i as usize] {
+                    self.store.write_node(child_id, child_pos, NodeType::Pending);
+                    self.pos_to_id.insert(child_pos, child_id);
                 } else {
-                    // 空子节点，释放
-                    self.store.set_node_type(child_id, NodeType::None);
-                    self.pos_to_id.remove(&child_pos);
+                    self.store.write_node(child_id, child_pos, NodeType::None);
                 }
             }
 
-            self.store.set_child_existence(node_id, existence_mask);
+            // Step 4: 递归展开非空子节点
+            for i in 0..8u32 {
+                if child_has_content[i as usize] {
+                    let child_id = child_base + i;
+                    self.request_leaf_node(child_id, tracker);
+                }
+            }
+
             self.store.set_in_flight(node_id, false);
             self.mark_node_dirty(node_id);
         }
@@ -297,6 +330,7 @@ impl NodeManager {
             node_id,
             gpu_data: gpu_node,
         });
+        self.mark_generation_dirty();
     }
 
     /// 取出所有脏节点 (上传 GPU 用)
@@ -308,24 +342,39 @@ impl NodeManager {
         result
     }
 
+    /// 是否有脏节点待上传 (供 extract 系统判断是否需更新 GPU buffer)
+    pub fn has_dirty_nodes(&self) -> bool {
+        self.generation != *self.cached_generation.lock().unwrap()
+    }
+
     /// 获取 top-level 节点 ID 列表
     pub fn top_level_ids(&self) -> &[u32] {
         &self.top_level_ids
     }
 
-    /// 获取 GPU 可读的节点数据切片
+    /// 获取 GPU 可读的节点数据（使用缓存，避免每帧全量重建）
+    ///
+    /// 只在 generation 变化时重建缓存，否则直接返回缓存拷贝。
+    /// 采用 Mutex 实现 &self 下的内部可变性，兼容 `Res<NodeManager>` 只读访问。
     pub fn gpu_node_data(&self) -> Vec<GpuNode> {
-        let count = self.store.max_id() as usize;
-        let mut result = Vec::with_capacity(count);
-        for id in 0..count as u32 {
-            if self.store.node_exists(id) {
-                let entry = self.store.read_node(id);
-                result.push(GpuNode::from_entry(&entry));
-            } else {
-                result.push(GpuNode::zeroed());
+        let cur_gen = self.generation;
+        // 缓存失效 → 重建
+        if *self.cached_generation.lock().unwrap() != cur_gen {
+            let count = self.store.max_id() as usize;
+            let mut cache = self.gpu_data_cache.lock().unwrap();
+            cache.clear();
+            cache.reserve(count);
+            for id in 0..count as u32 {
+                if self.store.node_exists(id) {
+                    let entry = self.store.read_node(id);
+                    cache.push(GpuNode::from_entry(&entry));
+                } else {
+                    cache.push(GpuNode::zeroed());
+                }
             }
+            *self.cached_generation.lock().unwrap() = cur_gen;
         }
-        result
+        self.gpu_data_cache.lock().unwrap().clone()
     }
 
     /// 当前节点总数

@@ -40,6 +40,8 @@ pub struct SvoExtractData {
     pub camera_world_y: f32,
     pub camera_world_z: f32,
     pub render_distance: f32,
+    /// 节点数据是否有变化（自上次 GPU 上传以来）
+    pub nodes_changed: bool,
 }
 
 // ── Camera Uniform (对齐 WGSL) ──────────────────────────────────────
@@ -115,9 +117,17 @@ fn extract_svo_data(
     node_manager: Extract<Res<NodeManager>>,
     camera_query: Query<&Transform>,
 ) {
-    data.node_data = node_manager.gpu_node_data();
-    data.node_count = node_manager.node_count();
+    // ── GPU 节点数据：只在有脏节点时重建 ──
+    let needs_update = node_manager.has_dirty_nodes();
+    data.nodes_changed = needs_update;
+    if needs_update {
+        data.node_data = node_manager.gpu_node_data();
+        data.node_count = node_manager.node_count();
+    }
+    // 没有脏节点时保留 node_data 为空 vec（ExtractResource 克隆只传空 vec）
+    // prepare_gpu_resources 会跳过 upload
 
+    // ── 相机数据（始终更新） ──
     // 主世界直接查询 Camera — Extract 包装的 Query 不支持 .get_single()
     if let Some(transform) = camera_query.iter().next() {
         data.camera_world_x = transform.translation.x;
@@ -274,8 +284,8 @@ fn prepare_gpu_resources(
         }
     };
 
-    // 上传节点数据
-    if data.node_count > 0 {
+    // 上传节点数据（仅当有变化时）
+    if data.nodes_changed && data.node_count > 0 {
         let bytes: &[u8] = bytemuck::cast_slice(&data.node_data);
         queue.write_buffer(&gpu_buffers.node_buffer, 0, bytes);
     }
