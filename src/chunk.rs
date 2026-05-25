@@ -28,13 +28,16 @@ pub type BlockId = u8;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum WorldType {
     /// 噪声世界：使用 Simplex 噪声生成起伏地形，含草/泥土/石头/水
-    #[default]
     Noise,
     /// 平坦世界：只有草方块(1)和泥土(3)，地表 Y=96
     Flat,
     /// 虚空世界：完全没有地面，全部为虚空（仅空气）。
     /// 用于自由演示各种内容（如实体、粒子、建筑等），不受地形干扰。
     Void,
+    /// 门格海绵世界：由 Menger Sponge 分形构成的石头结构，中心位于世界原点。
+    /// 使用 4 次递归迭代，实体方块为石头(2)。
+    #[default]
+    MengerSponge,
 }
 
 /// 世界类型资源（ECS Resource），用于在系统中查询当前世界类型
@@ -749,8 +752,10 @@ pub fn get_surface_height(world_x: f64, world_z: f64, world_type: WorldType) -> 
             let noise_val = noise.get([world_x, world_z]);
             TERRAIN_BASE_HEIGHT + (noise_val * TERRAIN_AMPLITUDE) as i32
         }
+        WorldType::MengerSponge => i32::MIN, // 门格海绵没有传统地表
     }
 }
+
 /// Fills a chunk with noise-generated terrain.
 ///
 /// 使用 Simplex FBM 噪声在 XZ 平面采样，生成有起伏的自然地形。
@@ -823,6 +828,54 @@ pub fn fill_flat_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
                     chunk.set(x, y, z, 3); // dirt
                 }
                 // else: air（默认就是 0）
+            }
+        }
+    }
+}
+
+/// 使用 Menger Sponge（门格海绵）分形算法填充区块。
+///
+/// 门格海绵规则：对于体素的世界坐标 (wx, wy, wz)，在每个递归层级上，
+/// 将坐标除以 3 并检查余数：如果至少有 2 个坐标的余数为 1，则该体素为空洞；
+/// 否则保持为实体。
+///
+/// 使用 4 次递归迭代，实体方块为石头(2)。海绵中心位于世界原点。
+pub fn fill_menger_sponge(chunk: &mut Chunk, coord: &ChunkCoord) {
+    const SPONGE_ITERATIONS: u32 = 4;
+    const AIR: u8 = 0;
+    const STONE: u8 = 2;
+
+    for z in 0..CHUNK_SIZE {
+        for y in 0..CHUNK_SIZE {
+            for x in 0..CHUNK_SIZE {
+                let wx = coord.cx as i32 * CHUNK_SIZE as i32 + x as i32;
+                let wy = coord.cy as i32 * CHUNK_SIZE as i32 + y as i32;
+                let wz = coord.cz as i32 * CHUNK_SIZE as i32 + z as i32;
+
+                // 使用正坐标计算分形（取绝对值，保持对称性）
+                let mut cx = wx.unsigned_abs();
+                let mut cy = wy.unsigned_abs();
+                let mut cz = wz.unsigned_abs();
+
+                let mut solid = true;
+                for _ in 0..SPONGE_ITERATIONS {
+                    let rx = cx % 3;
+                    let ry = cy % 3;
+                    let rz = cz % 3;
+
+                    // 如果至少有 2 个坐标在当前层级的数字为 1，则此处为空洞
+                    let ones = (rx == 1) as u8 + (ry == 1) as u8 + (rz == 1) as u8;
+                    if ones >= 2 {
+                        solid = false;
+                        break;
+                    }
+
+                    cx /= 3;
+                    cy /= 3;
+                    cz /= 3;
+                }
+
+                chunk.set(x, y, z, if solid { STONE } else { AIR });
             }
         }
     }

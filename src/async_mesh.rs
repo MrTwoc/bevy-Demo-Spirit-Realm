@@ -27,7 +27,7 @@ use std::thread;
 
 use crate::chunk::{
     CHUNK_SIZE, ChunkCoord, ChunkData, ChunkNeighbors, fill_terrain, fill_flat_terrain,
-    should_cull_face, WorldType,
+    fill_menger_sponge, should_cull_face, WorldType,
 };
 use crate::chunk_dirty::is_air_chunk;
 use crate::lod::{LodLevel, generate_lod_mesh_separated};
@@ -253,6 +253,7 @@ impl AsyncMeshManager {
                     match *world_type {
                         WorldType::Noise => fill_terrain(&mut chunk, &coord),
                         WorldType::Flat => fill_flat_terrain(&mut chunk, &coord),
+                        WorldType::MengerSponge => fill_menger_sponge(&mut chunk, &coord),
                         WorldType::Void => {} // 虚空世界：保持全空气，不生成任何地形
                     }
                     generate_trees_in_chunk(

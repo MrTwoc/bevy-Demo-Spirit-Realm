@@ -299,7 +299,7 @@ pub fn generate_trees_in_chunk(
     world_type: WorldType,
 ) {
     // 虚空世界不生成树木
-    if world_type == WorldType::Void {
+    if world_type == WorldType::Void || world_type == WorldType::MengerSponge {
         return;
     }
 

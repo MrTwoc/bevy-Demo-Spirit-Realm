@@ -229,6 +229,7 @@ pub fn update_world_type(
             crate::chunk::WorldType::Noise => "Noise",
             crate::chunk::WorldType::Flat => "Flat",
             crate::chunk::WorldType::Void => "Void",
+            crate::chunk::WorldType::MengerSponge => "Menger Sponge",
         };
         **text = format!("World-Type: {}", type_str);
     }
