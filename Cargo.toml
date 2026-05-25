@@ -8,6 +8,7 @@ bevy = { version = "0.18.1", features = ["dynamic_linking", "bevy_gizmos", "bevy
 bytemuck = { version = "1.14", features = ["derive"] }
 image = "0.25"
 noise = "0.9"
+parking_lot = "0.12"
 sysinfo = "0.34"
 
 [profile.dev]

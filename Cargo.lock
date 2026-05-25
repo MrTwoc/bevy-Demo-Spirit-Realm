@@ -1745,6 +1745,7 @@ dependencies = [
  "bytemuck",
  "image",
  "noise",
+ "parking_lot",
  "sysinfo 0.34.2",
 ]
 
