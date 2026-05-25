@@ -41,7 +41,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::async_mesh::{AsyncMeshManager, MESH_UPLOADS_PER_FRAME, MeshTask};
-use crate::chunk::{Chunk, ChunkComponent, ChunkCoord, ChunkNeighbors};
+use crate::chunk::{Chunk, ChunkComponent, ChunkCoord, ChunkNeighbors, WorldTypeResource};
 use crate::chunk_changes::{LodChangedFlag, NeighborChangedFlag};
 use crate::chunk_dirty::{
     ChunkAtlasHandle, ChunkCoordComponent, ChunkMeshHandle, DirtyChunk, is_air_chunk,
@@ -282,7 +282,11 @@ pub fn setup_world(
         uv_table,
         tree_config.as_ref().clone(),
         tree_noise.as_ref().clone(),
+        WorldTypeResource::default().0,
     ));
+
+    // 插入世界类型资源，默认是 Noise（覆盖已存在的旧值也没问题）
+    commands.insert_resource(WorldTypeResource::default());
 
     use crate::camera::CameraController;
     let camera_transform = Transform::from_xyz(16.0, 64.0, 16.0);

@@ -24,6 +24,23 @@ const CHUNK_VOLUME: usize = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
 /// A single block type identifier.
 pub type BlockId = u8;
 
+/// 世界类型
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum WorldType {
+    /// 噪声世界：使用 Simplex 噪声生成起伏地形，含草/泥土/石头/水
+    #[default]
+    Noise,
+    /// 平坦世界：只有草方块(1)和泥土(3)，地表 Y=96
+    Flat,
+    /// 虚空世界：完全没有地面，全部为虚空（仅空气）。
+    /// 用于自由演示各种内容（如实体、粒子、建筑等），不受地形干扰。
+    Void,
+}
+
+/// 世界类型资源（ECS Resource），用于在系统中查询当前世界类型
+#[derive(Resource, Debug, Clone, Copy, Default)]
+pub struct WorldTypeResource(pub WorldType);
+
 /// 判断方块 ID 是否为实体（不透明）方块，用于面剔除优化。
 ///
 /// 实体方块（草地=1, 石头=2, 泥土=3, 沙=4）完全遮挡相邻方向的拼接面，
@@ -111,7 +128,12 @@ fn write_packed(packed: &mut [u64], idx: usize, bits: u8, value: u8) {
 fn re_pack(packed: &[u64], old_bits: u8, new_bits: u8) -> Vec<u64> {
     let mut new_packed = vec![0u64; total_packed_u64s(new_bits)];
     for i in 0..CHUNK_VOLUME {
-        write_packed(&mut new_packed, i, new_bits, read_packed(packed, i, old_bits));
+        write_packed(
+            &mut new_packed,
+            i,
+            new_bits,
+            read_packed(packed, i, old_bits),
+        );
     }
     new_packed
 }
@@ -718,12 +740,17 @@ pub fn get_terrain_noise() -> &'static Fbm<Simplex> {
 ///
 /// 此函数是确定性的——相同的 (world_x, world_z) 总是返回相同的高度值。
 /// 这使得树木生成可以在不依赖邻近区块数据的情况下正确计算树木位置。
-pub fn get_surface_height(world_x: f64, world_z: f64) -> i32 {
-    let noise = get_terrain_noise();
-    let noise_val = noise.get([world_x, world_z]);
-    TERRAIN_BASE_HEIGHT + (noise_val * TERRAIN_AMPLITUDE) as i32
+pub fn get_surface_height(world_x: f64, world_z: f64, world_type: WorldType) -> i32 {
+    match world_type {
+        WorldType::Flat => TERRAIN_BASE_HEIGHT,
+        WorldType::Void => i32::MIN, // 虚空世界没有地表，总是返回极低值
+        WorldType::Noise => {
+            let noise = get_terrain_noise();
+            let noise_val = noise.get([world_x, world_z]);
+            TERRAIN_BASE_HEIGHT + (noise_val * TERRAIN_AMPLITUDE) as i32
+        }
+    }
 }
-
 /// Fills a chunk with noise-generated terrain.
 ///
 /// 使用 Simplex FBM 噪声在 XZ 平面采样，生成有起伏的自然地形。
@@ -772,6 +799,30 @@ pub fn fill_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
                 };
 
                 chunk.set(x, y, z, block_id);
+            }
+        }
+    }
+}
+
+/// 填充平台世界地形（超平坦，只有草方块和泥土）
+///
+/// 表面 Y=96（`TERRAIN_BASE_HEIGHT`）为草方块(grass=1)，
+/// 下方 `DIRT_LAYER_DEPTH` 层为泥土(dirt=3)，
+/// 不生成石头和水（与噪声世界截然不同）。
+pub fn fill_flat_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
+    for z in 0..CHUNK_SIZE {
+        for x in 0..CHUNK_SIZE {
+            for y in 0..CHUNK_SIZE {
+                let world_y = coord.cy as i32 * CHUNK_SIZE as i32 + y as i32;
+
+                if world_y == TERRAIN_BASE_HEIGHT {
+                    chunk.set(x, y, z, 1); // grass
+                } else if world_y > TERRAIN_BASE_HEIGHT - DIRT_LAYER_DEPTH
+                    && world_y < TERRAIN_BASE_HEIGHT
+                {
+                    chunk.set(x, y, z, 3); // dirt
+                }
+                // else: air（默认就是 0）
             }
         }
     }

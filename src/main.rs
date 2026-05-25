@@ -6,7 +6,6 @@ mod chunk_changes;
 mod chunk_dirty;
 mod chunk_manager;
 mod chunk_wire_frame;
-mod fps_overlay;
 mod greedy_mesh;
 mod hud;
 mod input;
@@ -50,7 +49,6 @@ fn main() {
             WireframePlugin::default(),
             FrameTimeDiagnosticsPlugin::default(),
             RenderDiagnosticsPlugin,
-            fps_overlay::FpsOverlayPlugin,
             perf_logger::PerfLoggerPlugin,
             resource_pack::ResourcePackPlugin,
             MaterialPlugin::<VoxelMaterial>::default(),
@@ -83,10 +81,12 @@ fn main() {
                 block_interaction::block_interaction_system,
                 hud::update_hud,
                 hud::update_triangle_count,
+                hud::update_fps,
                 hud::update_hardware_info,
             ),
         )
         .add_systems(Update, hud::update_chunk_count)
         .add_systems(Update, hud::update_view_distance)
+        .add_systems(Update, hud::update_world_type)
         .run();
 }

@@ -64,6 +64,14 @@ pub(crate) struct ChunkCountText;
 #[derive(Component)]
 pub(crate) struct ViewDistanceText;
 
+/// 世界类型文本标记组件，用于 HUD 左上角显示当前世界类型。
+#[derive(Component)]
+pub(crate) struct WorldTypeText;
+
+/// FPS 文本标记组件（合并到 HUD 面板中）
+#[derive(Component)]
+pub(crate) struct FpsText;
+
 #[derive(Resource)]
 pub struct TriangleUpdateTimer(pub Timer);
 
@@ -131,6 +139,24 @@ pub fn setup_hud(commands: &mut Commands, camera_entity: Entity) {
                 TextColor(Color::WHITE),
                 ViewDistanceText,
             ));
+            parent.spawn((
+                Text::new("World: Noise"),
+                TextFont {
+                    font_size: 16.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.0, 1.0, 0.0)),
+                WorldTypeText,
+            ));
+            parent.spawn((
+                Text::new("FPS: --"),
+                TextFont {
+                    font_size: 16.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                FpsText,
+            ));
         });
 
     // Spawn crosshair tied to the same camera
@@ -190,6 +216,36 @@ pub fn update_chunk_count(
 pub fn update_view_distance(mut text_query: Query<&mut Text, With<ViewDistanceText>>) {
     if let Ok(mut text) = text_query.single_mut() {
         **text = format!("view-distance: {}", crate::chunk_manager::RENDER_DISTANCE);
+    }
+}
+
+/// 更新左上角 HUD 中世界类型文本
+pub fn update_world_type(
+    mut text_query: Query<&mut Text, With<WorldTypeText>>,
+    world_type: Res<crate::chunk::WorldTypeResource>,
+) {
+    if let Ok(mut text) = text_query.single_mut() {
+        let type_str = match world_type.0 {
+            crate::chunk::WorldType::Noise => "Noise",
+            crate::chunk::WorldType::Flat => "Flat",
+            crate::chunk::WorldType::Void => "Void",
+        };
+        **text = format!("World-Type: {}", type_str);
+    }
+}
+
+/// 更新 HUD 中的 FPS 显示
+pub fn update_fps(
+    diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
+    mut query: Query<&mut Text, With<FpsText>>,
+) {
+    let Ok(mut text) = query.single_mut() else {
+        return;
+    };
+    if let Some(fps) = diagnostics.get(&bevy::diagnostic::FrameTimeDiagnosticsPlugin::FPS) {
+        if let Some(value) = fps.smoothed() {
+            **text = format!("FPS: {:.0}", value);
+        }
     }
 }
 

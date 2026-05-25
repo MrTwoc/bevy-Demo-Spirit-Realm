@@ -26,7 +26,8 @@ use std::sync::{Arc, mpsc};
 use std::thread;
 
 use crate::chunk::{
-    CHUNK_SIZE, ChunkCoord, ChunkData, ChunkNeighbors, fill_terrain, should_cull_face,
+    CHUNK_SIZE, ChunkCoord, ChunkData, ChunkNeighbors, fill_terrain, fill_flat_terrain,
+    should_cull_face, WorldType,
 };
 use crate::chunk_dirty::is_air_chunk;
 use crate::lod::{LodLevel, generate_lod_mesh_separated};
@@ -178,6 +179,7 @@ pub struct AsyncMeshManager {
     uv_table: Arc<UvLookupTable>,
     tree_config: Arc<TreeConfig>,
     tree_noise: Arc<TreeNoise>,
+    world_type: Arc<WorldType>,
 }
 
 impl AsyncMeshManager {
@@ -186,6 +188,7 @@ impl AsyncMeshManager {
         uv_table: UvLookupTable,
         tree_config: TreeConfig,
         tree_noise: TreeNoise,
+        world_type: WorldType,
     ) -> Self {
         let (task_tx, task_rx) = mpsc::channel::<MeshTask>();
         let (mesh_tx, mesh_rx) = mpsc::channel::<MeshResult>();
@@ -195,6 +198,7 @@ impl AsyncMeshManager {
         let uv_table = Arc::new(uv_table);
         let tree_config = Arc::new(tree_config);
         let tree_noise = Arc::new(tree_noise);
+        let world_type = Arc::new(world_type);
 
         for _ in 0..worker_count {
             let rx = task_rx.clone();
@@ -203,8 +207,9 @@ impl AsyncMeshManager {
             let uv = uv_table.clone();
             let tc = tree_config.clone();
             let tn = tree_noise.clone();
+            let wt = world_type.clone();
             thread::spawn(move || {
-                Self::worker_loop(rx, mesh_tx, prepare_tx, uv, tc, tn);
+                Self::worker_loop(rx, mesh_tx, prepare_tx, uv, tc, tn, wt);
             });
         }
 
@@ -218,6 +223,7 @@ impl AsyncMeshManager {
             uv_table,
             tree_config,
             tree_noise,
+            world_type,
         }
     }
 
@@ -228,6 +234,7 @@ impl AsyncMeshManager {
         uv_table: Arc<UvLookupTable>,
         tree_config: Arc<TreeConfig>,
         tree_noise: Arc<TreeNoise>,
+        world_type: Arc<WorldType>,
     ) {
         loop {
             let task = {
@@ -243,12 +250,17 @@ impl AsyncMeshManager {
             match task {
                 MeshTask::Prepare { coord } => {
                     let mut chunk = ChunkData::filled(0);
-                    fill_terrain(&mut chunk, &coord);
+                    match *world_type {
+                        WorldType::Noise => fill_terrain(&mut chunk, &coord),
+                        WorldType::Flat => fill_flat_terrain(&mut chunk, &coord),
+                        WorldType::Void => {} // 虚空世界：保持全空气，不生成任何地形
+                    }
                     generate_trees_in_chunk(
                         &mut chunk,
                         &coord,
                         tree_config.as_ref(),
                         tree_noise.as_ref(),
+                        *world_type,
                     );
 
                     // 始终发送结果（包括空区块），确保 prepare_pending 能被正确清除。

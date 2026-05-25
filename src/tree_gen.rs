@@ -17,7 +17,7 @@
 //! 3. 对每个候选树干位置，计算树木结构（树干 + 树冠）
 //! 4. 只放置落在本区块 XZY 范围内的方块
 
-use crate::chunk::{BlockId, CHUNK_SIZE, ChunkCoord, ChunkData, WATER_LEVEL, get_surface_height};
+use crate::chunk::{BlockId, CHUNK_SIZE, ChunkCoord, ChunkData, WATER_LEVEL, get_surface_height, WorldType};
 use bevy::prelude::Resource;
 use noise::{NoiseFn, Perlin};
 
@@ -296,7 +296,13 @@ pub fn generate_trees_in_chunk(
     coord: &ChunkCoord,
     config: &TreeConfig,
     noise: &TreeNoise,
+    world_type: WorldType,
 ) {
+    // 虚空世界不生成树木
+    if world_type == WorldType::Void {
+        return;
+    }
+
     let chunk_ox = coord.cx * CHUNK_SIZE as i32;
     let chunk_oz = coord.cz * CHUNK_SIZE as i32;
     let chunk_oy = coord.cy * CHUNK_SIZE as i32;
@@ -324,7 +330,7 @@ pub fn generate_trees_in_chunk(
         let mut trunk_z = search_min_z;
         while trunk_z <= search_max_z {
             // 计算地表高度（使用与地形生成相同的确定性噪声）
-            let surface_y = get_surface_height(trunk_x as f64, trunk_z as f64);
+            let surface_y = get_surface_height(trunk_x as f64, trunk_z as f64, world_type);
 
             // 使用 Perlin 噪声判断是否在该位置生成树木
             let noise_val = noise
