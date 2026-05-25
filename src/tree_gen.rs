@@ -324,26 +324,34 @@ pub fn generate_trees_in_chunk(
 
     let step = config.tree_step;
 
-    // 遍历扩展搜索范围内的所有树干候选位置
+    // ── 预计算候选位置数量（用于调试和容量预分配） ──
+    let num_x = ((search_max_x - search_min_x).div_euclid(step) + 1) as usize;
+    let num_z = ((search_max_z - search_min_z).div_euclid(step) + 1) as usize;
+    let _total_candidates = num_x * num_z;
+
+    // 遍历扩展搜索范围内的所有树干候选位置。
+    //
+    // 性能优化：先检查廉价 Perlin 噪声（spawn_prob），再计算昂贵 FBM 噪声（surface_y）。
+    // spawn_chance = 0.12 → 约 88% 的候选被廉价过滤拦截，避免不必要的 FBM 求值。
     let mut trunk_x = search_min_x;
     while trunk_x <= search_max_x {
         let mut trunk_z = search_min_z;
         while trunk_z <= search_max_z {
-            // 计算地表高度（使用与地形生成相同的确定性噪声）
-            let surface_y = get_surface_height(trunk_x as f64, trunk_z as f64, world_type);
-
-            // 使用 Perlin 噪声判断是否在该位置生成树木
+            // ── 阶段 ①：廉价 Perlin 噪声（单次求值） ──
+            // 提前过滤 88% 候选，避免后续昂贵的 FBM 求值
             let noise_val = noise
                 .distribution
                 .get([trunk_x as f64 * 0.035, trunk_z as f64 * 0.035]);
-
-            // noise_val 范围 [-1, 1]，映射到 [0, 1]
             let spawn_prob = noise_val * 0.5 + 0.5;
 
             if spawn_prob > config.spawn_chance as f64 {
                 trunk_z += step;
                 continue;
             }
+
+            // ── 阶段 ②：昂贵 FBM 噪声（地表高度） ──
+            // 仅 ~12% 的候选到达此处
+            let surface_y = get_surface_height(trunk_x as f64, trunk_z as f64, world_type);
 
             // 跳过地表高度超出树木能触及范围的候选项
             if surface_y < min_trunk_y || surface_y > max_trunk_y {
