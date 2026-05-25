@@ -28,6 +28,7 @@ pub type BlockId = u8;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum WorldType {
     /// 噪声世界：使用 Simplex 噪声生成起伏地形，含草/泥土/石头/水
+    #[default]
     Noise,
     /// 平坦世界：只有草方块(1)和泥土(3)，地表 Y=96
     Flat,
@@ -36,7 +37,6 @@ pub enum WorldType {
     Void,
     /// 门格海绵世界：由 Menger Sponge 分形构成的石头结构，中心位于世界原点。
     /// 使用 4 次递归迭代，实体方块为石头(2)。
-    #[default]
     MengerSponge,
 }
 

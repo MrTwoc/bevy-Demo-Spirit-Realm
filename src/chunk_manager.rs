@@ -364,13 +364,22 @@ pub fn chunk_loader_system(
             )
         };
 
+        // ── 将网格数据包装为 Arc，避免后续克隆产生完整 memcpy ──
+        // 固体网格数据被两条路径同时消费：
+        //   ① upload_queue → GPU 间接渲染（O(1) Arc 引用计数克隆）
+        //   ② Bevy Mesh 资产 → 标准渲染管线（O(n) Vec 克隆，必须持有所有权）
+        let solid_positions = Arc::new(result.solid.positions);
+        let solid_normals = Arc::new(result.solid.normals);
+        let solid_uvs = Arc::new(result.solid.uvs);
+        let solid_indices = Arc::new(result.solid.indices);
+
         // ── 推送网格数据到间接渲染上传队列 ──────────────────────
         render_state.upload_queue.push(ChunkMeshData {
             coord: result.coord,
-            positions: result.solid.positions.clone(),
-            normals: result.solid.normals.clone(),
-            uvs: result.solid.uvs.clone(),
-            indices: result.solid.indices.clone(),
+            positions: Arc::clone(&solid_positions),
+            normals: Arc::clone(&solid_normals),
+            uvs: Arc::clone(&solid_uvs),
+            indices: Arc::clone(&solid_indices),
             lod_level: chunk_lod,
         });
         render_state.dirty = true;
@@ -384,10 +393,10 @@ pub fn chunk_loader_system(
             if old_handle != shared_empty_mesh.handle {
                 // 已有独立 Handle → 原地更新顶点/索引数据
                 if let Some(mesh) = meshes.get_mut(&old_handle) {
-                    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, result.solid.positions);
-                    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, result.solid.uvs);
-                    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, result.solid.normals);
-                    mesh.insert_indices(bevy::mesh::Indices::U32(result.solid.indices));
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, (*solid_positions).clone());
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, (*solid_uvs).clone());
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, (*solid_normals).clone());
+                    mesh.insert_indices(bevy::mesh::Indices::U32((*solid_indices).clone()));
                 }
                 new_handle = old_handle.clone();
             } else {
@@ -397,10 +406,10 @@ pub fn chunk_loader_system(
                         bevy::render::render_resource::PrimitiveTopology::TriangleList,
                         RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
                     )
-                    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, result.solid.positions)
-                    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, result.solid.uvs)
-                    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, result.solid.normals)
-                    .with_inserted_indices(bevy::mesh::Indices::U32(result.solid.indices)),
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, (*solid_positions).clone())
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, (*solid_uvs).clone())
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, (*solid_normals).clone())
+                    .with_inserted_indices(bevy::mesh::Indices::U32((*solid_indices).clone())),
                 );
             }
 

@@ -5,6 +5,7 @@
 //! 通过偏移量访问各个区块的数据。
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
 use bevy::prelude::*;
 use bevy::render::render_resource::*;
@@ -30,19 +31,23 @@ pub struct IndirectCommand {
 
 /// 区块Mesh数据（CPU端）
 ///
-/// 存储单个区块的Mesh数据，用于上传到全局Buffer
+/// 存储单个区块的Mesh数据，用于上传到全局Buffer。
+///
+/// 使用 `Arc<Vec<...>>` 而非 `Vec<...>`：同一份数据可能同时被
+/// upload_queue（GPU间接渲染）和 Bevy Mesh 资产生成两条路径消费，
+/// Arc 克隆仅增加引用计数（O(1)），避免完整 memcpy。
 #[derive(Clone, Debug)]
 pub struct ChunkMeshData {
     /// 区块坐标
     pub coord: crate::chunk::ChunkCoord,
     /// 顶点位置数据
-    pub positions: Vec<[f32; 3]>,
+    pub positions: Arc<Vec<[f32; 3]>>,
     /// 法线数据
-    pub normals: Vec<[f32; 3]>,
+    pub normals: Arc<Vec<[f32; 3]>>,
     /// UV坐标
-    pub uvs: Vec<[f32; 2]>,
+    pub uvs: Arc<Vec<[f32; 2]>>,
     /// 索引数据
-    pub indices: Vec<u32>,
+    pub indices: Arc<Vec<u32>>,
     /// LOD级别
     pub lod_level: crate::lod::LodLevel,
 }
