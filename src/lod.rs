@@ -283,10 +283,72 @@ enum FaceLod {
     Back,
 }
 
+/// 预计算的降采样主导方块网格。
+///
+/// 将 `sample_dominant_block` 的 O(step³) 开销集中到一次遍历中完成，
+/// 后续面可见性检查改为 O(1) 数组索引。
+struct LodDominantGrid {
+    /// sample_size³ 大小的降采样体素数组，存储每个采样位置的主导方块 ID。
+    grid: Vec<BlockId>,
+    /// 降采样后的网格尺寸（sample_size）。
+    size: usize,
+    /// 降采样步长（step）。
+    step: usize,
+}
+
+impl LodDominantGrid {
+    /// 从原始区块数据预计算所有降采样采样点的 BlockId。
+    fn from_chunk(chunk: &ChunkData, step: usize, sample_size: usize) -> Self {
+        let volume = sample_size * sample_size * sample_size;
+        let mut grid = vec![0u8; volume];
+
+        for sz in 0..sample_size {
+            for sy in 0..sample_size {
+                for sx in 0..sample_size {
+                    let idx = sz * sample_size * sample_size + sy * sample_size + sx;
+                    grid[idx] = sample_dominant_block(
+                        chunk,
+                        sx * step,
+                        sy * step,
+                        sz * step,
+                        step,
+                    );
+                }
+            }
+        }
+
+        Self {
+            grid,
+            size: sample_size,
+            step,
+        }
+    }
+
+    /// O(1) 查询采样坐标 (sx, sy, sz) 处的主导方块。
+    #[inline]
+    fn get(&self, sx: usize, sy: usize, sz: usize) -> BlockId {
+        self.grid[sz * self.size * self.size + sy * self.size + sx]
+    }
+
+    /// 从体素坐标 (x, y, z) 查询对应采样位置的主导方块（坐标必须是 step 的整数倍）。
+    #[inline]
+    fn get_from_voxel(&self, x: usize, y: usize, z: usize) -> BlockId {
+        let sx = x / self.step;
+        let sy = y / self.step;
+        let sz = z / self.step;
+        self.get(sx, sy, sz)
+    }
+}
+
 /// LOD 级别的分离 Mesh 生成。
 ///
 /// 对于 LOD1+，降采样后水的 Greedy Mesh 优化效果不明显，
 /// 因此统一使用标准算法生成固体 Mesh，水方块同样参与降采样。
+///
+/// # 性能优化
+///
+/// 预计算 `LodDominantGrid` 降采样体素数组，将面剔除中的
+/// O(step³) `sample_dominant_block` 调用替换为 O(1) 数组索引。
 pub fn generate_lod_mesh_separated(
     chunk: &ChunkData,
     uv_table: &UvLookupTable,
@@ -305,6 +367,9 @@ pub fn generate_lod_mesh_separated(
         return (SubMeshData::new(), None);
     }
 
+    // ── Phase 1: 预计算降采样体素网格（O(sample_size³ × step³) 只执行一次） ─
+    let dominant_grid = LodDominantGrid::from_chunk(chunk, step, sample_size);
+
     let capacity = match lod {
         LodLevel::Lod1 => 1200,
         LodLevel::Lod2 => 150,
@@ -317,36 +382,30 @@ pub fn generate_lod_mesh_separated(
     let mut normals = Vec::with_capacity(capacity);
     let mut indices = Vec::with_capacity(capacity * 2);
 
+    // ── Phase 2: 面剔除与网格生成 ──────────────────────────────────
     for sz in 0..sample_size {
         for sy in 0..sample_size {
             for sx in 0..sample_size {
-                let x = sx * step;
-                let y = sy * step;
-                let z = sz * step;
+                let block_id = dominant_grid.get(sx, sy, sz);
 
-                let block_id = sample_dominant_block(chunk, x, y, z, step);
                 // LOD 级别只跳过空气方块，水方块同样参与降采样
                 if block_id == 0 {
                     continue;
                 }
 
-                for (face_index, (face, offset, uv_idx)) in FACES_LOD.iter().cloned().enumerate() {
-                    let lod_offset = [
-                        offset[0] * step as i32,
-                        offset[1] * step as i32,
-                        offset[2] * step as i32,
-                    ];
+                let x = sx * step;
+                let y = sy * step;
+                let z = sz * step;
 
-                    if !is_face_visible_lod(
-                        chunk,
-                        x,
-                        y,
-                        z,
+                for (face_index, (face, offset, uv_idx)) in FACES_LOD.iter().cloned().enumerate() {
+                    if !is_face_visible_lod_fast(
+                        x, y, z,
                         block_id,
-                        &lod_offset,
+                        offset,
                         face_index,
                         neighbors,
                         step,
+                        &dominant_grid,
                     ) {
                         continue;
                     }
@@ -386,6 +445,7 @@ pub fn generate_lod_mesh_separated(
     (solid, None)
 }
 
+/// 从原始体素区域中找到第一个非空气方块（优先从顶部向下搜索）。
 fn sample_dominant_block(
     chunk: &ChunkData,
     base_x: usize,
@@ -406,30 +466,38 @@ fn sample_dominant_block(
     0
 }
 
-fn is_face_visible_lod(
-    chunk: &ChunkData,
+/// 面可见性检查（优化版）：使用预计算的 `LodDominantGrid` 进行 O(1) 查询。
+///
+/// 对比旧版 `is_face_visible_lod`：
+/// - 不再对当前区块内的邻居调用 `sample_dominant_block`（O(step³)）
+/// - 不再重复计算 `sample_dominant_block(chunk, x, y, z, step)`（与调用方 `block_id` 相同）
+/// - 仅当邻居跨区块边界时才回退到邻居数据查询
+fn is_face_visible_lod_fast(
     x: usize,
     y: usize,
     z: usize,
-    _current_id: BlockId,
-    lod_offset: &[i32; 3],
+    current_id: BlockId,
+    face_offset: [i32; 3],
     face_index: usize,
     neighbors: &ChunkNeighbors,
     step: usize,
+    grid: &LodDominantGrid,
 ) -> bool {
-    let nx = x as i32 + lod_offset[0];
-    let ny = y as i32 + lod_offset[1];
-    let nz = z as i32 + lod_offset[2];
+    let nx = x as i32 + face_offset[0] * step as i32;
+    let ny = y as i32 + face_offset[1] * step as i32;
+    let nz = z as i32 + face_offset[2] * step as i32;
 
     let neighbor_id = if nx >= 0
         && ny >= 0
         && nz >= 0
-        && nx + step as i32 <= CHUNK_SIZE as i32
-        && ny + step as i32 <= CHUNK_SIZE as i32
-        && nz + step as i32 <= CHUNK_SIZE as i32
+        && (nx as usize) + step <= CHUNK_SIZE
+        && (ny as usize) + step <= CHUNK_SIZE
+        && (nz as usize) + step <= CHUNK_SIZE
     {
-        sample_dominant_block(chunk, nx as usize, ny as usize, nz as usize, step)
+        // 邻居在同一区块内 → O(1) 网格查询
+        grid.get_from_voxel(nx as usize, ny as usize, nz as usize)
     } else {
+        // 邻居跨区块边界 → 回退到邻居数据查询
         let neighbor_x = nx.rem_euclid(CHUNK_SIZE as i32) as usize;
         let neighbor_y = ny.rem_euclid(CHUNK_SIZE as i32) as usize;
         let neighbor_z = nz.rem_euclid(CHUNK_SIZE as i32) as usize;
@@ -449,9 +517,6 @@ fn is_face_visible_lod(
             neighbors.get_neighbor_block(face_index, neighbor_x, neighbor_y, neighbor_z)
         }
     };
-
-    // 获取当前位置降采样后的主导方块ID
-    let current_id = sample_dominant_block(chunk, x, y, z, step);
 
     !should_cull_face(current_id, neighbor_id)
 }
