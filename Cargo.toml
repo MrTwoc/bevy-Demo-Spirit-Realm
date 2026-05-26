@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy = { version = "0.18.1", features = ["dynamic_linking", "bevy_gizmos", "bevy_core_pipeline"] }
+# bevy = { version = "0.18.1", features = ["dynamic_linking", "bevy_gizmos", "bevy_core_pipeline"] }
+bevy = { version = "0.18.1", features = ["bevy_gizmos", "bevy_core_pipeline"] }
+bevy_embedded_assets = "0.15.0"
 bytemuck = { version = "1.14", features = ["derive"] }
 image = "0.25"
 noise = "0.9"
@@ -15,3 +17,16 @@ sysinfo = "0.34"
 opt-level = 1
 [profile.dev.package."*"]
 opt-level = 3
+
+[profile.release]
+# 优先以空间大小为优化目标，比默认的 "3" 更激进
+opt-level = "s"   # "z" 是 "s" 的更极端版本
+# 移除调试符号（Rust 1.59+），直接帮二进制文件“减重”[reference:2]
+strip = true
+# 启用全链接时优化（Full LTO），会显著增加编译时间，但能有效消除死代码
+lto = "fat"
+# 减少代码生成单元，让编译器获得更全局的优化视野
+codegen-units = 1
+# 将 panic 时“栈展开”的行为改为“直接终止”，可以移除大量展开代码
+panic = "abort"
+

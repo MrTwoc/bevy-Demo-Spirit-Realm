@@ -131,7 +131,10 @@ pub fn setup_hud(commands: &mut Commands, camera_entity: Entity) {
                 ChunkCountText,
             ));
             parent.spawn((
-                Text::new("view-distance: 0"),
+                Text::new(format!(
+                    "view-distance: {}",
+                    crate::chunk_manager::RENDER_DISTANCE
+                )),
                 TextFont {
                     font_size: 16.0,
                     ..default()
