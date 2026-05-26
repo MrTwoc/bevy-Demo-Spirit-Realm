@@ -41,7 +41,7 @@ fn main() {
             TimerMode::Repeating,
         )))
         .insert_resource(hud::HardwareInfoTimer(Timer::from_seconds(
-            2.0,
+            0.5,
             TimerMode::Repeating,
         )))
         .init_resource::<tree_gen::TreeConfig>()

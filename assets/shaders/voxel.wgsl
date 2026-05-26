@@ -31,18 +31,20 @@ fn fragment(
     var color = vec4<f32>(1.0, 0.0, 1.0, 1.0); // missing texture magenta
 #endif
 
-    // ── Hemisphere Lighting（替代完整 PBR） ──────────────────────
-    // 等价于 roughness=1.0, metallic=0.0 时的 PBR 漫反射结果：
-    //   - 上方暖色直射光强度 0.6
-    //   - 底部环境光强度 0.4（通过 (1 - ndotl) * 0.4 实现柔和间接光）
-    //
-    // 光照方向固定，匹配 setup_lighting 中 DirectionalLight 的角度
+    // ── Minecraft 晴天白天光照（Hemisphere Lighting）────────────────────
+    // 模拟 Minecraft 晴天白天的光照模型：
+    //   - 太阳高悬（light_dir.y = 0.85），略偏一侧产生自然阴影
+    //   - 环境光 0.3：暗面更深，有体积感（≈ Minecraft 天空光 5/15）
+    //   - 方向光 0.5：亮面 0.8×，柔和不过曝
+    //   - 对比度 ~2.7:1，有层次感的日间光影
     let world_normal = normalize(mesh.world_normal);
     // 背面朝前时翻转法线
     let N = select(world_normal, -world_normal, !is_front);
-    let light_dir = normalize(vec3<f32>(0.5, 0.8, 0.3));
+    // 太阳方向：高角度（0.85）偏右（0.2）偏前（0.3），与 setup_lighting 方向灯对齐
+    let light_dir = normalize(vec3<f32>(0.2, 0.85, 0.3));
     let ndotl = max(dot(N, light_dir), 0.0);
-    let lit = color.rgb * (0.4 + ndotl * 0.6);
+    // 半球光照：背面 0.3× → 正面 0.8×，整体暗一档，对比更鲜明
+    let lit = color.rgb * (0.3 + ndotl * 0.5);
     color = vec4<f32>(lit, color.a);
     // ─────────────────────────────────────────────────────────────
 
