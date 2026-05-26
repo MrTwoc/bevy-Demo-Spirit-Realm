@@ -53,8 +53,15 @@ use crate::tree_gen::{TreeConfig, TreeNoise};
 
 /// 渲染距离（区块数）。增大此值可以看到更远的世界，但需要更多区块加载。
 pub const RENDER_DISTANCE: i32 = 16;
+/// 游戏启动时的初始加载半径（Voxy 式渐进加载）。
+/// 不一次性加载全视距，避免启动时的大量任务积压。
+pub const INITIAL_LOAD_RADIUS: i32 = 8;
+/// 探测半径：玩家移动时，只在此半径内扫描新出现的区块并加入加载队列。
+/// 设为视距的一半（最多 8 区块），配合 UNLOAD_DISTANCE 实现渐进式加载：
+/// 探测范围之外的区块不会被主动发现，但已加载的区块只要在 UNLOAD_DISTANCE 内就持续保留。
+pub const DETECTION_RADIUS: i32 = if RENDER_DISTANCE / 2 > 8 { 8 } else { RENDER_DISTANCE / 2 };
 /// 卸载距离：超过此距离的区块会被卸载。比渲染距离大 1 避免边界闪烁。
-pub const UNLOAD_DISTANCE: i32 = RENDER_DISTANCE + 1;
+pub const UNLOAD_DISTANCE: i32 = RENDER_DISTANCE + RENDER_DISTANCE / 4;
 /// 每帧最多提交到异步队列的区块数。控制任务提交速率，避免工作线程积压。
 pub const CHUNKS_PER_FRAME: usize = 32;
 /// 最大缓存区块数。当超过此数量时，使用LRU策略淘汰最久未访问的区块。
@@ -166,19 +173,25 @@ const NEIGHBOR_OFFSETS: [(i32, i32, i32); 6] = [
 /// 分帧加载队列构建状态
 struct LoadQueueBuildState {
     center: ChunkCoord,
+    radius: i32,
     dx: i32,
     dz: i32,
     cy: i32,
+    cy_min: i32,
+    cy_max: i32,
     missing: Vec<ChunkCoord>,
 }
 
 impl LoadQueueBuildState {
-    fn new(center: ChunkCoord, cy_min: i32, cy_max: i32) -> Self {
+    fn new(center: ChunkCoord, radius: i32, cy_min: i32, cy_max: i32) -> Self {
         Self {
             center,
-            dx: -RENDER_DISTANCE,
-            dz: -RENDER_DISTANCE,
+            radius,
+            dx: -radius,
+            dz: -radius,
             cy: cy_min,
+            cy_min,
+            cy_max,
             missing: Vec::new(),
         }
     }
@@ -307,7 +320,7 @@ pub fn setup_world(
         cz: 0,
     };
     loaded.last_player_chunk = Some(center);
-    if let Some(queue) = rebuild_load_queue(center, &mut *loaded, QUEUE_BUILD_STEPS_PER_FRAME) {
+    if let Some(queue) = rebuild_load_queue(center, &mut *loaded, QUEUE_BUILD_STEPS_PER_FRAME, INITIAL_LOAD_RADIUS) {
         loaded.load_queue = queue;
     }
 }
@@ -543,7 +556,7 @@ pub fn chunk_loader_system(
         }
 
         if let Some(built_queue) =
-            rebuild_load_queue(player_chunk, &mut *loaded, QUEUE_BUILD_STEPS_PER_FRAME)
+            rebuild_load_queue(player_chunk, &mut *loaded, QUEUE_BUILD_STEPS_PER_FRAME, DETECTION_RADIUS)
         {
             loaded.load_queue = built_queue;
             unload_distant_chunks(
@@ -714,9 +727,10 @@ fn rebuild_load_queue(
     center: ChunkCoord,
     loaded: &mut LoadedChunks,
     steps_limit: usize,
+    radius: i32,
 ) -> Option<Vec<ChunkCoord>> {
     if let Some(ref state) = loaded.load_queue_build_state {
-        if state.center != center {
+        if state.center != center || state.radius != radius {
             loaded.load_queue_build_state = None;
         }
     }
@@ -724,7 +738,7 @@ fn rebuild_load_queue(
     if loaded.load_queue_build_state.is_none() {
         let cy_min = center.cy - Y_LOAD_RADIUS;
         let cy_max = center.cy + Y_LOAD_RADIUS;
-        loaded.load_queue_build_state = Some(LoadQueueBuildState::new(center, cy_min, cy_max));
+        loaded.load_queue_build_state = Some(LoadQueueBuildState::new(center, radius, cy_min, cy_max));
     }
 
     let state = loaded
@@ -738,13 +752,13 @@ fn rebuild_load_queue(
     let mut steps_done = 0;
 
     while steps_done < steps_limit {
-        if state.dx * state.dx + state.dz * state.dz > RENDER_DISTANCE * RENDER_DISTANCE {
+        if state.dx * state.dx + state.dz * state.dz > state.radius * state.radius {
             state.dz += 1;
-            if state.dz > RENDER_DISTANCE {
-                state.dz = -RENDER_DISTANCE;
+            if state.dz > state.radius {
+                state.dz = -state.radius;
                 state.dx += 1;
             }
-            if state.dx > RENDER_DISTANCE {
+            if state.dx > state.radius {
                 break;
             }
             continue;
@@ -764,23 +778,20 @@ fn rebuild_load_queue(
         if state.cy > cy_max {
             state.cy = cy_min;
             state.dz += 1;
-            if state.dz > RENDER_DISTANCE {
-                state.dz = -RENDER_DISTANCE;
+            if state.dz > state.radius {
+                state.dz = -state.radius;
                 state.dx += 1;
             }
         }
 
         steps_done += 1;
 
-        if state.dx > RENDER_DISTANCE {
+        if state.dx > state.radius {
             break;
         }
     }
 
-    if state.dx > RENDER_DISTANCE {
-        let cy_min = center.cy - Y_LOAD_RADIUS;
-        let cy_max = center.cy + Y_LOAD_RADIUS;
-
+    if state.dx > state.radius {
         state.missing.sort_by_key(|coord| {
             let dx = (coord.cx - center.cx).abs();
             let dy = (coord.cy - center.cy).abs();
