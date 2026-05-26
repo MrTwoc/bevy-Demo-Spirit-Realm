@@ -20,7 +20,9 @@ mod voxel_render;
 
 use crate::chunk_wire_frame::WireframeMode;
 use bevy::{
-    diagnostic::FrameTimeDiagnosticsPlugin, pbr::wireframe::WireframePlugin, prelude::*,
+    diagnostic::FrameTimeDiagnosticsPlugin,
+    ecs::schedule::common_conditions::resource_changed,
+    pbr::wireframe::WireframePlugin, prelude::*,
     render::diagnostic::RenderDiagnosticsPlugin,
 };
 use resource_pack::VoxelMaterial;
@@ -53,8 +55,6 @@ fn main() {
             resource_pack::ResourcePackPlugin,
             MaterialPlugin::<VoxelMaterial>::default(),
             svo::SvoPlugin,
-            voxel_render::VoxelRenderPlugin,
-            voxel_render::RenderBridgePlugin,
         ))
         .add_systems(
             Startup,
@@ -66,6 +66,8 @@ fn main() {
                 .chain(),
         )
         .add_systems(Startup, raycast::setup_highlight_resources)
+        // view-distance 是静态常量，只需在 Startup 写入一次
+        .add_systems(Startup, hud::update_view_distance)
         .add_systems(First, chunk_manager::chunk_loader_system)
         .add_systems(
             Update,
@@ -74,19 +76,28 @@ fn main() {
                 camera::camera_rotation,
                 input::cursor_grab_system,
                 chunk_wire_frame::toggle_wireframe,
-                chunk_wire_frame::sync_chunk_wireframe,
-                chunk_wire_frame::draw_wireframes,
+                // 线框同步：仅在 WireframeMode 变更时运行（按 V 切换时触发）
+                chunk_wire_frame::sync_chunk_wireframe
+                    .run_if(resource_changed::<WireframeMode>),
+                // 线框绘制：仅在线框模式开启时运行
+                chunk_wire_frame::draw_wireframes
+                    .run_if(|mode: Res<WireframeMode>| mode.0),
                 chunk_dirty::rebuild_dirty_chunks,
                 raycast::raycast_highlight_system,
                 block_interaction::block_interaction_system,
                 hud::update_hud,
                 hud::update_triangle_count,
-                hud::update_fps,
-                hud::update_hardware_info,
+                // merge FPS 更新到硬件信息定时器间隔（2秒）
+                hud::update_fps_and_hardware_info,
             ),
         )
-        .add_systems(Update, hud::update_chunk_count)
-        .add_systems(Update, hud::update_view_distance)
-        .add_systems(Update, hud::update_world_type)
+        // 区块数量仅在实际变化时更新
+        .add_systems(Update, hud::update_chunk_count.run_if(hud::chunk_count_changed))
+        // 世界类型仅在变更时更新
+        .add_systems(
+            Update,
+            hud::update_world_type
+                .run_if(resource_changed::<crate::chunk::WorldTypeResource>),
+        )
         .run();
 }

@@ -38,14 +38,14 @@ use crate::tree_gen::{TreeConfig, TreeNoise, generate_trees_in_chunk};
 /// 限制 GPU 上传速率，避免帧时间尖峰。
 pub const MESH_UPLOADS_PER_FRAME: usize = 64;
 
-/// 工作线程数量。默认使用可用 CPU 核心数的一半（至少 1），
-/// 留出核心给主线程和渲染线程。
+/// 工作线程数量。默认为 CPU 核心数 - 1（至少 1），
+/// 留出 1 个核心给主线程和渲染线程。
+/// 两阶段流水线（Prepare + Generate）可并行执行，更多工作线程可提升吞吐量。
 pub fn default_worker_count() -> usize {
-    (thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4)
-        / 2)
-    .max(1)
+    thread::available_parallelism()
+        .map(|n| n.get().saturating_sub(1))
+        .unwrap_or(3)
+        .max(1)
 }
 
 // ---------------------------------------------------------------------------

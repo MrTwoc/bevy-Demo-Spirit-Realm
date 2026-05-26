@@ -49,7 +49,6 @@ use crate::chunk_dirty::{
 use crate::hud::CachedTriangleCount;
 use crate::lod::{LodLevel, LodManager};
 use crate::resource_pack::{ResourcePackManager, VoxelMaterial};
-use crate::voxel_render::{ChunkMeshData, VoxelRenderState};
 use crate::tree_gen::{TreeConfig, TreeNoise};
 
 /// 渲染距离（区块数）。增大此值可以看到更远的世界，但需要更多区块加载。
@@ -326,8 +325,6 @@ pub fn chunk_loader_system(
     transparent_material: Res<TransparentVoxelMaterial>,
     shared_empty_mesh: Res<SharedEmptyMesh>,
     mut lod_manager: ResMut<LodManager>,
-    // 间接渲染上传队列
-    mut render_state: ResMut<VoxelRenderState>,
 ) {
     let Ok(cam_transform) = camera_query.single() else {
         return;
@@ -352,7 +349,7 @@ pub fn chunk_loader_system(
         }
 
         // 先提取 entry 中的值，避免跨越 get_mut 借用的生命周期
-        let (entity, water_entity, old_handle, old_water_handle, old_tri_count, chunk_lod) = {
+        let (entity, water_entity, old_handle, old_water_handle, old_tri_count) = {
             let entry = loaded.entries.get(&result.coord).unwrap();
             (
                 entry.entity,
@@ -360,29 +357,15 @@ pub fn chunk_loader_system(
                 entry.solid_mesh_handle.clone(),
                 entry.water_mesh_handle.clone(),
                 entry.triangle_count,
-                entry.lod_level,
             )
         };
 
         // ── 将网格数据包装为 Arc，避免后续克隆产生完整 memcpy ──
-        // 固体网格数据被两条路径同时消费：
-        //   ① upload_queue → GPU 间接渲染（O(1) Arc 引用计数克隆）
-        //   ② Bevy Mesh 资产 → 标准渲染管线（O(n) Vec 克隆，必须持有所有权）
+        // 固体网格数据仅走 Bevy Mesh 管线（Mesh3d + MeshMaterial3d）
         let solid_positions = Arc::new(result.solid.positions);
         let solid_normals = Arc::new(result.solid.normals);
         let solid_uvs = Arc::new(result.solid.uvs);
         let solid_indices = Arc::new(result.solid.indices);
-
-        // ── 推送网格数据到间接渲染上传队列 ──────────────────────
-        render_state.upload_queue.push(ChunkMeshData {
-            coord: result.coord,
-            positions: Arc::clone(&solid_positions),
-            normals: Arc::clone(&solid_normals),
-            uvs: Arc::clone(&solid_uvs),
-            indices: Arc::clone(&solid_indices),
-            lod_level: chunk_lod,
-        });
-        render_state.dirty = true;
 
         // 1. 处理固体 Mesh
         let solid_triangle_count = result.solid.triangle_count;
@@ -569,7 +552,6 @@ pub fn chunk_loader_system(
                 &*async_mesh,
                 &mut *lod_manager,
                 &mut *cached,
-                &mut *render_state,
             );
         }
     }
@@ -593,7 +575,6 @@ pub fn chunk_loader_system(
         &*async_mesh,
         &mut *lod_manager,
         &mut *cached,
-        &mut *render_state,
     );
 
     // ── 步骤 3A：收集准备完成的区块数据，创建实体并提交网格生成任务 ──
@@ -642,6 +623,7 @@ pub fn chunk_loader_system(
                 ChunkComponent(Arc::clone(&shared)),
                 Transform::from_translation(position),
                 Visibility::default(),
+                // NoCpuCulling,
                 ChunkAtlasHandle(atlas_handle.handle.clone()),
                 ChunkCoordComponent(coord),
                 Mesh3d(placeholder_mesh.clone()),
@@ -821,7 +803,6 @@ fn unload_distant_chunks(
     async_mesh: &AsyncMeshManager,
     lod_manager: &mut LodManager,
     cached: &mut CachedTriangleCount,
-    render_state: &mut VoxelRenderState,
 ) {
     // 仅在玩家移动后才执行全量扫描，静止时跳过
     if !loaded.needs_unload_check {
@@ -846,7 +827,6 @@ fn unload_distant_chunks(
         lod_manager.remove(&coord);
 
         if let Some(entry) = loaded.entries.remove(&coord) {
-            render_state.remove_queue.push(coord);
             cached.0 = cached.0.wrapping_sub(entry.triangle_count);
             cached.0 = cached.0.wrapping_sub(entry.water_triangle_count);
             loaded.pending_deletions.push(PendingDeletion {
@@ -868,7 +848,6 @@ fn lru_evict(
     async_mesh: &AsyncMeshManager,
     lod_manager: &mut LodManager,
     cached: &mut CachedTriangleCount,
-    render_state: &mut VoxelRenderState,
 ) {
     if loaded.entries.len() <= MAX_CACHED_CHUNKS {
         return;
@@ -914,7 +893,6 @@ fn lru_evict(
         lod_manager.remove(&coord);
 
         if let Some(entry) = loaded.entries.remove(&coord) {
-            render_state.remove_queue.push(coord);
             cached.0 = cached.0.wrapping_sub(entry.triangle_count);
             cached.0 = cached.0.wrapping_sub(entry.water_triangle_count);
             loaded.pending_deletions.push(PendingDeletion {

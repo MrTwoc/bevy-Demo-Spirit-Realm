@@ -202,7 +202,17 @@ pub fn update_triangle_count(
     }
 }
 
-/// 每帧更新 HUD 中显示的已加载区块数量。
+/// chunk_count 变更检测辅助：仅在 chunk 数量变化时返回 true。
+/// 使用内部静态变量追踪上次值，避免每帧都执行 update_chunk_count。
+pub fn chunk_count_changed(loaded: Res<LoadedChunks>) -> bool {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static LAST_COUNT: AtomicUsize = AtomicUsize::new(usize::MAX);
+    let current = loaded.entries.len();
+    let last = LAST_COUNT.swap(current, Ordering::Relaxed);
+    current != last
+}
+
+/// 仅在区块数量变化时更新 HUD 中显示的已加载区块数量。
 pub fn update_chunk_count(
     loaded: Res<LoadedChunks>,
     mut text_query: Query<&mut Text, With<ChunkCountText>>,
@@ -235,17 +245,87 @@ pub fn update_world_type(
     }
 }
 
-/// 更新 HUD 中的 FPS 显示
-pub fn update_fps(
+/// 合并更新 FPS + 硬件信息（共用 2 秒定时器，减少冗余系统调度）。
+/// 替代原有的独立 `update_fps` 和 `update_hardware_info`。
+///
+/// 使用 `ParamSet` 包装 5 个 `Query<&mut Text>`，消除 Bevy ECS 的
+/// Query 冲突检测（B0001）——虽然各查询通过不同标记组件定位不同实体，
+/// 但静态分析无法验证不相交性。
+pub fn update_fps_and_hardware_info(
+    time: Res<Time>,
     diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
-    mut query: Query<&mut Text, With<FpsText>>,
+    mut timer: ResMut<HardwareInfoTimer>,
+    mut hw_info: ResMut<HardwareInfo>,
+    mut queries: bevy::ecs::system::ParamSet<(
+        Query<'static, 'static, &'static mut Text, With<FpsText>>,
+        Query<'static, 'static, &'static mut Text, (
+            With<CpuInfoText>,
+            Without<CpuUsageText>,
+            Without<GpuInfoText>,
+            Without<MemoryInfoText>,
+        )>,
+        Query<'static, 'static, &'static mut Text, (
+            With<CpuUsageText>,
+            Without<CpuInfoText>,
+            Without<GpuInfoText>,
+            Without<MemoryInfoText>,
+        )>,
+        Query<'static, 'static, &'static mut Text, (
+            With<GpuInfoText>,
+            Without<CpuInfoText>,
+            Without<CpuUsageText>,
+            Without<MemoryInfoText>,
+        )>,
+        Query<'static, 'static, &'static mut Text, (
+            With<MemoryInfoText>,
+            Without<CpuInfoText>,
+            Without<CpuUsageText>,
+            Without<GpuInfoText>,
+        )>,
+    )>,
 ) {
-    let Ok(mut text) = query.single_mut() else {
+    timer.0.tick(time.delta());
+    if !timer.0.just_finished() {
         return;
-    };
-    if let Some(fps) = diagnostics.get(&bevy::diagnostic::FrameTimeDiagnosticsPlugin::FPS) {
-        if let Some(value) = fps.smoothed() {
-            **text = format!("FPS: {:.0}", value);
+    }
+
+    // ── FPS 更新 ──
+    if let Ok(mut text) = queries.p0().single_mut() {
+        if let Some(fps) = diagnostics.get(&bevy::diagnostic::FrameTimeDiagnosticsPlugin::FPS) {
+            if let Some(value) = fps.smoothed() {
+                **text = format!("FPS: {:.0}", value);
+            }
+        }
+    }
+
+    // ── 硬件信息更新 ──
+    hw_info.system.refresh_all();
+
+    if let Ok(mut text) = queries.p1().single_mut() {
+        **text = format!("CPU: {}", hw_info.cpu_name);
+    }
+
+    let proc_cpu = hw_info
+        .system
+        .process(hw_info.current_pid)
+        .map(|p| p.cpu_usage())
+        .unwrap_or(0.0);
+    if let Ok(mut text) = queries.p2().single_mut() {
+        **text = format!("Process CPU: {:.1}%", proc_cpu);
+    }
+
+    if let Ok(mut text) = queries.p3().single_mut() {
+        **text = format!("GPU: {}", hw_info.gpu_name);
+    }
+
+    if let Some(proc) = hw_info.system.process(hw_info.current_pid) {
+        let proc_mem_mb = proc.memory() as f64 / (1024.0 * 1024.0);
+        let total_sys_mem_gb = hw_info.system.total_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
+        if let Ok(mut text) = queries.p4().single_mut() {
+            **text = format!(
+                "Process RAM: {:.1} MB (System {:.1} GB)",
+                proc_mem_mb, total_sys_mem_gb
+            );
         }
     }
 }
@@ -418,86 +498,6 @@ pub fn setup_hardware_info_hud(commands: &mut Commands, camera_entity: Entity) {
         });
 }
 
-/// 定期刷新硬件信息并更新 HUD 文本。
-#[allow(clippy::type_complexity)]
-pub fn update_hardware_info(
-    time: Res<Time>,
-    mut timer: ResMut<HardwareInfoTimer>,
-    mut hw_info: ResMut<HardwareInfo>,
-    mut cpu_name_query: Query<
-        &mut Text,
-        (
-            With<CpuInfoText>,
-            Without<CpuUsageText>,
-            Without<GpuInfoText>,
-            Without<MemoryInfoText>,
-        ),
-    >,
-    mut cpu_usage_query: Query<
-        &mut Text,
-        (
-            With<CpuUsageText>,
-            Without<CpuInfoText>,
-            Without<GpuInfoText>,
-            Without<MemoryInfoText>,
-        ),
-    >,
-    mut gpu_query: Query<
-        &mut Text,
-        (
-            With<GpuInfoText>,
-            Without<CpuInfoText>,
-            Without<CpuUsageText>,
-            Without<MemoryInfoText>,
-        ),
-    >,
-    mut mem_query: Query<
-        &mut Text,
-        (
-            With<MemoryInfoText>,
-            Without<CpuInfoText>,
-            Without<CpuUsageText>,
-            Without<GpuInfoText>,
-        ),
-    >,
-) {
-    timer.0.tick(time.delta());
-    if !timer.0.just_finished() {
-        return;
-    }
-
-    // 刷新系统信息和当前进程信息
-    hw_info.system.refresh_all();
-
-    // CPU 名称（静态信息，仅首次有意义）
-    if let Ok(mut text) = cpu_name_query.single_mut() {
-        **text = format!("CPU: {}", hw_info.cpu_name);
-    }
-
-    // 当前进程 CPU 使用率
-    let proc_cpu = hw_info
-        .system
-        .process(hw_info.current_pid)
-        .map(|p| p.cpu_usage())
-        .unwrap_or(0.0);
-    if let Ok(mut text) = cpu_usage_query.single_mut() {
-        **text = format!("Process CPU: {:.1}%", proc_cpu);
-    }
-
-    // GPU 型号（静态）
-    if let Ok(mut text) = gpu_query.single_mut() {
-        **text = format!("GPU: {}", hw_info.gpu_name);
-    }
-
-    // 当前进程内存使用
-    if let Some(proc) = hw_info.system.process(hw_info.current_pid) {
-        let proc_mem_mb = proc.memory() as f64 / (1024.0 * 1024.0);
-        let total_sys_mem_gb = hw_info.system.total_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
-        if let Ok(mut text) = mem_query.single_mut() {
-            **text = format!(
-                "Process RAM: {:.1} MB (System {:.1} GB)",
-                proc_mem_mb, total_sys_mem_gb
-            );
-        }
-    }
-}
+// ============================================================================
+// 硬件信息 HUD（右上角）
+// ============================================================================

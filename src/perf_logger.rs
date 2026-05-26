@@ -10,6 +10,7 @@ use bevy::{
 };
 
 use crate::chunk_manager::LoadedChunks;
+use crate::hud::CachedTriangleCount;
 
 /// 性能记录器的配置资源。
 #[derive(Resource)]
@@ -203,8 +204,7 @@ fn record_perf_metrics(
     config: Res<PerfLoggerConfig>,
     diagnostics: Res<DiagnosticsStore>,
     loaded_chunks: Res<LoadedChunks>,
-    meshes: Res<Assets<Mesh>>,
-    mesh_query: Query<&Mesh3d>,
+    cached_triangles: Res<CachedTriangleCount>,
     mut state: Option<ResMut<PerfLoggerState>>,
 ) {
     if !config.enabled {
@@ -250,16 +250,9 @@ fn record_perf_metrics(
         }
     }
 
-    // 回退：统计 Mesh 数据中的三角形数
-    let cpu_triangles: u32 = mesh_query
-        .iter()
-        .map(|h| {
-            meshes.get(&h.0).map_or(0, |mesh| match mesh.indices() {
-                Some(indices) => indices.len() as u32 / 3,
-                None => mesh.count_vertices() as u32 / 3,
-            })
-        })
-        .sum();
+    // 使用增量维护的 CachedTriangleCount（chunk_manager 实时更新），
+    // 避免遍历所有 2000+ Mesh3d 实体统计三角形数
+    let cpu_triangles = cached_triangles.0;
 
     // 写入 CSV 行
     // 注意：GPU 三角形数暂不支持（Bevy 不暴露），只记录 CPU 三角形数

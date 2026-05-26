@@ -105,8 +105,6 @@ pub fn rebuild_dirty_chunks(
     async_mesh: Res<AsyncMeshManager>,
     mut loaded: ResMut<LoadedChunks>,
     mut cached: ResMut<CachedTriangleCount>,
-    // 实体组件已改为 ChunkComponent(Arc<ChunkData>)，避免脏块重建时深拷贝
-    // 通过 ChunkComponent 的 Deref 实现可自动解引用到 &ChunkData
     dirty_chunks: Query<
         (
             Entity,
@@ -124,26 +122,22 @@ pub fn rebuild_dirty_chunks(
         let coord = coord_comp.0;
 
         // 全空气区块：清理旧 Mesh 资源，替换为共享空 Mesh
-        // ChunkComponent 实现了 Deref<Target=ChunkData>，自动解引用
         if is_air_chunk(chunk_component) {
             // 移除旧的 mesh 资源（材质使用全局共享实例，不单独移除）
-            // 只清理独立 Handle，不清理共享空 Mesh
             if mesh_handle.mesh != shared_empty_mesh.handle {
                 meshes.remove(&mesh_handle.mesh);
             }
 
-            // ⭐ 原三角形数归零
+            // 三角形数归零
             if let Some(entry) = loaded.entries.get_mut(&coord) {
                 cached.0 = cached.0.wrapping_sub(entry.triangle_count);
                 entry.triangle_count = 0;
             }
 
-            // 使用全局共享空 Mesh（所有零几何体区块共用，避免每个区块创建独立 GPU Buffer）
+            // 使用全局共享空 Mesh（所有零几何体区块共用）
             let empty_mesh = shared_empty_mesh.handle.clone();
-            // 使用全局共享材质实例
             let empty_mat = shared_material.handle.clone();
 
-            // 更新实体组件
             commands.entity(entity).insert((
                 Mesh3d(empty_mesh.clone()),
                 MeshMaterial3d(empty_mat.clone()),
