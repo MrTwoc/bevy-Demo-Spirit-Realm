@@ -734,6 +734,422 @@ pub fn chunk_loader_system(
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// 优化后的分帧系统（替代原 chunk_loader_system 单一入口点）
+//
+// 设计目标：
+// 1. GPU 上传（collect_and_upload_meshes + process_pending_deletions）在 First
+//    调度中执行，优先于渲染阶段，减少帧尾延迟。
+// 2. CPU 密集型操作（manage_chunk_load_state + spawn_entities_from_prepare
+//    + submit_prepare_tasks）在 Update 调度中链式执行，共享加载状态。
+// 3. 更少的 ResMut 参数 → 降低各系统与相机/输入等系统的锁竞争。
+// 4. frame_counter 仅由 collect_and_upload_meshes 递增一次，后续系统通过
+//    loaded.frame_counter 读取，无需重复递增。
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// 系统 1：收集异步网格结果并上传 GPU（First 调度，优先于渲染）。
+///
+/// 原 `chunk_loader_system` 步骤 1：收集工作线程完成的网格数据，
+/// 原地更新或创建 Mesh Handle，更新实体组件和 CachedTriangleCount。
+pub fn collect_and_upload_meshes(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut loaded: ResMut<LoadedChunks>,
+    mut cached: ResMut<CachedTriangleCount>,
+    async_mesh: Res<AsyncMeshManager>,
+    shared_material: Res<SharedVoxelMaterial>,
+    transparent_material: Res<TransparentVoxelMaterial>,
+    shared_empty_mesh: Res<SharedEmptyMesh>,
+) {
+    loaded.frame_counter += 1;
+
+    let results = async_mesh.collect_results(MESH_UPLOADS_PER_FRAME);
+    for result in results {
+        if !loaded.entries.contains_key(&result.coord) {
+            continue;
+        }
+
+        let (entity, water_entity, old_handle, old_water_handle, old_tri_count) = {
+            let entry = loaded.entries.get(&result.coord).unwrap();
+            (
+                entry.entity,
+                entry.water_entity,
+                entry.solid_mesh_handle.clone(),
+                entry.water_mesh_handle.clone(),
+                entry.triangle_count,
+            )
+        };
+
+        let solid_positions = Arc::new(result.solid.positions);
+        let solid_normals = Arc::new(result.solid.normals);
+        let solid_uvs = Arc::new(result.solid.uvs);
+        let solid_indices = Arc::new(result.solid.indices);
+
+        let solid_triangle_count = result.solid.triangle_count;
+        let new_handle: Handle<Mesh>;
+
+        if solid_triangle_count > 0 {
+            if old_handle != shared_empty_mesh.handle {
+                if let Some(mesh) = meshes.get_mut(&old_handle) {
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, (*solid_positions).clone());
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, (*solid_uvs).clone());
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, (*solid_normals).clone());
+                    mesh.insert_indices(bevy::mesh::Indices::U32((*solid_indices).clone()));
+                }
+                new_handle = old_handle.clone();
+            } else {
+                new_handle = meshes.add(
+                    Mesh::new(
+                        bevy::render::render_resource::PrimitiveTopology::TriangleList,
+                        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+                    )
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, (*solid_positions).clone())
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, (*solid_uvs).clone())
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, (*solid_normals).clone())
+                    .with_inserted_indices(bevy::mesh::Indices::U32((*solid_indices).clone())),
+                );
+            }
+
+            commands.entity(entity).insert((
+                Mesh3d(new_handle.clone()),
+                MeshMaterial3d(shared_material.handle.clone()),
+                ChunkMeshHandle {
+                    mesh: new_handle.clone(),
+                    material: shared_material.handle.clone(),
+                },
+            ));
+
+            if let Some(entry) = loaded.entries.get_mut(&result.coord) {
+                if old_handle == shared_empty_mesh.handle {
+                    entry.solid_mesh_handle = new_handle;
+                }
+                entry.solid_material_handle = shared_material.handle.clone();
+            }
+        } else {
+            if old_handle != shared_empty_mesh.handle {
+                meshes.remove(&old_handle);
+            }
+            let empty_mesh = shared_empty_mesh.handle.clone();
+
+            commands.entity(entity).insert((
+                Mesh3d(empty_mesh.clone()),
+                MeshMaterial3d(shared_material.handle.clone()),
+                ChunkMeshHandle {
+                    mesh: empty_mesh.clone(),
+                    material: shared_material.handle.clone(),
+                },
+            ));
+
+            if let Some(entry) = loaded.entries.get_mut(&result.coord) {
+                entry.solid_mesh_handle = empty_mesh;
+                entry.solid_material_handle = shared_material.handle.clone();
+            }
+        }
+
+        // 处理水 Mesh
+        if let Some(water_data) = result.water {
+            let water_triangle_count = water_data.triangle_count;
+
+            let water_mesh_handle = if let Some(handle) = old_water_handle {
+                if let Some(mesh) = meshes.get_mut(&handle) {
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, water_data.positions);
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, water_data.uvs);
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, water_data.normals);
+                    mesh.insert_indices(bevy::mesh::Indices::U32(water_data.indices));
+                }
+                handle
+            } else {
+                meshes.add(
+                    Mesh::new(
+                        bevy::render::render_resource::PrimitiveTopology::TriangleList,
+                        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+                    )
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, water_data.positions)
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, water_data.uvs)
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, water_data.normals)
+                    .with_inserted_indices(bevy::mesh::Indices::U32(water_data.indices)),
+                )
+            };
+
+            if let Some(we) = water_entity {
+                commands.entity(we).insert((
+                    Mesh3d(water_mesh_handle.clone()),
+                    MeshMaterial3d(transparent_material.handle.clone()),
+                    Transform::IDENTITY,
+                ));
+            } else {
+                let water_entity = commands
+                    .spawn((
+                        Mesh3d(water_mesh_handle.clone()),
+                        MeshMaterial3d(transparent_material.handle.clone()),
+                        Transform::IDENTITY,
+                        Visibility::default(),
+                    ))
+                    .id();
+                commands.entity(entity).add_child(water_entity);
+
+                if let Some(entry) = loaded.entries.get_mut(&result.coord) {
+                    entry.water_entity = Some(water_entity);
+                }
+            }
+
+            if let Some(entry) = loaded.entries.get_mut(&result.coord) {
+                entry.water_mesh_handle = Some(water_mesh_handle);
+                entry.water_triangle_count = water_triangle_count;
+            }
+        } else {
+            if let Some(we) = water_entity {
+                if let Some(water_handle) = old_water_handle {
+                    meshes.remove(&water_handle);
+                }
+                commands.entity(we).despawn();
+            }
+            if let Some(entry) = loaded.entries.get_mut(&result.coord) {
+                entry.water_entity = None;
+                entry.water_mesh_handle = None;
+                entry.water_triangle_count = 0;
+            }
+        }
+
+        if let Some(entry) = loaded.entries.get_mut(&result.coord) {
+            cached.0 = cached
+                .0
+                .wrapping_add(solid_triangle_count)
+                .wrapping_sub(old_tri_count);
+            entry.triangle_count = solid_triangle_count;
+        }
+    }
+}
+
+/// 系统 2：分帧处理待删除的区块实体（First 调度）。
+///
+/// 原 `chunk_loader_system` 步骤 1.5：清理要被卸载的区块实体的 Mesh 资源。
+pub fn process_pending_deletions(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut loaded: ResMut<LoadedChunks>,
+    shared_empty_mesh: Res<SharedEmptyMesh>,
+) {
+    let delete_count = DELETIONS_PER_FRAME.min(loaded.pending_deletions.len());
+    let deletions_this_frame = loaded.pending_deletions.drain(..delete_count);
+    for deletion in deletions_this_frame {
+        if deletion.mesh_handle != shared_empty_mesh.handle {
+            meshes.remove(&deletion.mesh_handle);
+        }
+        if let Some(water_handle) = deletion.water_mesh_handle {
+            meshes.remove(&water_handle);
+        }
+        commands.entity(deletion.entity).despawn();
+    }
+}
+
+/// 系统 3：区块生命周期管理（Update 调度）。
+///
+/// 原 `chunk_loader_system` 步骤 2 + 2.5 + 2.6：
+/// 检测玩家移动 → 重建加载队列 → 卸载远处区块 → 更新 LOD → LRU 淘汰。
+pub fn manage_chunk_load_state(
+    mut commands: Commands,
+    mut loaded: ResMut<LoadedChunks>,
+    async_mesh: Res<AsyncMeshManager>,
+    mut lod_manager: ResMut<LodManager>,
+    mut cached: ResMut<CachedTriangleCount>,
+    camera_query: Query<&Transform, With<Camera3d>>,
+) {
+    let Ok(cam_transform) = camera_query.single() else {
+        return;
+    };
+    let player_chunk = ChunkCoord::from_world(cam_transform.translation);
+
+    // ── 步骤 2：检测玩家移动，启动/继续分帧加载队列构建 ──────
+    let needs_rebuild = loaded.load_queue_build_state.is_some()
+        || loaded.last_player_chunk != Some(player_chunk);
+
+    if needs_rebuild {
+        if loaded.load_queue_build_state.is_none() {
+            loaded.last_player_chunk = Some(player_chunk);
+            loaded.needs_unload_check = true;
+        }
+
+        if let Some(built_queue) = rebuild_load_queue(
+            player_chunk,
+            &mut *loaded,
+            QUEUE_BUILD_STEPS_PER_FRAME,
+            DETECTION_RADIUS,
+        ) {
+            loaded.load_queue = built_queue;
+            unload_distant_chunks(
+                player_chunk,
+                &mut *loaded,
+                &*async_mesh,
+                &mut *lod_manager,
+                &mut *cached,
+            );
+        }
+    }
+
+    // ── 步骤 2.5：更新 LOD 管理器 ─────────────────────────
+    let to_rebuild = lod_manager.update_incremental(player_chunk, &*loaded);
+    for (coord, new_lod) in to_rebuild {
+        if let Some(entry) = loaded.entries.get(&coord) {
+            commands
+                .entity(entry.entity)
+                .insert((DirtyChunk, LodChangedFlag));
+            if let Some(entry) = loaded.entries.get_mut(&coord) {
+                entry.lod_level = new_lod;
+            }
+        }
+    }
+
+    // ── 步骤 2.6：LRU 缓存淘汰 ───────────────────────────
+    lru_evict(
+        player_chunk,
+        &mut *loaded,
+        &*async_mesh,
+        &mut *lod_manager,
+        &mut *cached,
+    );
+}
+
+/// 系统 4：处理异步准备好的区块数据并创建实体（Update 调度）。
+///
+/// 原 `chunk_loader_system` 步骤 3A：
+/// 收集工作线程完成的地形数据 → 创建 ECS 实体 → 提交网格生成任务 → 标记邻居脏块。
+pub fn spawn_entities_from_prepare(
+    mut commands: Commands,
+    mut loaded: ResMut<LoadedChunks>,
+    async_mesh: Res<AsyncMeshManager>,
+    atlas_handle: Res<AtlasTextureHandle>,
+    shared_material: Res<SharedVoxelMaterial>,
+    shared_empty_mesh: Res<SharedEmptyMesh>,
+    mut lod_manager: ResMut<LodManager>,
+) {
+    // 使用上一系统（manage_chunk_load_state）设置的 last_player_chunk
+    // 和 collect_and_upload_meshes 递增的 frame_counter
+    let player_chunk = loaded
+        .last_player_chunk
+        .unwrap_or(ChunkCoord { cx: 0, cy: 0, cz: 0 });
+    let current_frame = loaded.frame_counter;
+
+    let prepare_results = async_mesh.collect_prepare_results(CHUNKS_PER_FRAME * 2);
+    let mut dirty_neighbors: Vec<Entity> = Vec::new();
+    let mut neighbor_dirty_remaining = NEIGHBOR_DIRTY_PER_FRAME;
+
+    for prepare_result in prepare_results {
+        let coord = prepare_result.coord;
+        let chunk = prepare_result.data;
+
+        if loaded.entries.contains_key(&coord) {
+            continue;
+        }
+
+        if is_air_chunk(&chunk) {
+            continue;
+        }
+
+        let neighbors = collect_neighbors(coord, &*loaded);
+
+        let dist_sq = (coord.cx - player_chunk.cx).pow(2)
+            + (coord.cy - player_chunk.cy).pow(2)
+            + (coord.cz - player_chunk.cz).pow(2);
+        let lod_level = LodLevel::from_chunk_distance_sq(dist_sq);
+
+        let placeholder_mesh = shared_empty_mesh.handle.clone();
+        let placeholder_mat = shared_material.handle.clone();
+
+        let shared = Arc::new(chunk);
+        let position = coord.to_world_origin();
+        let entity = commands
+            .spawn((
+                ChunkComponent(Arc::clone(&shared)),
+                Transform::from_translation(position),
+                Visibility::default(),
+                ChunkAtlasHandle(atlas_handle.handle.clone()),
+                ChunkCoordComponent(coord),
+                Mesh3d(placeholder_mesh.clone()),
+                MeshMaterial3d(placeholder_mat.clone()),
+                ChunkMeshHandle {
+                    mesh: placeholder_mesh.clone(),
+                    material: placeholder_mat.clone(),
+                },
+            ))
+            .id();
+
+        loaded.entries.insert(
+            coord,
+            ChunkEntry {
+                entity,
+                data: shared,
+                last_accessed: current_frame,
+                solid_mesh_handle: placeholder_mesh.clone(),
+                solid_material_handle: placeholder_mat.clone(),
+                water_mesh_handle: None,
+                water_entity: None,
+                water_triangle_count: 0,
+                lod_level,
+                triangle_count: 0,
+            },
+        );
+
+        loaded.entries_ordered.push(coord);
+
+        lod_manager.set_lod(coord, lod_level);
+
+        let entry = loaded.entries.get(&coord).unwrap();
+        async_mesh.submit_task(MeshTask::Generate {
+            coord,
+            data: Arc::clone(&entry.data),
+            neighbors,
+            lod_level: Some(lod_level),
+        });
+
+        for (dx, dy, dz) in NEIGHBOR_OFFSETS.iter() {
+            if neighbor_dirty_remaining == 0 {
+                break;
+            }
+            let neighbor_coord = ChunkCoord {
+                cx: coord.cx + dx,
+                cy: coord.cy + dy,
+                cz: coord.cz + dz,
+            };
+            if let Some(neighbor_entry) = loaded.entries.get(&neighbor_coord) {
+                if is_air_chunk(neighbor_entry.data.as_ref()) {
+                    continue;
+                }
+                dirty_neighbors.push(neighbor_entry.entity);
+                neighbor_dirty_remaining -= 1;
+            }
+        }
+    }
+
+    for entity in dirty_neighbors {
+        commands
+            .entity(entity)
+            .insert((DirtyChunk, NeighborChangedFlag));
+    }
+}
+
+/// 系统 5：从加载队列中提交新的 Prepare 任务（Update 调度）。
+///
+/// 原 `chunk_loader_system` 步骤 3B：
+/// 将加载队列中的区块坐标提交到工作线程进行地形+树木生成。
+pub fn submit_prepare_tasks(
+    mut loaded: ResMut<LoadedChunks>,
+    async_mesh: Res<AsyncMeshManager>,
+) {
+    let drain_count = CHUNKS_PER_FRAME.min(loaded.load_queue.len());
+    let chunks_to_submit: Vec<ChunkCoord> = loaded.load_queue.drain(..drain_count).collect();
+
+    for coord in chunks_to_submit {
+        if loaded.entries.contains_key(&coord) {
+            continue;
+        }
+        if async_mesh.is_prepare_pending(&coord) || async_mesh.is_pending(&coord) {
+            continue;
+        }
+        async_mesh.submit_prepare_task(coord);
+    }
+}
+
 /// 重建加载队列（分帧版本）
 fn rebuild_load_queue(
     center: ChunkCoord,
