@@ -810,10 +810,11 @@ pub fn collect_and_upload_meshes(
             )
         };
 
-        let solid_positions = Arc::new(result.solid.positions);
-        let solid_normals = Arc::new(result.solid.normals);
-        let solid_uvs = Arc::new(result.solid.uvs);
-        let solid_indices = Arc::new(result.solid.indices);
+        // Tier 1 零拷贝优化：直接从 SubMeshData 移动数据，消除 Arc 包装和 clone 拷贝
+        let solid_positions = result.solid.positions;
+        let solid_normals = result.solid.normals;
+        let solid_uvs = result.solid.uvs;
+        let solid_indices = result.solid.indices;
 
         let solid_triangle_count = result.solid.triangle_count;
         let new_handle: Handle<Mesh>;
@@ -821,22 +822,35 @@ pub fn collect_and_upload_meshes(
         if solid_triangle_count > 0 {
             if old_handle != shared_empty_mesh.handle {
                 if let Some(mesh) = meshes.get_mut(&old_handle) {
-                    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, (*solid_positions).clone());
-                    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, (*solid_uvs).clone());
-                    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, (*solid_normals).clone());
-                    mesh.insert_indices(bevy::mesh::Indices::U32((*solid_indices).clone()));
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, solid_positions);
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, solid_uvs);
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, solid_normals);
+                    mesh.insert_indices(bevy::mesh::Indices::U32(solid_indices));
+                    new_handle = old_handle.clone();
+                } else {
+                    // 安全网：old_handle 无效（如 Handle::default()），创建新 Mesh
+                    // 触发场景：place_block 在纯空气区块按需创建实体时使用了无效的占位句柄
+                    new_handle = meshes.add(
+                        Mesh::new(
+                            bevy::render::render_resource::PrimitiveTopology::TriangleList,
+                            RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+                        )
+                        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, solid_positions)
+                        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, solid_uvs)
+                        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, solid_normals)
+                        .with_inserted_indices(bevy::mesh::Indices::U32(solid_indices)),
+                    );
                 }
-                new_handle = old_handle.clone();
             } else {
                 new_handle = meshes.add(
                     Mesh::new(
                         bevy::render::render_resource::PrimitiveTopology::TriangleList,
                         RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
                     )
-                    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, (*solid_positions).clone())
-                    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, (*solid_uvs).clone())
-                    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, (*solid_normals).clone())
-                    .with_inserted_indices(bevy::mesh::Indices::U32((*solid_indices).clone())),
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, solid_positions)
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, solid_uvs)
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, solid_normals)
+                    .with_inserted_indices(bevy::mesh::Indices::U32(solid_indices)),
                 );
             }
 

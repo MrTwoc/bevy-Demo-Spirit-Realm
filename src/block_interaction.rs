@@ -19,8 +19,10 @@ use std::sync::Arc;
 
 use crate::chunk::{BlockId, BlockPos, CHUNK_SIZE, ChunkComponent, ChunkCoord, ChunkData};
 use crate::chunk_changes::{DataChangedFlag, NeighborChangedFlag};
-use crate::chunk_dirty::{ChunkCoordComponent, ChunkMeshHandle, DirtyChunk};
-use crate::chunk_manager::LoadedChunks;
+use crate::chunk_dirty::{ChunkAtlasHandle, ChunkCoordComponent, ChunkMeshHandle, DirtyChunk};
+use crate::chunk_manager::{
+    AtlasTextureHandle, LoadedChunks, SharedEmptyMesh, SharedVoxelMaterial,
+};
 use crate::raycast::RayHitState;
 
 /// The block type to place when right-clicking.
@@ -95,6 +97,9 @@ pub fn block_interaction_system(
     mut loaded: ResMut<LoadedChunks>,
     mut chunk_query: Query<&mut ChunkComponent>,
     cursor_options: Single<&bevy::window::CursorOptions>,
+    shared_empty_mesh: Res<SharedEmptyMesh>,
+    shared_material: Res<SharedVoxelMaterial>,
+    atlas_handle: Res<AtlasTextureHandle>,
 ) {
     // Only interact when cursor is locked (player is in game mode)
     if cursor_options.grab_mode != bevy::window::CursorGrabMode::Locked {
@@ -119,6 +124,9 @@ pub fn block_interaction_system(
                 &mut commands,
                 &mut loaded,
                 &mut chunk_query,
+                &shared_empty_mesh,
+                &shared_material,
+                &atlas_handle,
             );
         }
     }
@@ -185,6 +193,9 @@ fn place_block(
     commands: &mut Commands,
     loaded: &mut LoadedChunks,
     chunk_query: &mut Query<&mut ChunkComponent>,
+    shared_empty_mesh: &SharedEmptyMesh,
+    shared_material: &SharedVoxelMaterial,
+    atlas_handle: &AtlasTextureHandle,
 ) {
     // The new block goes at hit_pos + normal
     let place_pos = BlockPos {
@@ -232,16 +243,19 @@ fn place_block(
         let shared = Arc::new(chunk);
         let position = coord.to_world_origin();
 
-        // 创建占位 Mesh（rebuild_dirty_chunks 需要 ChunkMeshHandle 组件）
-        let placeholder_mesh = Handle::default();
-        let placeholder_mat = Handle::default();
+        // 使用共享资源创建占位 Mesh（而非 Handle::default()，避免无效句柄导致渲染失败）
+        let placeholder_mesh = shared_empty_mesh.handle.clone();
+        let placeholder_mat = shared_material.handle.clone();
 
         let entity = commands
             .spawn((
                 ChunkComponent(Arc::clone(&shared)),
                 Transform::from_translation(position),
                 Visibility::default(),
+                ChunkAtlasHandle(atlas_handle.handle.clone()),
                 ChunkCoordComponent(coord),
+                Mesh3d(placeholder_mesh.clone()),
+                MeshMaterial3d(placeholder_mat.clone()),
                 ChunkMeshHandle {
                     mesh: placeholder_mesh.clone(),
                     material: placeholder_mat.clone(),
