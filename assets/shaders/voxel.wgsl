@@ -24,8 +24,10 @@ fn fragment(
     // actual_u 和 actual_v 可以大于 1，通过 fract() 实现纹理平铺
     let layer = u32(floor(mesh.uv.x));
     let sample_uv = vec2<f32>(fract(mesh.uv.x), fract(mesh.uv.y));
-    var color = textureSample(
-        voxel_array_texture, voxel_array_texture_sampler, sample_uv, layer
+    // 使用 textureSampleLevel + 显式 LOD=0 替代 textureSample，
+    // 避免 GPU 计算纹理 LOD 导数的开销（Minecraft 风格无 mipmap，level 恒为 0）
+    var color = textureSampleLevel(
+        voxel_array_texture, voxel_array_texture_sampler, sample_uv, i32(layer), 0.0
     );
 #else
     var color = vec4<f32>(1.0, 0.0, 1.0, 1.0); // missing texture magenta

@@ -52,14 +52,18 @@ use crate::resource_pack::{ResourcePackManager, VoxelMaterial};
 use crate::tree_gen::{TreeConfig, TreeNoise};
 
 /// 渲染距离（区块数）。增大此值可以看到更远的世界，但需要更多区块加载。
-pub const RENDER_DISTANCE: i32 = 16;
+pub const RENDER_DISTANCE: i32 = 32;
 /// 游戏启动时的初始加载半径（Voxy 式渐进加载）。
 /// 不一次性加载全视距，避免启动时的大量任务积压。
 pub const INITIAL_LOAD_RADIUS: i32 = 8;
 /// 探测半径：玩家移动时，只在此半径内扫描新出现的区块并加入加载队列。
 /// 设为视距的一半（最多 8 区块），配合 UNLOAD_DISTANCE 实现渐进式加载：
 /// 探测范围之外的区块不会被主动发现，但已加载的区块只要在 UNLOAD_DISTANCE 内就持续保留。
-pub const DETECTION_RADIUS: i32 = if RENDER_DISTANCE / 2 > 8 { 8 } else { RENDER_DISTANCE / 2 };
+pub const DETECTION_RADIUS: i32 = if RENDER_DISTANCE / 2 > 8 {
+    8
+} else {
+    RENDER_DISTANCE / 2
+};
 /// 卸载距离：超过此距离的区块会被卸载。比渲染距离大 1 避免边界闪烁。
 pub const UNLOAD_DISTANCE: i32 = RENDER_DISTANCE + RENDER_DISTANCE / 4;
 /// 每帧最多提交到异步队列的区块数。控制任务提交速率，避免工作线程积压。
@@ -320,7 +324,12 @@ pub fn setup_world(
         cz: 0,
     };
     loaded.last_player_chunk = Some(center);
-    if let Some(queue) = rebuild_load_queue(center, &mut *loaded, QUEUE_BUILD_STEPS_PER_FRAME, INITIAL_LOAD_RADIUS) {
+    if let Some(queue) = rebuild_load_queue(
+        center,
+        &mut *loaded,
+        QUEUE_BUILD_STEPS_PER_FRAME,
+        INITIAL_LOAD_RADIUS,
+    ) {
         loaded.load_queue = queue;
     }
 }
@@ -555,9 +564,12 @@ pub fn chunk_loader_system(
             loaded.needs_unload_check = true;
         }
 
-        if let Some(built_queue) =
-            rebuild_load_queue(player_chunk, &mut *loaded, QUEUE_BUILD_STEPS_PER_FRAME, DETECTION_RADIUS)
-        {
+        if let Some(built_queue) = rebuild_load_queue(
+            player_chunk,
+            &mut *loaded,
+            QUEUE_BUILD_STEPS_PER_FRAME,
+            DETECTION_RADIUS,
+        ) {
             loaded.load_queue = built_queue;
             unload_distant_chunks(
                 player_chunk,
@@ -738,7 +750,8 @@ fn rebuild_load_queue(
     if loaded.load_queue_build_state.is_none() {
         let cy_min = center.cy - Y_LOAD_RADIUS;
         let cy_max = center.cy + Y_LOAD_RADIUS;
-        loaded.load_queue_build_state = Some(LoadQueueBuildState::new(center, radius, cy_min, cy_max));
+        loaded.load_queue_build_state =
+            Some(LoadQueueBuildState::new(center, radius, cy_min, cy_max));
     }
 
     let state = loaded
@@ -849,7 +862,9 @@ fn unload_distant_chunks(
     }
 
     // 批量同步 entries_ordered：O(N) retain，替代 O(N²) 的逐条 position() + remove
-    loaded.entries_ordered.retain(|c| loaded.entries.contains_key(c));
+    loaded
+        .entries_ordered
+        .retain(|c| loaded.entries.contains_key(c));
 }
 
 /// LRU 缓存淘汰
@@ -893,9 +908,7 @@ fn lru_evict(
     candidates.select_nth_unstable_by(evict_count - 1, |a, b| {
         a.1.cmp(&b.1).then_with(|| b.2.cmp(&a.2))
     });
-    candidates[..evict_count].sort_by(|a, b| {
-        a.1.cmp(&b.1).then_with(|| b.2.cmp(&a.2))
-    });
+    candidates[..evict_count].sort_by(|a, b| a.1.cmp(&b.1).then_with(|| b.2.cmp(&a.2)));
 
     for i in 0..evict_count {
         let coord = candidates[i].0;

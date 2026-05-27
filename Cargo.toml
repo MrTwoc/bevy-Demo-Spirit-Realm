@@ -19,8 +19,8 @@ opt-level = 1
 opt-level = 3
 
 [profile.release]
-# 优先以空间大小为优化目标，比默认的 "3" 更激进
-opt-level = "s"   # "z" 是 "s" 的更极端版本
+# 优先以运行速度为优化目标，CPU 密集的面剔除/网格生成立即受益
+opt-level = 3
 # 移除调试符号（Rust 1.59+），直接帮二进制文件“减重”[reference:2]
 strip = true
 # 启用全链接时优化（Full LTO），会显著增加编译时间，但能有效消除死代码
