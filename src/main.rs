@@ -74,7 +74,8 @@ fn main() {
                 // GPU 上传优先于渲染，减少帧尾延迟
                 chunk_manager::collect_and_upload_meshes,
                 // 分帧处理待删除的区块实体
-                chunk_manager::process_pending_deletions,
+                chunk_manager::process_pending_deletions
+                    .run_if(chunk_manager::has_pending_deletions),
             )
                 .chain(),
         )
@@ -83,8 +84,10 @@ fn main() {
             (
                 // ── 区块生命周期管理（链式执行，共享 LoadedChunks 状态）──
                 chunk_manager::manage_chunk_load_state,
-                chunk_manager::spawn_entities_from_prepare,
-                chunk_manager::submit_prepare_tasks,
+                chunk_manager::spawn_entities_from_prepare
+                    .run_if(chunk_manager::has_pending_prepare_results),
+                chunk_manager::submit_prepare_tasks
+                    .run_if(chunk_manager::has_load_queue_items),
                 camera::camera_movement,
                 camera::camera_rotation,
                 input::cursor_grab_system,

@@ -747,6 +747,36 @@ pub fn chunk_loader_system(
 //    loaded.frame_counter 读取，无需重复递增。
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// ── run_if 条件函数 ────────────────────────────────────────────
+//
+// 这些函数作为 run_if 条件使用，使用 Res<T>（只读）访问，
+// 当返回 false 时系统完全不运行 — 不获取任何 ResMut 锁，不消耗 CPU。
+// 在空闲帧（玩家静止、无新区块加载）中 3 个系统都会被跳过。
+
+/// `run_if` 条件：是否有待删除的区块实体。
+///
+/// 仅在 `pending_deletions` 非空时运行 `process_pending_deletions`。
+pub fn has_pending_deletions(loaded: Res<LoadedChunks>) -> bool {
+    !loaded.pending_deletions.is_empty()
+}
+
+/// `run_if` 条件：加载队列是否非空。
+///
+/// 仅在加载队列中有待处理的区块坐标时运行 `submit_prepare_tasks`。
+pub fn has_load_queue_items(loaded: Res<LoadedChunks>) -> bool {
+    !loaded.load_queue.is_empty()
+}
+
+/// `run_if` 条件：工作线程是否有待处理的异步任务。
+///
+/// 使用 `pending_count()`（Prepare + Generate 合计）作为粗粒度检查：
+/// 若两者均为 0，`collect_prepare_results` 必然返回空，系统可安全跳过。
+pub fn has_pending_prepare_results(async_mesh: Res<AsyncMeshManager>) -> bool {
+    async_mesh.pending_count() > 0
+}
+
+// ── 分帧系统入口 ───────────────────────────────────────────────
+
 /// 系统 1：收集异步网格结果并上传 GPU（First 调度，优先于渲染）。
 ///
 /// 原 `chunk_loader_system` 步骤 1：收集工作线程完成的网格数据，
