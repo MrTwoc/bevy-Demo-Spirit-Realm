@@ -410,14 +410,7 @@ impl ChunkData {
         }
     }
 
-    pub fn to_shared_vec(&self) -> Arc<Vec<BlockId>> {
-        match self {
-            ChunkData::Empty => Arc::new(vec![0; CHUNK_VOLUME]),
-            ChunkData::Uniform(id) => Arc::new(vec![*id; CHUNK_VOLUME]),
-            ChunkData::Paletted(data) => Arc::new(data.to_blocks()),
-        }
-    }
-
+    #[deprecated = "展开 32KB ChunkData 为 Vec<BlockId>，纯性能损耗。仅在废弃的 GPU meshing 路径中使用。"]
     pub fn to_vec(&self) -> Vec<BlockId> {
         match self {
             ChunkData::Empty => vec![0; CHUNK_VOLUME],
