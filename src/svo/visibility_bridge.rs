@@ -336,7 +336,7 @@ pub fn apply_svo_visibility(
             *vis = if is_visible {
                 Visibility::Inherited
             } else {
-                // 修复跑图时身边区块突然消失的问题，将Visibility 改为Inherited 即可
+                // 强调：修复跑图时身边区块突然消失的问题，将Visibility 改为Inherited 即可
                 // Visibility::Hidden
                 Visibility::Inherited
             };
