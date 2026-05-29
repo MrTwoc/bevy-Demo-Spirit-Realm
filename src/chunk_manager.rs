@@ -52,24 +52,24 @@ use crate::resource_pack::{ResourcePackManager, VoxelMaterial};
 use crate::tree_gen::{TreeConfig, TreeNoise};
 
 /// 渲染距离（区块数）。增大此值可以看到更远的世界，但需要更多区块加载。
-pub const RENDER_DISTANCE: i32 = 32;
+pub const RENDER_DISTANCE: i32 = 16;
 /// 游戏启动时的初始加载半径（Voxy 式渐进加载）。
-/// 不一次性加载全视距，避免启动时的大量任务积压。
-pub const INITIAL_LOAD_RADIUS: i32 = 8;
+/// 不一次性加载全视距，避免启动时的大量任务积压 最小值(16)。
+pub const INITIAL_LOAD_RADIUS: i32 = 16;
 /// 探测半径：玩家移动时，只在此半径内扫描新出现的区块并加入加载队列。
 /// 设为视距的一半（最多 8 区块），配合 UNLOAD_DISTANCE 实现渐进式加载：
 /// 探测范围之外的区块不会被主动发现，但已加载的区块只要在 UNLOAD_DISTANCE 内就持续保留。
-pub const DETECTION_RADIUS: i32 = if RENDER_DISTANCE / 2 > 8 {
-    8
+pub const DETECTION_RADIUS: i32 = if RENDER_DISTANCE <= 16 {
+    16
 } else {
     RENDER_DISTANCE / 2
 };
 /// 卸载距离：超过此距离的区块会被卸载。比渲染距离大 1 避免边界闪烁。
-pub const UNLOAD_DISTANCE: i32 = RENDER_DISTANCE + RENDER_DISTANCE / 4;
+pub const UNLOAD_DISTANCE: i32 = RENDER_DISTANCE + (RENDER_DISTANCE / 4);
 /// 每帧最多提交到异步队列的区块数。控制任务提交速率，避免工作线程积压。
 pub const CHUNKS_PER_FRAME: usize = 32;
 /// 最大缓存区块数。当超过此数量时，使用LRU策略淘汰最久未访问的区块。
-pub const MAX_CACHED_CHUNKS: usize = 2000;
+pub const MAX_CACHED_CHUNKS: usize = 20000;
 /// LRU淘汰时每帧最多卸载的区块数。避免一帧内卸载太多导致卡顿。
 pub const LRU_UNLOADS_PER_FRAME: usize = 32;
 /// 每帧最多标记邻居为脏的数量。

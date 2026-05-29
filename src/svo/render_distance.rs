@@ -8,6 +8,7 @@
 use bevy::prelude::*;
 use std::collections::HashSet;
 
+use crate::chunk_manager::RENDER_DISTANCE;
 use crate::svo::{
     encode_position, format_pos,
     config::{MAX_LOD, TOP_LEVEL_SIZE, TOP_LEVEL_CACHE_SIZE},
@@ -42,7 +43,7 @@ pub struct RenderDistanceController {
 impl Default for RenderDistanceController {
     fn default() -> Self {
         Self {
-            render_distance: 8,
+            render_distance: RENDER_DISTANCE / 16,  // chunk 单位 → section 单位 (1 section = 16 chunks)
             min_y: -2,
             max_y: 2,
             current_tx: i32::MAX, // 强制首次更新

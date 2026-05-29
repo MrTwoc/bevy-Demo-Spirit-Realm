@@ -20,8 +20,8 @@ use crate::svo::node_manager::NodeManager;
 /// 可见性更新间隔（帧数），减少 CPU 开销
 const VISIBILITY_UPDATE_INTERVAL: u32 = 2;
 
-/// 渲染距离（chunk 数量），与 chunk_manager::RENDER_DISTANCE 保持一致
-const RENDER_DIST_CHUNKS: i32 = 16;
+/// 渲染距离（chunk 数量），统一引用 chunk_manager::RENDER_DISTANCE
+const RENDER_DIST_CHUNKS: i32 = crate::chunk_manager::RENDER_DISTANCE;
 
 // ── 视锥体平面 ─────────────────────────────────────────────────────────
 
@@ -336,7 +336,8 @@ pub fn apply_svo_visibility(
             *vis = if is_visible {
                 Visibility::Inherited
             } else {
-                Visibility::Hidden
+                // Visibility::Hidden
+                Visibility::Inherited
             };
             if is_visible {
                 visible_count += 1;
