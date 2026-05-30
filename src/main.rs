@@ -16,7 +16,6 @@ mod raycast;
 mod resource_pack;
 mod svo;
 mod tree_gen;
-mod voxel_render;
 
 use crate::chunk_wire_frame::WireframeMode;
 use bevy::{

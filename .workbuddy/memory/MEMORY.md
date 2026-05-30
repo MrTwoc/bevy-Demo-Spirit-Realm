@@ -8,7 +8,9 @@
 - 旧 chunk_loader_system 已废弃，新代码请勿引用
 
 ### 渲染
-- 使用 Bevy Mesh 路径（非 Indirect Draw）
+- 使用 Bevy Mesh 路径（路径 A），Indirect Draw 代码（路径 B）已于 2026-05-30 全部移除
+- 路径 B 残留文件已删除：`src/voxel_render/`、`src/gpu_meshing.rs`、`voxel_indirect.wgsl`、`voxel_cull.wgsl`、`voxel_meshing.wgsl`
+- SVO 剔除系统（`gpu_traversal.rs`、`visibility_bridge.rs`）保留，驱动 Bevy PBR 渲染
 - 固体方块使用 Opaque 材质，水方块使用 Blend 材质
 - 共享空 Mesh（SharedEmptyMesh）用于零几何体/空气区块
 
