@@ -12,7 +12,7 @@
 
 use bevy::prelude::Resource;
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, atomic::{AtomicU64, Ordering}};
 
 use crate::svo::{
     encode_position, decode_level, decode_x, decode_y, decode_z,
@@ -46,10 +46,12 @@ pub struct NodeManager {
     // ── GPU 数据缓存 (优化：避免每帧全量重建) ──
     /// 节点数据代际号，任何节点数据变化时递增
     generation: u64,
-    /// 缓存的 GPU 节点数据 (keyed by node_id)
-    gpu_data_cache: Mutex<Vec<GpuNode>>,
+    /// 缓存的 GPU 节点数据，使用 Arc 避免 clone 整个 Vec
+    /// generation 未变时仅 Arc::clone（O(1) 引用计数递增）
+    gpu_data_cache: Mutex<Arc<Vec<GpuNode>>>,
     /// 缓存对应的 generation，不一致时需要重建
-    cached_generation: Mutex<u64>,
+    /// 使用 AtomicU64：has_dirty_nodes（render 线程）读，gpu_node_data（main 线程）写
+    cached_generation: AtomicU64,
 }
 
 impl Default for NodeManager {
@@ -62,8 +64,8 @@ impl Default for NodeManager {
             pending_insert: Vec::new(),
             pending_remove: Vec::new(),
             generation: 0,
-            gpu_data_cache: Mutex::new(Vec::new()),
-            cached_generation: Mutex::new(u64::MAX), // 初始强制重建
+            gpu_data_cache: Mutex::new(Arc::new(Vec::new())),
+            cached_generation: AtomicU64::new(u64::MAX), // 初始强制重建
         }
     }
 }
@@ -357,7 +359,7 @@ impl NodeManager {
 
     /// 是否有脏节点待上传 (供 extract 系统判断是否需更新 GPU buffer)
     pub fn has_dirty_nodes(&self) -> bool {
-        self.generation != *self.cached_generation.lock().unwrap()
+        self.generation != self.cached_generation.load(Ordering::Acquire)
     }
 
     /// 获取当前代际号（visibility_bridge 用于检测 SVO 树变化）
@@ -372,27 +374,33 @@ impl NodeManager {
 
     /// 获取 GPU 可读的节点数据（使用缓存，避免每帧全量重建）
     ///
-    /// 只在 generation 变化时重建缓存，否则直接返回缓存拷贝。
+    /// 返回 `Arc<Vec<GpuNode>>`：
+    /// - 缓存命中时仅 clone Arc（O(1) 引用计数递增），不拷贝底层数据
+    /// - 缓存失效时重建 Vec 并存入 Arc
     /// 采用 Mutex 实现 &self 下的内部可变性，兼容 `Res<NodeManager>` 只读访问。
-    pub fn gpu_node_data(&self) -> Vec<GpuNode> {
+    pub fn gpu_node_data(&self) -> Arc<Vec<GpuNode>> {
         let cur_gen = self.generation;
-        // 缓存失效 → 重建
-        if *self.cached_generation.lock().unwrap() != cur_gen {
-            let count = self.store.max_id() as usize;
-            let mut cache = self.gpu_data_cache.lock().unwrap();
-            cache.clear();
-            cache.reserve(count);
-            for id in 0..count as u32 {
-                if self.store.node_exists(id) {
-                    let entry = self.store.read_node(id);
-                    cache.push(GpuNode::from_entry(&entry));
-                } else {
-                    cache.push(GpuNode::zeroed());
-                }
-            }
-            *self.cached_generation.lock().unwrap() = cur_gen;
+        let mut cache = self.gpu_data_cache.lock().unwrap();
+
+        // 缓存命中 → O(1) Arc clone
+        if self.cached_generation.load(Ordering::Acquire) == cur_gen {
+            return Arc::clone(&cache);
         }
-        self.gpu_data_cache.lock().unwrap().clone()
+
+        // 缓存失效 → 重建
+        let count = self.store.max_id() as usize;
+        let mut new_data = Vec::with_capacity(count);
+        for id in 0..count as u32 {
+            if self.store.node_exists(id) {
+                let entry = self.store.read_node(id);
+                new_data.push(GpuNode::from_entry(&entry));
+            } else {
+                new_data.push(GpuNode::zeroed());
+            }
+        }
+        *cache = Arc::new(new_data);
+        self.cached_generation.store(cur_gen, Ordering::Release);
+        Arc::clone(&cache)
     }
 
     /// 当前节点总数

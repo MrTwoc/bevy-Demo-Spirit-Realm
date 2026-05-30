@@ -4,6 +4,7 @@
 //! 使用 wgpu BufferBinding 直接绑定原始 Buffer
 
 use std::borrow::Cow;
+use std::sync::Arc;
 
 use bevy::{
     prelude::*,
@@ -34,7 +35,8 @@ const SHADER_ASSET_PATH: &str = "shaders/svo_traversal.wgsl";
 /// SVO 遍历提取数据
 #[derive(Resource, Clone, ExtractResource, Default)]
 pub struct SvoExtractData {
-    pub node_data: Vec<GpuNode>,
+    /// 使用 Arc 避免 clone 整个 Vec（generation 未变时仅 O(1) 引用计数递增）
+    pub node_data: Arc<Vec<GpuNode>>,
     pub node_count: u32,
     pub camera_world_x: f32,
     pub camera_world_y: f32,

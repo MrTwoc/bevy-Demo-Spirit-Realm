@@ -1265,12 +1265,27 @@ fn rebuild_load_queue(
     }
 
     if state.dx > state.radius {
-        state.missing.sort_by_key(|coord| {
-            let dx = (coord.cx - center.cx).abs();
-            let dy = (coord.cy - center.cy).abs();
-            let dz = (coord.cz - center.cz).abs();
-            dx * dx + dy * dy + dz * dz
-        });
+        // 只需保证前 CHUNKS_PER_FRAME 个是最近的（drain 从头部消费），
+        // 用 select_nth_unstable_by 替代全量排序：O(N log N) → O(N)
+        let len = state.missing.len();
+        if len > 1 {
+            let k = CHUNKS_PER_FRAME.min(len - 1);
+            state.missing.select_nth_unstable_by(k, |a, b| {
+                let da = {
+                    let dx = (a.cx - center.cx).abs();
+                    let dy = (a.cy - center.cy).abs();
+                    let dz = (a.cz - center.cz).abs();
+                    dx * dx + dy * dy + dz * dz
+                };
+                let db = {
+                    let dx = (b.cx - center.cx).abs();
+                    let dy = (b.cy - center.cy).abs();
+                    let dz = (b.cz - center.cz).abs();
+                    dx * dx + dy * dy + dz * dz
+                };
+                da.cmp(&db)
+            });
+        }
 
         let result = Some(std::mem::take(&mut state.missing));
         loaded.load_queue_build_state = None;

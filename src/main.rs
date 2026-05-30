@@ -78,31 +78,49 @@ fn main() {
             )
                 .chain(),
         )
+        // ── 相机/输入：不依赖 LoadedChunks，与区块管道完全并行 ──
         .add_systems(
             Update,
             (
-                // ── 区块生命周期管理（链式执行，共享 LoadedChunks 状态）──
+                camera::camera_movement,
+                camera::camera_rotation,
+                input::cursor_grab_system,
+            )
+                .chain(),
+        )
+        // ── 渲染辅助：轻量级，无 LoadedChunks 依赖 ──
+        .add_systems(
+            Update,
+            (
+                chunk_wire_frame::toggle_wireframe,
+                chunk_wire_frame::sync_chunk_wireframe
+                    .run_if(resource_changed::<WireframeMode>),
+                chunk_wire_frame::draw_wireframes
+                    .run_if(|mode: Res<WireframeMode>| mode.0),
+                raycast::raycast_highlight_system,
+                block_interaction::block_interaction_system,
+            ),
+        )
+        // ── 区块生命周期管道：共享 ResMut<LoadedChunks>，必须串行 ──
+        // chain 保证脏块重建在新加载区块之后执行（需要邻居数据）
+        .add_systems(
+            Update,
+            (
                 chunk_manager::manage_chunk_load_state,
                 chunk_manager::spawn_entities_from_prepare
                     .run_if(chunk_manager::has_pending_prepare_results),
                 chunk_manager::submit_prepare_tasks
                     .run_if(chunk_manager::has_load_queue_items),
-                camera::camera_movement,
-                camera::camera_rotation,
-                input::cursor_grab_system,
-                chunk_wire_frame::toggle_wireframe,
-                // 线框同步：仅在 WireframeMode 变更时运行（按 V 切换时触发）
-                chunk_wire_frame::sync_chunk_wireframe
-                    .run_if(resource_changed::<WireframeMode>),
-                // 线框绘制：仅在线框模式开启时运行
-                chunk_wire_frame::draw_wireframes
-                    .run_if(|mode: Res<WireframeMode>| mode.0),
                 chunk_dirty::rebuild_dirty_chunks,
-                raycast::raycast_highlight_system,
-                block_interaction::block_interaction_system,
+            )
+                .chain(),
+        )
+        // ── HUD：只读 LoadedChunks，与区块管道可并行 ──
+        .add_systems(
+            Update,
+            (
                 hud::update_hud,
                 hud::update_triangle_count,
-                // merge FPS 更新到硬件信息定时器间隔（2秒）
                 hud::update_fps_and_hardware_info,
             ),
         )

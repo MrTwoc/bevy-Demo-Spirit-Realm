@@ -43,9 +43,10 @@ impl Plugin for SvoPlugin {
 
         app.add_systems(Update, render_distance::process_render_distance);
 
-        // SVO 可见性系统（每 N 帧运行一次）
-        app.init_resource::<visibility_bridge::SvoVisibilityState>();
-        app.add_systems(Update, visibility_bridge::apply_svo_visibility);
+        // SVO 可见性系统（已禁用：每帧遍历所有 chunk 但实际未隐藏实体，纯 CPU 浪费）
+        // 等 SVO GPU 剔除 → Indirect Draw 链路打通后，用 GPU 驱动的 visibility 替代
+        // app.init_resource::<visibility_bridge::SvoVisibilityState>();
+        // app.add_systems(Update, visibility_bridge::apply_svo_visibility);
 
         // 注册 GPU 遍历插件
         app.add_plugins(gpu_traversal::SvoGpuTraversalPlugin);
