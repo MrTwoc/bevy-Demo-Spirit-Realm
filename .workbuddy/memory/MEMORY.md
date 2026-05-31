@@ -14,6 +14,12 @@
 - 固体方块使用 Opaque 材质，水方块使用 Blend 材质
 - 共享空 Mesh（SharedEmptyMesh）用于零几何体/空气区块
 
+### LOD
+- 顶点归一化：`face_quad_lod` 坐标除以 `step_f`，模型空间保持 1x1（2026-05-31）
+- 世界空间放大由 `Transform::scale(Vec3::splat(step_f))` 通过 GPU 矩阵完成
+- LOD 切换时在 `manage_chunk_load_state` 同步更新 Transform.scale
+- 水方块在 LOD1+ 合并到固体 Mesh（`generate_lod_mesh_separated` 返回 `None`）
+
 ### 代码质量
 - 性能相关 PR 需包含量化收益分析
 - 不执行 cargo check，由用户手动验证

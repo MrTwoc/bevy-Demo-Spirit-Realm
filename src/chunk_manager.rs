@@ -1035,9 +1035,17 @@ pub fn manage_chunk_load_state(
     let to_rebuild = lod_manager.update_incremental(player_chunk, &*loaded);
     for (coord, new_lod) in to_rebuild {
         if let Some(entry) = loaded.entries.get(&coord) {
+            // LOD 切换时同步更新 Transform.scale，补偿模型空间归一化
+            let position = coord.to_world_origin();
+            let step_f = new_lod.step() as f32;
+            let new_transform = if step_f > 1.0 {
+                Transform::from_translation(position).with_scale(Vec3::splat(step_f))
+            } else {
+                Transform::from_translation(position)
+            };
             commands
                 .entity(entry.entity)
-                .insert((DirtyChunk, LodChangedFlag));
+                .insert((new_transform, DirtyChunk, LodChangedFlag));
             if let Some(entry) = loaded.entries.get_mut(&coord) {
                 entry.lod_level = new_lod;
             }
@@ -1102,10 +1110,17 @@ pub fn spawn_entities_from_prepare(
 
         let shared = Arc::new(chunk);
         let position = coord.to_world_origin();
+        // LOD1+ 模型空间归一化到 1x1，世界空间通过 Transform.scale 放大
+        let step_f = lod_level.step() as f32;
+        let chunk_transform = if step_f > 1.0 {
+            Transform::from_translation(position).with_scale(Vec3::splat(step_f))
+        } else {
+            Transform::from_translation(position)
+        };
         let entity = commands
             .spawn((
                 ChunkComponent(Arc::clone(&shared)),
-                Transform::from_translation(position),
+                chunk_transform,
                 Visibility::default(),
                 ChunkAtlasHandle(atlas_handle.handle.clone()),
                 ChunkCoordComponent(coord),

@@ -549,6 +549,10 @@ fn sample_dominant_block_from_neighbors(
     None
 }
 
+/// LOD 面四边形生成（顶点归一化版）。
+///
+/// 顶点坐标除以 `step_f`，使模型空间尺寸与 LOD0 一致（均为 1x1）。
+/// 世界空间放大由 `Transform::scale` 通过 GPU 矩阵完成。
 fn face_quad_lod(
     x: usize,
     y: usize,
@@ -557,62 +561,62 @@ fn face_quad_lod(
     uv: (f32, f32, f32, f32),
     step_f: f32,
 ) -> ([[f32; 3]; 4], [[f32; 2]; 4], [f32; 3]) {
-    let x_f = x as f32;
-    let y_f = y as f32;
-    let z_f = z as f32;
+    let x_f = x as f32 / step_f;
+    let y_f = y as f32 / step_f;
+    let z_f = z as f32 / step_f;
 
     let (verts, normal) = match face {
         FaceLod::Top => (
             [
-                [x_f, y_f + step_f, z_f],
-                [x_f + step_f, y_f + step_f, z_f],
-                [x_f + step_f, y_f + step_f, z_f + step_f],
-                [x_f, y_f + step_f, z_f + step_f],
+                [x_f, y_f + 1.0, z_f],
+                [x_f + 1.0, y_f + 1.0, z_f],
+                [x_f + 1.0, y_f + 1.0, z_f + 1.0],
+                [x_f, y_f + 1.0, z_f + 1.0],
             ],
             [0.0, 1.0, 0.0],
         ),
         FaceLod::Bottom => (
             [
-                [x_f, y_f, z_f + step_f],
-                [x_f + step_f, y_f, z_f + step_f],
-                [x_f + step_f, y_f, z_f],
+                [x_f, y_f, z_f + 1.0],
+                [x_f + 1.0, y_f, z_f + 1.0],
+                [x_f + 1.0, y_f, z_f],
                 [x_f, y_f, z_f],
             ],
             [0.0, -1.0, 0.0],
         ),
         FaceLod::Right => (
             [
-                [x_f + step_f, y_f, z_f],
-                [x_f + step_f, y_f, z_f + step_f],
-                [x_f + step_f, y_f + step_f, z_f + step_f],
-                [x_f + step_f, y_f + step_f, z_f],
+                [x_f + 1.0, y_f, z_f],
+                [x_f + 1.0, y_f, z_f + 1.0],
+                [x_f + 1.0, y_f + 1.0, z_f + 1.0],
+                [x_f + 1.0, y_f + 1.0, z_f],
             ],
             [1.0, 0.0, 0.0],
         ),
         FaceLod::Left => (
             [
-                [x_f, y_f, z_f + step_f],
+                [x_f, y_f, z_f + 1.0],
                 [x_f, y_f, z_f],
-                [x_f, y_f + step_f, z_f],
-                [x_f, y_f + step_f, z_f + step_f],
+                [x_f, y_f + 1.0, z_f],
+                [x_f, y_f + 1.0, z_f + 1.0],
             ],
             [-1.0, 0.0, 0.0],
         ),
         FaceLod::Front => (
             [
-                [x_f + step_f, y_f, z_f + step_f],
-                [x_f, y_f, z_f + step_f],
-                [x_f, y_f + step_f, z_f + step_f],
-                [x_f + step_f, y_f + step_f, z_f + step_f],
+                [x_f + 1.0, y_f, z_f + 1.0],
+                [x_f, y_f, z_f + 1.0],
+                [x_f, y_f + 1.0, z_f + 1.0],
+                [x_f + 1.0, y_f + 1.0, z_f + 1.0],
             ],
             [0.0, 0.0, 1.0],
         ),
         FaceLod::Back => (
             [
                 [x_f, y_f, z_f],
-                [x_f + step_f, y_f, z_f],
-                [x_f + step_f, y_f + step_f, z_f],
-                [x_f, y_f + step_f, z_f],
+                [x_f + 1.0, y_f, z_f],
+                [x_f + 1.0, y_f + 1.0, z_f],
+                [x_f, y_f + 1.0, z_f],
             ],
             [0.0, 0.0, -1.0],
         ),
