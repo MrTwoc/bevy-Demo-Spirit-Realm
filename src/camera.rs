@@ -8,7 +8,7 @@ use bevy::{
 };
 
 /// Movement speed for the camera in units per second.
-pub const CAMERA_MOVE_SPEED: f32 = 100.0;
+pub const CAMERA_MOVE_SPEED: f32 = 30.0;
 
 /// Mouse sensitivity for looking around.
 pub const MOUSE_SENSITIVITY: f32 = 0.002;
@@ -31,7 +31,7 @@ impl Default for CameraController {
     }
 }
 
-/// Handles WASD + Space/Shift camera movement.
+/// Handles WASD + Space/Shift camera movement. Ctrl accelerates speed 3x.
 /// Only moves when the cursor is locked (pointer grab active), like Minecraft.
 pub fn camera_movement(
     time: Res<Time>,
@@ -68,6 +68,13 @@ pub fn camera_movement(
     if keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight) {
         movement.y -= 1.0;
     }
+    // Ctrl 键：速度 3 倍加速
+    let speed_multiplier =
+        if keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight) {
+            3.0
+        } else {
+            1.0
+        };
 
     if movement != Vec3::ZERO {
         let normalized_movement = movement.normalize();
@@ -82,6 +89,7 @@ pub fn camera_movement(
             + horizontal_right * normalized_movement.x
             + Vec3::Y * normalized_movement.y)
             * CAMERA_MOVE_SPEED
+            * speed_multiplier
             * time.delta_secs();
 
         transform.translation += delta;

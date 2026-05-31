@@ -72,6 +72,10 @@ pub(crate) struct WorldTypeText;
 #[derive(Component)]
 pub(crate) struct FpsText;
 
+/// 按键提示文本标记组件（静态，无需更新系统）
+#[derive(Component)]
+pub(crate) struct KeyBindingText;
+
 #[derive(Resource)]
 pub struct TriangleUpdateTimer(pub Timer);
 
@@ -159,6 +163,79 @@ pub fn setup_hud(commands: &mut Commands, camera_entity: Entity) {
                 },
                 TextColor(Color::WHITE),
                 FpsText,
+            ));
+            // ── 按键提示 ──
+            parent.spawn((
+                Text::new("[W/A/S/D] Move"),
+                TextFont {
+                    font_size: 12.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.65, 0.65, 0.65)),
+                KeyBindingText,
+            ));
+            parent.spawn((
+                Text::new("[Space] Up"),
+                TextFont {
+                    font_size: 12.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.65, 0.65, 0.65)),
+                KeyBindingText,
+            ));
+            parent.spawn((
+                Text::new("[Shift] Down"),
+                TextFont {
+                    font_size: 12.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.65, 0.65, 0.65)),
+                KeyBindingText,
+            ));
+            parent.spawn((
+                Text::new("[Ctrl] Speed x3"),
+                TextFont {
+                    font_size: 12.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.65, 0.65, 0.65)),
+                KeyBindingText,
+            ));
+            parent.spawn((
+                Text::new("[V] Wireframe Toggle"),
+                TextFont {
+                    font_size: 12.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.65, 0.65, 0.65)),
+                KeyBindingText,
+            ));
+            parent.spawn((
+                Text::new("[ESC] Toggle Cursor"),
+                TextFont {
+                    font_size: 12.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.65, 0.65, 0.65)),
+                KeyBindingText,
+            ));
+            parent.spawn((
+                Text::new("[Left-Click] Destroy"),
+                TextFont {
+                    font_size: 12.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.65, 0.65, 0.65)),
+                KeyBindingText,
+            ));
+            parent.spawn((
+                Text::new("[Right-Click] Place"),
+                TextFont {
+                    font_size: 12.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.65, 0.65, 0.65)),
+                KeyBindingText,
             ));
         });
 
