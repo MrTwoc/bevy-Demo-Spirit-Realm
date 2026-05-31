@@ -135,8 +135,8 @@ impl LodManager {
         let mut to_rebuild = Vec::new();
 
         for (coord, _) in &loaded.entries {
-            let dist = self.chunk_distance(*coord, player_chunk);
-            let new_lod = LodLevel::from_chunk_distance(dist);
+            let dist_sq = Self::chunk_distance_sq(*coord, player_chunk);
+            let new_lod = LodLevel::from_chunk_distance_sq(dist_sq);
 
             let current_lod = self
                 .chunk_lods
@@ -145,7 +145,7 @@ impl LodManager {
                 .unwrap_or(LodLevel::Lod0);
 
             if new_lod != current_lod {
-                if self.should_switch(current_lod, new_lod, dist) {
+                if self.should_switch_sq(current_lod, new_lod, dist_sq) {
                     self.chunk_lods.insert(*coord, new_lod);
                     to_rebuild.push((*coord, new_lod));
                 }
@@ -193,8 +193,8 @@ impl LodManager {
                 break;
             };
 
-            let dist = self.chunk_distance(coord, player_chunk);
-            let new_lod = LodLevel::from_chunk_distance(dist);
+            let dist_sq = Self::chunk_distance_sq(coord, player_chunk);
+            let new_lod = LodLevel::from_chunk_distance_sq(dist_sq);
 
             let current_lod = self
                 .chunk_lods
@@ -203,7 +203,7 @@ impl LodManager {
                 .unwrap_or(LodLevel::Lod0);
 
             if new_lod != current_lod {
-                if self.should_switch(current_lod, new_lod, dist) {
+                if self.should_switch_sq(current_lod, new_lod, dist_sq) {
                     self.chunk_lods.insert(coord, new_lod);
                     to_rebuild.push((coord, new_lod));
                 }
@@ -244,12 +244,26 @@ impl LodManager {
         (dx * dx + dy * dy + dz * dz).sqrt()
     }
 
-    fn should_switch(&self, current: LodLevel, new: LodLevel, dist: f32) -> bool {
+    /// 区块间距离的平方（整数运算，避免 sqrt）。
+    #[inline]
+    fn chunk_distance_sq(a: ChunkCoord, b: ChunkCoord) -> i32 {
+        let dx = a.cx - b.cx;
+        let dy = a.cy - b.cy;
+        let dz = a.cz - b.cz;
+        dx * dx + dy * dy + dz * dz
+    }
+
+    /// 基于平方距离的迟滞判断。
+    ///
+    /// 阈值预计算为平方值，避免运行时 sqrt。
+    #[inline]
+    fn should_switch_sq(&self, current: LodLevel, new: LodLevel, dist_sq: i32) -> bool {
         if (new as i32) < (current as i32) {
             true
         } else {
-            let ring_width = 8.0;
-            dist > current.threshold() + self.hysteresis * ring_width
+            let threshold = current.threshold() + self.hysteresis * 8.0;
+            let threshold_sq = (threshold * threshold) as i32;
+            dist_sq > threshold_sq
         }
     }
 }

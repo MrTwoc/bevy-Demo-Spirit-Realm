@@ -62,7 +62,7 @@ pub const INITIAL_LOAD_RADIUS: i32 = 16;
 pub const DETECTION_RADIUS: i32 = if RENDER_DISTANCE <= 16 {
     16
 } else {
-    RENDER_DISTANCE / 2
+    RENDER_DISTANCE / 4
 };
 /// 卸载距离：超过此距离的区块会被卸载。比渲染距离大 1 避免边界闪烁。
 pub const UNLOAD_DISTANCE: i32 = RENDER_DISTANCE + (RENDER_DISTANCE / 4);
@@ -795,20 +795,15 @@ pub fn collect_and_upload_meshes(
 
     let results = async_mesh.collect_results(MESH_UPLOADS_PER_FRAME);
     for result in results {
-        if !loaded.entries.contains_key(&result.coord) {
+        // 单次 HashMap 查找：提取所有需要的字段，避免后续重复 get/get_mut
+        let Some(entry) = loaded.entries.get(&result.coord) else {
             continue;
-        }
-
-        let (entity, water_entity, old_handle, old_water_handle, old_tri_count) = {
-            let entry = loaded.entries.get(&result.coord).unwrap();
-            (
-                entry.entity,
-                entry.water_entity,
-                entry.solid_mesh_handle.clone(),
-                entry.water_mesh_handle.clone(),
-                entry.triangle_count,
-            )
         };
+        let entity = entry.entity;
+        let water_entity = entry.water_entity;
+        let old_handle = entry.solid_mesh_handle.clone();
+        let old_water_handle = entry.water_mesh_handle.clone();
+        let old_tri_count = entry.triangle_count;
 
         // Tier 1 零拷贝优化：直接从 SubMeshData 移动数据，消除 Arc 包装和 clone 拷贝
         let solid_positions = result.solid.positions;
@@ -862,100 +857,91 @@ pub fn collect_and_upload_meshes(
                     material: shared_material.handle.clone(),
                 },
             ));
-
-            if let Some(entry) = loaded.entries.get_mut(&result.coord) {
-                if old_handle == shared_empty_mesh.handle {
-                    entry.solid_mesh_handle = new_handle;
-                }
-                entry.solid_material_handle = shared_material.handle.clone();
-            }
         } else {
             if old_handle != shared_empty_mesh.handle {
                 meshes.remove(&old_handle);
             }
-            let empty_mesh = shared_empty_mesh.handle.clone();
+            new_handle = shared_empty_mesh.handle.clone();
 
             commands.entity(entity).insert((
-                Mesh3d(empty_mesh.clone()),
+                Mesh3d(new_handle.clone()),
                 MeshMaterial3d(shared_material.handle.clone()),
                 ChunkMeshHandle {
-                    mesh: empty_mesh.clone(),
+                    mesh: new_handle.clone(),
                     material: shared_material.handle.clone(),
                 },
             ));
-
-            if let Some(entry) = loaded.entries.get_mut(&result.coord) {
-                entry.solid_mesh_handle = empty_mesh;
-                entry.solid_material_handle = shared_material.handle.clone();
-            }
         }
 
         // 处理水 Mesh
-        if let Some(water_data) = result.water {
-            let water_triangle_count = water_data.triangle_count;
+        let (new_water_entity, new_water_handle, new_water_tri_count) =
+            if let Some(water_data) = result.water {
+                let water_triangle_count = water_data.triangle_count;
 
-            let water_mesh_handle = if let Some(handle) = old_water_handle {
-                if let Some(mesh) = meshes.get_mut(&handle) {
-                    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, water_data.positions);
-                    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, water_data.uvs);
-                    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, water_data.normals);
-                    mesh.insert_indices(bevy::mesh::Indices::U32(water_data.indices));
-                }
-                handle
-            } else {
-                meshes.add(
-                    Mesh::new(
-                        bevy::render::render_resource::PrimitiveTopology::TriangleList,
-                        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+                let water_mesh_handle = if let Some(handle) = old_water_handle {
+                    if let Some(mesh) = meshes.get_mut(&handle) {
+                        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, water_data.positions);
+                        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, water_data.uvs);
+                        mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, water_data.normals);
+                        mesh.insert_indices(bevy::mesh::Indices::U32(water_data.indices));
+                    }
+                    handle
+                } else {
+                    meshes.add(
+                        Mesh::new(
+                            bevy::render::render_resource::PrimitiveTopology::TriangleList,
+                            RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+                        )
+                        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, water_data.positions)
+                        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, water_data.uvs)
+                        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, water_data.normals)
+                        .with_inserted_indices(bevy::mesh::Indices::U32(water_data.indices)),
                     )
-                    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, water_data.positions)
-                    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, water_data.uvs)
-                    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, water_data.normals)
-                    .with_inserted_indices(bevy::mesh::Indices::U32(water_data.indices)),
-                )
-            };
+                };
 
-            if let Some(we) = water_entity {
-                commands.entity(we).insert((
-                    Mesh3d(water_mesh_handle.clone()),
-                    MeshMaterial3d(transparent_material.handle.clone()),
-                    Transform::IDENTITY,
-                ));
-            } else {
-                let water_entity = commands
-                    .spawn((
+                let we = if let Some(we) = water_entity {
+                    commands.entity(we).insert((
                         Mesh3d(water_mesh_handle.clone()),
                         MeshMaterial3d(transparent_material.handle.clone()),
                         Transform::IDENTITY,
-                        Visibility::default(),
-                    ))
-                    .id();
-                commands.entity(entity).add_child(water_entity);
+                    ));
+                    we
+                } else {
+                    let we = commands
+                        .spawn((
+                            Mesh3d(water_mesh_handle.clone()),
+                            MeshMaterial3d(transparent_material.handle.clone()),
+                            Transform::IDENTITY,
+                            Visibility::default(),
+                        ))
+                        .id();
+                    commands.entity(entity).add_child(we);
+                    we
+                };
 
-                if let Some(entry) = loaded.entries.get_mut(&result.coord) {
-                    entry.water_entity = Some(water_entity);
+                (Some(we), Some(water_mesh_handle), water_triangle_count)
+            } else {
+                // 区块不再包含水，清理水子实体
+                if let Some(we) = water_entity {
+                    if let Some(water_handle) = old_water_handle {
+                        meshes.remove(&water_handle);
+                    }
+                    commands.entity(we).despawn();
                 }
-            }
+                (None, None, 0u32)
+            };
 
-            if let Some(entry) = loaded.entries.get_mut(&result.coord) {
-                entry.water_mesh_handle = Some(water_mesh_handle);
-                entry.water_triangle_count = water_triangle_count;
-            }
-        } else {
-            if let Some(we) = water_entity {
-                if let Some(water_handle) = old_water_handle {
-                    meshes.remove(&water_handle);
-                }
-                commands.entity(we).despawn();
-            }
-            if let Some(entry) = loaded.entries.get_mut(&result.coord) {
-                entry.water_entity = None;
-                entry.water_mesh_handle = None;
-                entry.water_triangle_count = 0;
-            }
-        }
-
+        // 单次 get_mut 写回所有更新的字段
         if let Some(entry) = loaded.entries.get_mut(&result.coord) {
+            if solid_triangle_count > 0 && old_handle == shared_empty_mesh.handle {
+                entry.solid_mesh_handle = new_handle;
+            } else if solid_triangle_count == 0 {
+                entry.solid_mesh_handle = new_handle;
+            }
+            entry.solid_material_handle = shared_material.handle.clone();
+            entry.water_entity = new_water_entity;
+            entry.water_mesh_handle = new_water_handle;
+            entry.water_triangle_count = new_water_tri_count;
             cached.0 = cached
                 .0
                 .wrapping_add(solid_triangle_count)
@@ -1400,6 +1386,9 @@ fn lru_evict(
     });
     candidates[..evict_count].sort_by(|a, b| a.1.cmp(&b.1).then_with(|| b.2.cmp(&a.2)));
 
+    // 收集待淘汰坐标，用于批量过滤 entries_ordered
+    let mut evicted_coords = std::collections::HashSet::with_capacity(evict_count);
+
     for i in 0..evict_count {
         let coord = candidates[i].0;
 
@@ -1415,9 +1404,11 @@ fn lru_evict(
                 water_mesh_handle: entry.water_mesh_handle,
             });
         }
-        // 同步从 entries_ordered 中删除
-        if let Some(pos) = loaded.entries_ordered.iter().position(|c| *c == coord) {
-            loaded.entries_ordered.swap_remove(pos);
-        }
+        evicted_coords.insert(coord);
     }
+
+    // 批量过滤 entries_ordered：O(N) retain，替代 O(N × evict_count) 的逐条 position + swap_remove
+    loaded
+        .entries_ordered
+        .retain(|c| !evicted_coords.contains(c));
 }
