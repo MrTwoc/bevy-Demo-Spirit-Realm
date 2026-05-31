@@ -3,20 +3,18 @@
 //! 当 SectionTracker 创建新的空 Section 时，通过回调填入地形数据。
 //! 这样 NodeManager 在查询 section 数据时就能得到正确的体素信息。
 
-use noise::NoiseFn;
 use crate::svo::section::{Section, SectionCoord, Voxel};
 use crate::svo::config::SECTION_SIZE;
 
-// 从 chunk.rs 导入地形生成所需的噪声函数
-use crate::chunk::{get_terrain_noise, TERRAIN_BASE_HEIGHT, TERRAIN_AMPLITUDE,
+// 从 chunk.rs 导入共用的地表高度计算函数和地形常量
+use crate::chunk::{compute_surface_height, TERRAIN_BASE_HEIGHT,
                     TERRAIN_MIN_Y, TERRAIN_MAX_Y, WATER_LEVEL};
 
 /// 用地形生成数据填充一个 Section
 ///
-/// 逻辑与 `chunk::fill_terrain` 相同，但写入 Section 的 Voxel 数组。
+/// 使用 `compute_surface_height`（指数+细节层噪声）计算地表高度，
+/// 与 `chunk::fill_terrain` 完全一致。
 pub fn fill_section_terrain(section: &mut Section, coord: &SectionCoord) {
-    let noise = get_terrain_noise();
-
     let size = SECTION_SIZE as usize;
 
     let surface_block: Voxel = 1;   // grass
@@ -29,13 +27,11 @@ pub fn fill_section_terrain(section: &mut Section, coord: &SectionCoord) {
             let world_x = coord.x as f64 * SECTION_SIZE as f64 + x as f64;
             let world_z = coord.z as f64 * SECTION_SIZE as f64 + z as f64;
 
-            let noise_val = noise.get([world_x, world_z]);
-            let surface_height = TERRAIN_BASE_HEIGHT + (noise_val * TERRAIN_AMPLITUDE) as i32;
+            let surface_height = compute_surface_height(world_x, world_z);
 
             for y in 0..size {
                 let world_y = coord.y as i32 * SECTION_SIZE as i32 + y as i32;
 
-                // 超出地形生成范围 → 空气 (默认就是 0)
                 if world_y > TERRAIN_MAX_Y {
                     continue;
                 }
@@ -44,7 +40,6 @@ pub fn fill_section_terrain(section: &mut Section, coord: &SectionCoord) {
                 }
 
                 if world_y > surface_height {
-                    // 检查是否应该填充水方块
                     if world_y < WATER_LEVEL && surface_height < WATER_LEVEL {
                         section.set_voxel(x as u32, y as u32, z as u32, 5); // water
                     }
@@ -64,7 +59,6 @@ pub fn fill_section_terrain(section: &mut Section, coord: &SectionCoord) {
         }
     }
 
-    // 填充完成后重新计算非空子节点掩码和固体计数
     section.recalc_metadata();
 }
 

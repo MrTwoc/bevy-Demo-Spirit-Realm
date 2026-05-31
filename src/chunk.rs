@@ -700,7 +700,7 @@ pub const TERRAIN_SEED: u32 = 12345;
 pub const TERRAIN_BASE_HEIGHT: i32 = 96;
 
 /// Terrain height amplitude (max deviation from base)
-pub const TERRAIN_AMPLITUDE: f64 = 80.0;
+pub const TERRAIN_AMPLITUDE: f64 = 180.0;
 
 /// Depth of dirt layer below surface
 pub const DIRT_LAYER_DEPTH: i32 = 4;
@@ -713,12 +713,15 @@ pub const TERRAIN_MIN_Y: i32 = -256;
 /// Maximum terrain generation height
 pub const TERRAIN_MAX_Y: i32 = 256;
 
+/// 细节层噪声振幅（小丘陵/凹陷的高度变化，±20 blocks）
+pub const TERRAIN_DETAIL_AMP: f64 = 20.0;
+
 /// 全局噪声缓存（线程安全）
 ///
 /// 使用 std::sync::OnceLock 缓存噪声函数，避免每次调用 fill_terrain 都重新创建。
 static TERRAIN_NOISE: std::sync::OnceLock<Fbm<Simplex>> = std::sync::OnceLock::new();
 
-/// 获取缓存的噪声函数
+/// 获取缓存的粗轮廓噪声函数（低频 FBM，大山脉/谷地）
 pub fn get_terrain_noise() -> &'static Fbm<Simplex> {
     TERRAIN_NOISE.get_or_init(|| {
         Fbm::<Simplex>::new(TERRAIN_SEED)
@@ -727,6 +730,36 @@ pub fn get_terrain_noise() -> &'static Fbm<Simplex> {
             .set_lacunarity(2.0)
             .set_persistence(0.5)
     })
+}
+
+/// 细节层噪声缓存（高频，小丘陵/凹陷）
+static TERRAIN_DETAIL_NOISE: std::sync::OnceLock<Fbm<Simplex>> = std::sync::OnceLock::new();
+
+/// 获取缓存的细节噪声函数（高频 3 octaves，频率 ~7x 于粗轮廓）
+pub fn get_terrain_detail_noise() -> &'static Fbm<Simplex> {
+    TERRAIN_DETAIL_NOISE.get_or_init(|| {
+        Fbm::<Simplex>::new(TERRAIN_SEED.wrapping_add(1))
+            .set_octaves(3)
+            .set_frequency(0.02)
+            .set_lacunarity(2.0)
+            .set_persistence(0.5)
+    })
+}
+
+/// 计算噪声地形的地表高度（核心公式，被 fill_terrain、get_surface_height、terrain_bridge 共享）。
+///
+/// 公式：`base + (2^coarse - 1) * amplitude + detail * detail_amp`
+///
+/// - **粗轮廓** (`2^coarse - 1`)：将 [-1,1] 噪声映射为 [-0.5, 1.0] 的非线性乘数，
+///   产生大面积平坦低地 + 少量高耸山峰的效果。
+/// - **细节层**：叠加高频小振幅噪声，为平原和山坡增添微起伏。
+#[inline]
+pub fn compute_surface_height(world_x: f64, world_z: f64) -> i32 {
+    let coarse_val = get_terrain_noise().get([world_x, world_z]);       // [-1, 1]
+    let coarse_mult = 2.0_f64.powf(coarse_val) - 1.0;                   // [-0.5, 1.0]
+    let detail_val = get_terrain_detail_noise().get([world_x, world_z]); // [-1, 1]
+    TERRAIN_BASE_HEIGHT
+        + (coarse_mult * TERRAIN_AMPLITUDE + detail_val * TERRAIN_DETAIL_AMP) as i32
 }
 
 /// 获取世界坐标 (world_x, world_z) 处的**地表高度**。
@@ -739,32 +772,25 @@ pub fn get_terrain_noise() -> &'static Fbm<Simplex> {
 pub fn get_surface_height(world_x: f64, world_z: f64, world_type: WorldType) -> i32 {
     match world_type {
         WorldType::Flat => TERRAIN_BASE_HEIGHT,
-        WorldType::Void => i32::MIN, // 虚空世界没有地表，总是返回极低值
-        WorldType::Noise => {
-            let noise = get_terrain_noise();
-            let noise_val = noise.get([world_x, world_z]);
-            TERRAIN_BASE_HEIGHT + (noise_val * TERRAIN_AMPLITUDE) as i32
-        }
-        WorldType::MengerSponge => i32::MIN, // 门格海绵没有传统地表
+        WorldType::Void => i32::MIN,
+        WorldType::Noise => compute_surface_height(world_x, world_z),
+        WorldType::MengerSponge => i32::MIN,
     }
 }
 
 /// Fills a chunk with noise-generated terrain.
 ///
-/// 使用 Simplex FBM 噪声在 XZ 平面采样，生成有起伏的自然地形。
+/// 使用指数高度映射（`2^coarse - 1`）+ 高频细节层生成地形。
+/// 公式：`base + (2^coarse - 1) * amplitude + detail * detail_amp`
 /// 地形分层：地表=草地(1)，浅层=泥土(3)，深层=石头(2)，土壤厚度=4。
 pub fn fill_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
-    let noise = get_terrain_noise();
-
     for z in 0..CHUNK_SIZE {
         for x in 0..CHUNK_SIZE {
             let world_x = coord.cx as f64 * CHUNK_SIZE as f64 + x as f64;
             let world_z = coord.cz as f64 * CHUNK_SIZE as f64 + z as f64;
 
-            let noise_val = noise.get([world_x, world_z]);
-            let surface_height = TERRAIN_BASE_HEIGHT + (noise_val * TERRAIN_AMPLITUDE) as i32;
+            let surface_height = compute_surface_height(world_x, world_z);
 
-            // 硬编码地形方块类型：地表=草(1)，表土层=泥土(3)，深层=石头(2)，土壤厚度=4
             let surface_block: BlockId = 1; // grass
             let under_surface_block: BlockId = 3; // dirt
             let soil_thickness = 4;
@@ -772,20 +798,18 @@ pub fn fill_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
             for y in 0..CHUNK_SIZE {
                 let world_y = coord.cy as i32 * CHUNK_SIZE as i32 + y as i32;
 
-                // Skip if outside terrain generation bounds
                 if world_y > TERRAIN_MAX_Y {
-                    continue; // above max height = air
+                    continue;
                 }
                 if world_y < TERRAIN_MIN_Y {
-                    continue; // below min height = air
+                    continue;
                 }
 
                 if world_y > surface_height {
-                    // 检查是否应该填充水方块
                     if world_y < WATER_LEVEL && surface_height < WATER_LEVEL {
                         chunk.set(x, y, z, 5); // water
                     }
-                    continue; // 空气，不需要设置（默认就是 0）
+                    continue;
                 }
 
                 let block_id = if world_y == surface_height {
