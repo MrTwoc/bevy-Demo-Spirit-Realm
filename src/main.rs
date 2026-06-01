@@ -107,14 +107,13 @@ fn main() {
         )
         // ── 区块生命周期管道：共享 ResMut<LoadedChunks>，必须串行 ──
         // chain 保证脏块重建在新加载区块之后执行（需要邻居数据）
+        // submit_prepare_tasks 已合并到 manage_chunk_load_state 末尾，减少一次系统调度
         .add_systems(
             Update,
             (
                 chunk_manager::manage_chunk_load_state,
                 chunk_manager::spawn_entities_from_prepare
                     .run_if(chunk_manager::has_pending_prepare_results),
-                chunk_manager::submit_prepare_tasks
-                    .run_if(chunk_manager::has_load_queue_items),
                 chunk_dirty::rebuild_dirty_chunks,
             )
                 .chain(),

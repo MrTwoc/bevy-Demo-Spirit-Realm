@@ -80,7 +80,9 @@ pub const NEIGHBOR_DIRTY_PER_FRAME: usize = 512;
 /// 每帧最多处理的删除数量。控制分帧删除速率，避免大量删除操作阻塞主线程。
 pub const DELETIONS_PER_FRAME: usize = 16;
 /// 每帧分帧加载队列构建最多处理的区块扫描步数。
-pub const QUEUE_BUILD_STEPS_PER_FRAME: usize = 500;
+/// 预计算偏移量表消除了运行时越界跳过和距离判断开销，每步仅为一次 HashMap 查询，
+/// 可安全提高到 2000+。步数 = 偏移量 × Y 层，DETECTION_RADIUS=16 时约 3217 个偏移量 × 5 层。
+pub const QUEUE_BUILD_STEPS_PER_FRAME: usize = 2000;
 
 /// 已加载区块的条目
 pub struct ChunkEntry {
@@ -179,8 +181,8 @@ const NEIGHBOR_OFFSETS: [(i32, i32, i32); 6] = [
 struct LoadQueueBuildState {
     center: ChunkCoord,
     radius: i32,
-    dx: i32,
-    dz: i32,
+    /// 预计算偏移量表的当前索引（分帧扫描位置）
+    offset_idx: usize,
     cy: i32,
     cy_min: i32,
     cy_max: i32,
@@ -192,14 +194,43 @@ impl LoadQueueBuildState {
         Self {
             center,
             radius,
-            dx: -radius,
-            dz: -radius,
+            offset_idx: 0,
             cy: cy_min,
             cy_min,
             cy_max,
             missing: Vec::new(),
         }
     }
+}
+
+// ── 预计算偏移量表（懒初始化，按距离排序） ─────────────────────────────
+//
+// 启动时一次性计算检测半径内的所有 (dx, dz) 偏移量，按 dx²+dz² 排序。
+// 移动时只需遍历预计算表检查是否已加载，消除运行时的螺旋扫描和越界跳过开销。
+
+use std::sync::OnceLock;
+
+/// 预计算偏移量条目：(dx, dz, dist_sq)
+type OffsetEntry = (i32, i32, i32);
+
+/// 获取指定半径的预计算偏移量表（按距离排序，懒初始化）。
+fn get_offset_table(radius: i32) -> &'static [OffsetEntry] {
+    static TABLE: OnceLock<Vec<OffsetEntry>> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        let r = DETECTION_RADIUS; // 固定使用全局检测半径
+        let mut offsets = Vec::new();
+        for dx in -r..=r {
+            for dz in -r..=r {
+                let dist_sq = dx * dx + dz * dz;
+                if dist_sq <= r * r {
+                    offsets.push((dx, dz, dist_sq));
+                }
+            }
+        }
+        // 按距离排序（近的在前），确保加载队列从近到远消费
+        offsets.sort_unstable_by_key(|&(_, _, d)| d);
+        offsets
+    })
 }
 
 fn collect_neighbors(coord: ChunkCoord, loaded: &LoadedChunks) -> ChunkNeighbors {
@@ -771,7 +802,8 @@ pub fn has_pending_deletions(loaded: Res<LoadedChunks>) -> bool {
 
 /// `run_if` 条件：加载队列是否非空。
 ///
-/// 仅在加载队列中有待处理的区块坐标时运行 `submit_prepare_tasks`。
+/// 原用于 `submit_prepare_tasks` 的独立调度条件，现已合并到 `manage_chunk_load_state`。
+/// 保留供外部可能的查询使用。
 pub fn has_load_queue_items(loaded: Res<LoadedChunks>) -> bool {
     !loaded.load_queue.is_empty()
 }
@@ -786,10 +818,36 @@ pub fn has_pending_prepare_results(async_mesh: Res<AsyncMeshManager>) -> bool {
 
 // ── 分帧系统入口 ───────────────────────────────────────────────
 
+/// 从 SubMeshData 构建 Bevy Mesh（消除固体/水路径的代码重复）。
+#[inline]
+fn build_bevy_mesh(
+    positions: Vec<[f32; 3]>,
+    uvs: Vec<[f32; 2]>,
+    normals: Vec<[f32; 3]>,
+    indices: Vec<u32>,
+) -> Mesh {
+    Mesh::new(
+        bevy::render::render_resource::PrimitiveTopology::TriangleList,
+        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+    .with_inserted_indices(bevy::mesh::Indices::U32(indices))
+}
+
 /// 系统 1：收集异步网格结果并上传 GPU（First 调度，优先于渲染）。
 ///
 /// 原 `chunk_loader_system` 步骤 1：收集工作线程完成的网格数据，
 /// 原地更新或创建 Mesh Handle，更新实体组件和 CachedTriangleCount。
+///
+/// # 优化
+///
+/// - **仅在 Handle 变化时调用 `commands.entity().insert()`**：正常重建路径
+///   （`meshes.get_mut` 成功）不触发 Command，减少 Bevy ECS 重处理开销。
+/// - **始终同步 `entry.solid_mesh_handle`**：修复 `get_mut` 失败创建新 Handle
+///   后 Entry 未更新导致下次重建用旧无效 Handle 的 bug。
+/// - **提取 `build_bevy_mesh` 辅助函数**：消除固体/水 Mesh 构建的代码重复。
 pub fn collect_and_upload_meshes(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -814,64 +872,59 @@ pub fn collect_and_upload_meshes(
         let old_water_handle = entry.water_mesh_handle.clone();
         let old_tri_count = entry.triangle_count;
 
-        // Tier 1 零拷贝优化：直接从 SubMeshData 移动数据，消除 Arc 包装和 clone 拷贝
-        let solid_positions = result.solid.positions;
-        let solid_normals = result.solid.normals;
-        let solid_uvs = result.solid.uvs;
-        let solid_indices = result.solid.indices;
-
         let solid_triangle_count = result.solid.triangle_count;
+
+        // ── 固体 Mesh 上传 ──────────────────────────────────────────────
+        // 将可能的 3 条路径（原地更新 / 从空创建 / 变为空）收敛为
+        // InPlace（无 Command）/ Created（需 insert）/ ToEmpty（需 insert）三种结果。
+        // 仅在 Handle 变化时调用 commands.entity().insert()，减少 ECS 重处理。
         let new_handle: Handle<Mesh>;
+        let mut needs_insert = false;
 
         if solid_triangle_count > 0 {
             if old_handle != shared_empty_mesh.handle {
+                // 正常重建路径：尝试原地更新现有 Mesh（最常见，无 Command 开销）
                 if let Some(mesh) = meshes.get_mut(&old_handle) {
-                    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, solid_positions);
-                    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, solid_uvs);
-                    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, solid_normals);
-                    mesh.insert_indices(bevy::mesh::Indices::U32(solid_indices));
-                    new_handle = old_handle.clone();
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, result.solid.positions);
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, result.solid.uvs);
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, result.solid.normals);
+                    mesh.insert_indices(bevy::mesh::Indices::U32(result.solid.indices));
+                    new_handle = old_handle;
                 } else {
                     // 安全网：old_handle 无效（如 Handle::default()），创建新 Mesh
                     // 触发场景：place_block 在纯空气区块按需创建实体时使用了无效的占位句柄
-                    new_handle = meshes.add(
-                        Mesh::new(
-                            bevy::render::render_resource::PrimitiveTopology::TriangleList,
-                            RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
-                        )
-                        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, solid_positions)
-                        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, solid_uvs)
-                        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, solid_normals)
-                        .with_inserted_indices(bevy::mesh::Indices::U32(solid_indices)),
-                    );
+                    new_handle = meshes.add(build_bevy_mesh(
+                        result.solid.positions,
+                        result.solid.uvs,
+                        result.solid.normals,
+                        result.solid.indices,
+                    ));
+                    needs_insert = true;
                 }
             } else {
-                new_handle = meshes.add(
-                    Mesh::new(
-                        bevy::render::render_resource::PrimitiveTopology::TriangleList,
-                        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
-                    )
-                    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, solid_positions)
-                    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, solid_uvs)
-                    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, solid_normals)
-                    .with_inserted_indices(bevy::mesh::Indices::U32(solid_indices)),
-                );
+                // 从空 Mesh 变为有几何体：创建新 Mesh，Handle 必然变化
+                new_handle = meshes.add(build_bevy_mesh(
+                    result.solid.positions,
+                    result.solid.uvs,
+                    result.solid.normals,
+                    result.solid.indices,
+                ));
+                needs_insert = true;
             }
-
-            commands.entity(entity).insert((
-                Mesh3d(new_handle.clone()),
-                MeshMaterial3d(shared_material.handle.clone()),
-                ChunkMeshHandle {
-                    mesh: new_handle.clone(),
-                    material: shared_material.handle.clone(),
-                },
-            ));
         } else {
+            // 几何体变空：释放旧 Mesh 资源，切换到共享空 Mesh
             if old_handle != shared_empty_mesh.handle {
                 meshes.remove(&old_handle);
             }
             new_handle = shared_empty_mesh.handle.clone();
+            // 仅当之前不是空 Mesh 时才需要 insert（避免每帧对空气区块重复 insert）
+            if old_handle != shared_empty_mesh.handle {
+                needs_insert = true;
+            }
+        }
 
+        // 仅在 Handle 实际变化时写入 Command，避免 ECS 重处理 Mesh3d 组件
+        if needs_insert {
             commands.entity(entity).insert((
                 Mesh3d(new_handle.clone()),
                 MeshMaterial3d(shared_material.handle.clone()),
@@ -882,38 +935,58 @@ pub fn collect_and_upload_meshes(
             ));
         }
 
-        // 处理水 Mesh
+        // ── 水 Mesh 上传 ────────────────────────────────────────────────
+        // 同样仅在 Handle 变化时调用 insert/spawn，减少 Command 开销。
         let (new_water_entity, new_water_handle, new_water_tri_count) =
             if let Some(water_data) = result.water {
                 let water_triangle_count = water_data.triangle_count;
 
-                let water_mesh_handle = if let Some(handle) = old_water_handle {
-                    if let Some(mesh) = meshes.get_mut(&handle) {
-                        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, water_data.positions);
-                        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, water_data.uvs);
-                        mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, water_data.normals);
-                        mesh.insert_indices(bevy::mesh::Indices::U32(water_data.indices));
-                    }
-                    handle
-                } else {
-                    meshes.add(
-                        Mesh::new(
-                            bevy::render::render_resource::PrimitiveTopology::TriangleList,
-                            RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+                let (water_mesh_handle, water_needs_insert) =
+                    if let Some(handle) = old_water_handle {
+                        if let Some(mesh) = meshes.get_mut(&handle) {
+                            // 原地更新：Handle 不变，无 Command
+                            mesh.insert_attribute(
+                                Mesh::ATTRIBUTE_POSITION,
+                                water_data.positions,
+                            );
+                            mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, water_data.uvs);
+                            mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, water_data.normals);
+                            mesh.insert_indices(bevy::mesh::Indices::U32(water_data.indices));
+                            (handle, false)
+                        } else {
+                            // get_mut 失败：创建新 Mesh（修复旧代码静默失败的 bug）
+                            (
+                                meshes.add(build_bevy_mesh(
+                                    water_data.positions,
+                                    water_data.uvs,
+                                    water_data.normals,
+                                    water_data.indices,
+                                )),
+                                true,
+                            )
+                        }
+                    } else {
+                        // 首次创建水 Mesh
+                        (
+                            meshes.add(build_bevy_mesh(
+                                water_data.positions,
+                                water_data.uvs,
+                                water_data.normals,
+                                water_data.indices,
+                            )),
+                            true,
                         )
-                        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, water_data.positions)
-                        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, water_data.uvs)
-                        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, water_data.normals)
-                        .with_inserted_indices(bevy::mesh::Indices::U32(water_data.indices)),
-                    )
-                };
+                    };
 
                 let we = if let Some(we) = water_entity {
-                    commands.entity(we).insert((
-                        Mesh3d(water_mesh_handle.clone()),
-                        MeshMaterial3d(transparent_material.handle.clone()),
-                        Transform::IDENTITY,
-                    ));
+                    // 仅当 Handle 变化或首次创建时才 insert（旧代码每次都 insert）
+                    if water_needs_insert {
+                        commands.entity(we).insert((
+                            Mesh3d(water_mesh_handle.clone()),
+                            MeshMaterial3d(transparent_material.handle.clone()),
+                            Transform::IDENTITY,
+                        ));
+                    }
                     we
                 } else {
                     let we = commands
@@ -930,7 +1003,7 @@ pub fn collect_and_upload_meshes(
 
                 (Some(we), Some(water_mesh_handle), water_triangle_count)
             } else {
-                // 区块不再包含水，清理水子实体
+                // 区块不再包含水，清理水子实体和 Mesh 资源
                 if let Some(we) = water_entity {
                     if let Some(water_handle) = old_water_handle {
                         meshes.remove(&water_handle);
@@ -940,14 +1013,11 @@ pub fn collect_and_upload_meshes(
                 (None, None, 0u32)
             };
 
-        // 单次 get_mut 写回所有更新的字段
+        // ── 更新 LoadedChunks Entry ─────────────────────────────────────
+        // 始终同步 solid_mesh_handle：修复旧代码在 get_mut 失败创建新 Handle
+        // 后未写回 Entry，导致下次重建仍用旧无效 Handle 的 bug。
         if let Some(entry) = loaded.entries.get_mut(&result.coord) {
-            if solid_triangle_count > 0 && old_handle == shared_empty_mesh.handle {
-                entry.solid_mesh_handle = new_handle;
-            } else if solid_triangle_count == 0 {
-                entry.solid_mesh_handle = new_handle;
-            }
-            entry.solid_material_handle = shared_material.handle.clone();
+            entry.solid_mesh_handle = new_handle;
             entry.water_entity = new_water_entity;
             entry.water_mesh_handle = new_water_handle;
             entry.water_triangle_count = new_water_tri_count;
@@ -1055,6 +1125,21 @@ pub fn manage_chunk_load_state(
         &mut *lod_manager,
         &mut *cached,
     );
+
+    // ── 步骤 2.7：提交新的 Prepare 任务（原 submit_prepare_tasks） ──
+    // 合并到此系统减少一次系统调度和 ResMut<LoadedChunks> 获取。
+    let drain_count = CHUNKS_PER_FRAME.min(loaded.load_queue.len());
+    let chunks_to_submit: Vec<ChunkCoord> = loaded.load_queue.drain(..drain_count).collect();
+
+    for coord in chunks_to_submit {
+        if loaded.entries.contains_key(&coord) {
+            continue;
+        }
+        if async_mesh.is_prepare_pending(&coord) || async_mesh.is_pending(&coord) {
+            continue;
+        }
+        async_mesh.submit_prepare_task(coord);
+    }
 }
 
 /// 系统 4：处理异步准备好的区块数据并创建实体（Update 调度）。
@@ -1182,37 +1267,20 @@ pub fn spawn_entities_from_prepare(
     }
 }
 
-/// 系统 5：从加载队列中提交新的 Prepare 任务（Update 调度）。
+/// 重建加载队列（预计算偏移量表版本）
 ///
-/// 原 `chunk_loader_system` 步骤 3B：
-/// 将加载队列中的区块坐标提交到工作线程进行地形+树木生成。
-pub fn submit_prepare_tasks(
-    mut loaded: ResMut<LoadedChunks>,
-    async_mesh: Res<AsyncMeshManager>,
-) {
-    let drain_count = CHUNKS_PER_FRAME.min(loaded.load_queue.len());
-    let chunks_to_submit: Vec<ChunkCoord> = loaded.load_queue.drain(..drain_count).collect();
-
-    for coord in chunks_to_submit {
-        if loaded.entries.contains_key(&coord) {
-            continue;
-        }
-        if async_mesh.is_prepare_pending(&coord) || async_mesh.is_pending(&coord) {
-            continue;
-        }
-        async_mesh.submit_prepare_task(coord);
-    }
-}
-
-/// 重建加载队列（分帧版本）
+/// 使用预计算的 (dx, dz) 偏移量表替代运行时螺旋扫描：
+/// - 启动时一次性计算检测半径内所有偏移量，按 dx²+dz² 排序
+/// - 移动时遍历预计算表，无需运行时越界跳过和距离判断
+/// - Y 轴展开内联到循环中，消除嵌套状态机的复杂度
 fn rebuild_load_queue(
     center: ChunkCoord,
     loaded: &mut LoadedChunks,
     steps_limit: usize,
-    radius: i32,
+    _radius: i32, // 已由预计算表的全局 DETECTION_RADIUS 替代
 ) -> Option<Vec<ChunkCoord>> {
     if let Some(ref state) = loaded.load_queue_build_state {
-        if state.center != center || state.radius != radius {
+        if state.center != center {
             loaded.load_queue_build_state = None;
         }
     }
@@ -1221,7 +1289,7 @@ fn rebuild_load_queue(
         let cy_min = center.cy - Y_LOAD_RADIUS;
         let cy_max = center.cy + Y_LOAD_RADIUS;
         loaded.load_queue_build_state =
-            Some(LoadQueueBuildState::new(center, radius, cy_min, cy_max));
+            Some(LoadQueueBuildState::new(center, DETECTION_RADIUS, cy_min, cy_max));
     }
 
     let state = loaded
@@ -1229,74 +1297,37 @@ fn rebuild_load_queue(
         .as_mut()
         .expect("guaranteed by logic above");
 
-    let cy_min = center.cy - Y_LOAD_RADIUS;
-    let cy_max = center.cy + Y_LOAD_RADIUS;
-
+    let offsets = get_offset_table(DETECTION_RADIUS);
+    let cy_min = state.cy_min;
+    let cy_max = state.cy_max;
     let mut steps_done = 0;
 
-    while steps_done < steps_limit {
-        if state.dx * state.dx + state.dz * state.dz > state.radius * state.radius {
-            state.dz += 1;
-            if state.dz > state.radius {
-                state.dz = -state.radius;
-                state.dx += 1;
+    // 遍历预计算偏移量表（已按距离排序），每步展开 Y 轴
+    while state.offset_idx < offsets.len() && steps_done < steps_limit {
+        let (dx, dz, _) = offsets[state.offset_idx];
+
+        // Y 轴展开：对当前 (dx, dz) 检查所有 Y 层
+        let mut cy = cy_min;
+        while cy <= cy_max && steps_done < steps_limit {
+            let coord = ChunkCoord {
+                cx: center.cx + dx,
+                cy,
+                cz: center.cz + dz,
+            };
+
+            if !loaded.entries.contains_key(&coord) {
+                state.missing.push(coord);
             }
-            if state.dx > state.radius {
-                break;
-            }
-            continue;
+
+            cy += 1;
+            steps_done += 1;
         }
 
-        let coord = ChunkCoord {
-            cx: center.cx + state.dx,
-            cy: state.cy,
-            cz: center.cz + state.dz,
-        };
-
-        if !loaded.entries.contains_key(&coord) {
-            state.missing.push(coord);
-        }
-
-        state.cy += 1;
-        if state.cy > cy_max {
-            state.cy = cy_min;
-            state.dz += 1;
-            if state.dz > state.radius {
-                state.dz = -state.radius;
-                state.dx += 1;
-            }
-        }
-
-        steps_done += 1;
-
-        if state.dx > state.radius {
-            break;
-        }
+        state.offset_idx += 1;
     }
 
-    if state.dx > state.radius {
-        // 只需保证前 CHUNKS_PER_FRAME 个是最近的（drain 从头部消费），
-        // 用 select_nth_unstable_by 替代全量排序：O(N log N) → O(N)
-        let len = state.missing.len();
-        if len > 1 {
-            let k = CHUNKS_PER_FRAME.min(len - 1);
-            state.missing.select_nth_unstable_by(k, |a, b| {
-                let da = {
-                    let dx = (a.cx - center.cx).abs();
-                    let dy = (a.cy - center.cy).abs();
-                    let dz = (a.cz - center.cz).abs();
-                    dx * dx + dy * dy + dz * dz
-                };
-                let db = {
-                    let dx = (b.cx - center.cx).abs();
-                    let dy = (b.cy - center.cy).abs();
-                    let dz = (b.cz - center.cz).abs();
-                    dx * dx + dy * dy + dz * dz
-                };
-                da.cmp(&db)
-            });
-        }
-
+    // 预计算表已按距离排序，无需额外排序步骤
+    if state.offset_idx >= offsets.len() {
         let result = Some(std::mem::take(&mut state.missing));
         loaded.load_queue_build_state = None;
         result

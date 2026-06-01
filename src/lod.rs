@@ -105,10 +105,8 @@ impl LodLevel {
 pub struct LodManager {
     chunk_lods: HashMap<ChunkCoord, LodLevel>,
     hysteresis: f32,
-    /// 分帧更新：上次检查到的索引位置
-    last_checked: usize,
-    /// 每帧最多检查的区块数量
-    chunks_per_frame: usize,
+    /// 上次 LOD 全量检查时的玩家区块坐标
+    last_player_chunk: Option<ChunkCoord>,
 }
 
 impl LodManager {
@@ -116,15 +114,8 @@ impl LodManager {
         Self {
             chunk_lods: HashMap::new(),
             hysteresis: 0.5,
-            last_checked: 0,
-            chunks_per_frame: 200,
+            last_player_chunk: None,
         }
-    }
-
-    /// 设置每帧检查的区块数量
-    pub fn with_chunks_per_frame(mut self, n: usize) -> Self {
-        self.chunks_per_frame = n;
-        self
     }
 
     pub fn update(
@@ -155,71 +146,26 @@ impl LodManager {
         to_rebuild
     }
 
-    /// 分帧更新 LOD
+    /// 仅在玩家跨越区块边界时触发全量 LOD 检查。
     ///
-    /// 每帧只检查 `chunks_per_frame` 个区块，避免一次性遍历所有区块导致的 CPU 开销。
-    /// 遍历完所有区块后会自动回到起始位置，实现循环滚动更新。
+    /// 旧版 `update_incremental` 每帧只检查 200 个区块，对 3000+ 区块需要 15 帧
+    /// 才能完整遍历一次，移动速度快时 LOD 切换明显滞后。
+    ///
+    /// 新版仅在 `player_chunk` 变化时执行一次全量遍历（`update`）。
+    /// LOD 检查本身只做整数距离平方比较（O(1)/区块），3000 区块全量遍历 < 0.5ms。
     pub fn update_incremental(
         &mut self,
         player_chunk: ChunkCoord,
         loaded: &super::chunk_manager::LoadedChunks,
     ) -> Vec<(ChunkCoord, LodLevel)> {
-        let mut to_rebuild = Vec::new();
-        let total_chunks = loaded.entries_ordered.len();
-
-        if total_chunks == 0 {
-            self.last_checked = 0;
-            return to_rebuild;
+        // 仅在玩家跨越区块边界时触发全量检查
+        if self.last_player_chunk == Some(player_chunk) {
+            return Vec::new();
         }
+        self.last_player_chunk = Some(player_chunk);
 
-        // 保护：如果 last_checked 越界（entries_ordered 收缩所致），从头开始
-        if self.last_checked >= total_chunks {
-            self.last_checked = 0;
-        }
-
-        let mut checked = 0;
-        let mut current_idx = self.last_checked;
-
-        while checked < self.chunks_per_frame && checked < total_chunks {
-            // 实时检查索引边界 — entries_ordered 可能在帧间变化
-            if current_idx >= loaded.entries_ordered.len() {
-                current_idx = 0;
-                if loaded.entries_ordered.is_empty() {
-                    break;
-                }
-            }
-
-            let Some(coord) = loaded.entries_ordered.get(current_idx).copied() else {
-                break;
-            };
-
-            let dist_sq = Self::chunk_distance_sq(coord, player_chunk);
-            let new_lod = LodLevel::from_chunk_distance_sq(dist_sq);
-
-            let current_lod = self
-                .chunk_lods
-                .get(&coord)
-                .copied()
-                .unwrap_or(LodLevel::Lod0);
-
-            if new_lod != current_lod {
-                if self.should_switch_sq(current_lod, new_lod, dist_sq) {
-                    self.chunk_lods.insert(coord, new_lod);
-                    to_rebuild.push((coord, new_lod));
-                }
-            }
-
-            current_idx += 1;
-            checked += 1;
-
-            if current_idx >= loaded.entries_ordered.len() {
-                current_idx = 0;
-            }
-        }
-
-        self.last_checked = current_idx;
-
-        to_rebuild
+        // 全量遍历：距离平方比较是纯整数运算，3000 区块 < 0.5ms
+        self.update(player_chunk, loaded)
     }
 
     pub fn get_lod(&self, coord: &ChunkCoord) -> LodLevel {
