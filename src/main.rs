@@ -14,6 +14,7 @@ mod lod;
 mod perf_logger;
 mod raycast;
 mod resource_pack;
+mod skybox;
 mod svo;
 mod tree_gen;
 
@@ -61,6 +62,7 @@ fn main() {
                 resource_pack::load_resource_pack_system,
                 lighting::setup_lighting,
                 chunk_manager::setup_world,
+                skybox::setup_skybox,
             )
                 .chain(),
         )
@@ -78,6 +80,8 @@ fn main() {
             )
                 .chain(),
         )
+        // ── 天空盒：等待纹理加载完成后重解释 PNG 为 CubeMap ──
+        .add_systems(Update, skybox::asset_loaded)
         // ── 相机/输入：不依赖 LoadedChunks，与区块管道完全并行 ──
         .add_systems(
             Update,

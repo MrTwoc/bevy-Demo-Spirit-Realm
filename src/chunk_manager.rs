@@ -32,6 +32,7 @@
 
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::visibility::NoCpuCulling;
+use bevy::core_pipeline::Skybox;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::prelude::*;
 use bevy::render::render_resource::Extent3d;
@@ -229,6 +230,7 @@ pub fn setup_world(
     mut meshes: ResMut<Assets<Mesh>>,
     tree_config: Res<TreeConfig>,
     tree_noise: Res<TreeNoise>,
+    asset_server: Res<AssetServer>,
 ) {
     let atlas_handle = if let Some(atlas) = &resource_pack.atlas {
         let size = Extent3d {
@@ -305,6 +307,8 @@ pub fn setup_world(
     commands.insert_resource(WorldTypeResource::default());
 
     use crate::camera::CameraController;
+    use crate::skybox::SKYBOX_PATH;
+    let skybox_handle: Handle<Image> = asset_server.load(SKYBOX_PATH);
     let camera_transform = Transform::from_xyz(16.0, 64.0, 16.0);
     let camera_entity = commands
         .spawn((
@@ -312,6 +316,11 @@ pub fn setup_world(
             camera_transform,
             CameraController::default(),
             // NoCpuCulling,
+            Skybox {
+                image: skybox_handle,
+                brightness: 1000.0,
+                ..default()
+            },
         ))
         .id();
 
