@@ -86,9 +86,10 @@ fn extract_frustum_planes(camera: &Camera) -> [FrustumPlane; 6] {
     for (i, row) in rows.iter().enumerate() {
         let len = (row.x * row.x + row.y * row.y + row.z * row.z).sqrt();
         if len > 0.0 {
+            let inv_len = 1.0 / len;  // 除法转乘法
             planes[i] = FrustumPlane {
-                x: row.x / len, y: row.y / len,
-                z: row.z / len, w: row.w / len,
+                x: row.x * inv_len, y: row.y * inv_len,
+                z: row.z * inv_len, w: row.w * inv_len,
             };
         }
     }
@@ -150,16 +151,17 @@ fn init_render_pipeline(
 
     let node_size = BufferSize::new(std::mem::size_of::<GpuNode>() as u64);
     let camera_size = BufferSize::new(std::mem::size_of::<CameraUniformRaw>() as u64).unwrap();
-    let uint32_size = BufferSize::new(4).unwrap();
+    let counter_size = BufferSize::new(4).unwrap();
+    let visible_nodes_size = BufferSize::new(MAX_VISIBLE_NODES as u64 * 4).unwrap();
 
     // 构建布局描述 — BindGroupLayoutEntries 会 Deref 成 &[BindGroupLayoutEntry]
     let layout_entries = BindGroupLayoutEntries::sequential(
         ShaderStages::COMPUTE,
         (
-            storage_buffer_read_only_sized(false, node_size),       // 0: nodes (只读)
-            uniform_buffer_sized(false, Some(camera_size)),         // 1: camera
-            storage_buffer_sized(false, Some(uint32_size)),         // 2: counter
-            storage_buffer_sized(false, Some(uint32_size)),         // 3: visible nodes
+            storage_buffer_read_only_sized(false, node_size),           // 0: nodes (只读)
+            uniform_buffer_sized(false, Some(camera_size)),             // 1: camera
+            storage_buffer_sized(false, Some(counter_size)),            // 2: counter
+            storage_buffer_sized(false, Some(visible_nodes_size)),      // 3: visible nodes
         ),
     );
 

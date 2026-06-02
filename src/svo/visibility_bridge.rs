@@ -71,15 +71,15 @@ fn extract_world_frustum_planes(
 }
 
 /// AABB vs 平面测试（与 WGSL shader 一致）
+/// 优化：half_size 提取公因子，减少 2 次乘法
 fn test_plane_aabb(plane: &FrustumPlane, center: Vec3, half_size: f32) -> bool {
-    let radius = half_size * plane.x.abs()
-               + half_size * plane.y.abs()
-               + half_size * plane.z.abs();
+    let abs_normal = Vec3::new(plane.x.abs(), plane.y.abs(), plane.z.abs());
+    let radius = half_size * (abs_normal.x + abs_normal.y + abs_normal.z);
     let dist = center.x * plane.x + center.y * plane.y + center.z * plane.z + plane.w;
     dist >= -radius
 }
 
-/// AABB vs 6 个视锥体平面测试
+/// AABB vs 6 个视锥体平面测试（LOD 0-1 使用）
 fn is_aabb_visible(planes: &[FrustumPlane; 6], center: Vec3, half_size: f32) -> bool {
     for plane in planes {
         if !test_plane_aabb(plane, center, half_size) {
@@ -87,6 +87,13 @@ fn is_aabb_visible(planes: &[FrustumPlane; 6], center: Vec3, half_size: f32) -> 
         }
     }
     true
+}
+
+/// 粗视锥体测试：仅测试 near/far 平面（索引 4 和 5）
+/// 用于 LOD≥2 的大节点，2 次测试而非 6 次
+fn is_aabb_visible_coarse(planes: &[FrustumPlane; 6], center: Vec3, half_size: f32) -> bool {
+    test_plane_aabb(&planes[4], center, half_size)
+        && test_plane_aabb(&planes[5], center, half_size)
 }
 
 // ── 可见性状态 ────────────────────────────────────────────────────────
@@ -195,16 +202,31 @@ fn compute_visible_regions(
 
         // ── 距离剔除 ──
         let dx = center.x - cam_pos.x;
+        let dy = center.y - cam_pos.y;
         let dz = center.z - cam_pos.z;
+
+        // Y 轴快速剔除：超出渲染距离的垂直范围直接跳过
+        if dy.abs() > render_dist {
+            continue;
+        }
+
         let dist_sq = dx * dx + dz * dz;
         let radius_sq = render_dist * render_dist;
         if dist_sq > radius_sq + half_size * half_size * 2.0 {
             continue;
         }
 
-        // ── 视锥体剔除（仅对 LOD 0-1 精确测试，LOD≥2 跳过以节省开销）──
-        if lvl <= 1 && !is_aabb_visible(frustum_planes, center, half_size) {
-            continue;
+        // ── 视锥体剔除（分级策略）──
+        // LOD 0-1：精确 6 平面测试
+        // LOD 2+：粗略 near/far 测试（2 次），剔除相机背后的节点
+        if lvl <= 1 {
+            if !is_aabb_visible(frustum_planes, center, half_size) {
+                continue;
+            }
+        } else {
+            if !is_aabb_visible_coarse(frustum_planes, center, half_size) {
+                continue;
+            }
         }
 
         // ── Y 轴范围裁剪 ──
@@ -322,17 +344,13 @@ pub fn apply_svo_visibility(
     let mut visible_count = 0usize;
     let mut hidden_count = 0usize;
 
-    // 收集坐标-实体对（避免在迭代 entries 时同时 query）
-    let coords: Vec<(ChunkCoord, Entity)> = loaded_chunks
-        .entries
-        .iter()
-        .map(|(coord, entry)| (*coord, entry.entity))
-        .collect();
-
-    for (coord, entity) in &coords {
+    // 直接迭代 loaded_chunks.entries，避免每帧 Vec 堆分配
+    for (_coord, entry) in loaded_chunks.entries.iter() {
+        let coord = _coord;
+        let entity = entry.entity;
         let is_visible = is_chunk_visible(coord, &regions);
 
-        if let Ok(mut vis) = visibility_query.get_mut(*entity) {
+        if let Ok(mut vis) = visibility_query.get_mut(entity) {
             *vis = if is_visible {
                 Visibility::Inherited
             } else {

@@ -78,13 +78,14 @@ fn get_geometry_handle(data: u64) -> u32 {
 // AABB vs 平面测试 (任何平面外 → 裁剪)
 fn test_plane(plane: vec4<f32>, center: vec3<f32>, half_size: f32) -> bool {
     // 计算 AABB 在平面法线方向上的投影半径
-    let radius = half_size * abs(plane.x)
-               + half_size * abs(plane.y)
-               + half_size * abs(plane.z);
+    // 优化：将 3 次乘法合并为 1 次（half_size 提取公因子）
+    let abs_normal = abs(plane.xyz);
+    let radius = half_size * (abs_normal.x + abs_normal.y + abs_normal.z);
     // 距离 = dot(center, normal) + d > -radius 则可见
     return dot(plane.xyz, center) + plane.w >= -radius;
 }
 
+// 完整 6 平面视锥体测试（LOD 0-1 使用）
 fn is_visible(center: vec3<f32>, half_size: f32) -> bool {
     for (var i = 0u; i < 6u; i = i + 1u) {
         if (!test_plane(camera.frustum_planes[i], center, half_size)) {
@@ -92,6 +93,13 @@ fn is_visible(center: vec3<f32>, half_size: f32) -> bool {
         }
     }
     return true;
+}
+
+// 粗视锥体测试：仅测试 near/far 平面（索引 4 和 5）
+// 用于 LOD≥2 的大节点，2 次测试而非 6 次
+fn is_visible_coarse(center: vec3<f32>, half_size: f32) -> bool {
+    return test_plane(camera.frustum_planes[4], center, half_size)
+        && test_plane(camera.frustum_planes[5], center, half_size);
 }
 
 // ── 主遍历函数 ──────────────────────────────────────────────────────────
@@ -136,7 +144,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // ── 距离剔除 ──────────────────────────────────────────────────────
     if (camera.render_distance > 0.0) {
         let dx = center.x - camera.camera_world_x;
+        let dy = center.y - camera.camera_world_y;
         let dz = center.z - camera.camera_world_z;
+
+        // Y 轴快速剔除：超出渲染距离的垂直范围直接跳过
+        if (abs(dy) > camera.render_distance) {
+            return;
+        }
+
         let dist_sq = dx * dx + dz * dz;
         let radius_sq = camera.render_distance * camera.render_distance;
         if (dist_sq > radius_sq + half_size * half_size * 2.0) {
@@ -144,10 +159,17 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         }
     }
 
-    // ── 视锥体剔除 ─────────────────────────────────────────────────
-    // 只有 LOD 0-1 做精确的视锥体测试；LOD>=2 大概率可见，跳过以节省开销
-    if (lvl <= 1u && !is_visible(center, half_size)) {
-        return;
+    // ── 视锥体剔除（分级策略）──────────────────────────────────────
+    // LOD 0-1：精确 6 平面测试
+    // LOD 2+：粗略 near/far 测试（2 次），剔除相机背后的节点
+    if (lvl <= 1u) {
+        if (!is_visible(center, half_size)) {
+            return;
+        }
+    } else {
+        if (!is_visible_coarse(center, half_size)) {
+            return;
+        }
     }
 
     // ── 写入可见节点列表 ──────────────────────────────────────────────
