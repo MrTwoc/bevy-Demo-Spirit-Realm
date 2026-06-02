@@ -21,8 +21,7 @@ use bevy::{
     },
 };
 
-use crate::svo::node_manager::NodeManager;
-use crate::svo::node_store::GpuNode;
+use crate::svo::node_manager::{NodeManager, GpuNode};
 
 // ── 常量 ──────────────────────────────────────────────────────────────
 

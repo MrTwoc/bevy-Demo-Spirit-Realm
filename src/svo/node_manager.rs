@@ -17,9 +17,29 @@ use std::sync::{Arc, Mutex, atomic::{AtomicU64, Ordering}};
 use crate::svo::{
     encode_position, decode_level, decode_x, decode_y, decode_z,
     make_child_pos, format_pos,
-    node_store::{NodeStore, NodeType, GpuNode},
-    section_tracker::SectionTracker,
+    node_store::{NodeStore, NodeType},
 };
+
+/// GPU 可读的节点数据格式 (16 bytes)
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuNode {
+    /// word0: position encoding
+    pub position: u64,
+    /// word1: geometry_handle(24) | flags(8) | child_existence(8) | child_ptr(24)
+    pub data: u64,
+}
+
+impl GpuNode {
+    pub fn from_store(store: &NodeStore, node_id: u32) -> Self {
+        let (position, data) = store.write_node_compact(node_id);
+        Self { position, data }
+    }
+
+    pub fn zeroed() -> Self {
+        Self { position: 0, data: 0 }
+    }
+}
 
 /// 脏节点记录，等待 GPU 更新
 #[derive(Debug, Clone)]
@@ -57,7 +77,7 @@ pub struct NodeManager {
 impl Default for NodeManager {
     fn default() -> Self {
         Self {
-            store: NodeStore::new(),
+            store: NodeStore::new(1 << 18), // 262k nodes
             pos_to_id: HashMap::with_capacity(1024),
             top_level_ids: Vec::with_capacity(256),
             dirty_nodes: Vec::with_capacity(256),
@@ -93,7 +113,7 @@ impl NodeManager {
     }
 
     /// 处理所有待处理的插入
-    pub fn process_pending(&mut self, tracker: &mut SectionTracker) {
+    pub fn process_pending(&mut self, tracker: &mut crate::svo::section_tracker::SectionTracker) {
         // 处理插入
         for &pos in &self.pending_insert.clone() {
             self._insert_top_level_inner(pos, tracker);
@@ -107,7 +127,7 @@ impl NodeManager {
         self.pending_remove.clear();
     }
 
-    fn _insert_top_level_inner(&mut self, pos: u64, tracker: &mut SectionTracker) {
+    fn _insert_top_level_inner(&mut self, pos: u64, tracker: &mut crate::svo::section_tracker::SectionTracker) {
         if self.pos_to_id.contains_key(&pos) {
             return; // 已存在
         }
@@ -115,13 +135,17 @@ impl NodeManager {
         let lvl = decode_level(pos);
         debug_assert_eq!(lvl, 4, "Top-level must be LOD=4");
 
-        let node_id = match self.store.allocate(pos, NodeType::Pending) {
+        let node_id = match self.store.allocate() {
             Some(id) => id,
             None => {
                 bevy::log::warn!("[SVO] Node pool exhausted, cannot insert {}", format_pos(pos));
                 return;
             }
         };
+
+        // 设置节点位置和类型
+        self.store.set_node_position(node_id, pos);
+        self.store.set_node_type(node_id, NodeType::Pending);
 
         self.pos_to_id.insert(pos, node_id);
         self.top_level_ids.push(node_id);
@@ -132,7 +156,7 @@ impl NodeManager {
         self.request_leaf_node(node_id, tracker);
     }
 
-    fn _remove_top_level_inner(&mut self, pos: u64, tracker: &mut SectionTracker) {
+    fn _remove_top_level_inner(&mut self, pos: u64, tracker: &mut crate::svo::section_tracker::SectionTracker) {
         let node_id = match self.pos_to_id.remove(&pos) {
             Some(id) => id,
             None => return,
@@ -146,22 +170,22 @@ impl NodeManager {
     // ===== 递归节点管理 =====
 
     /// 递归移除节点及其子节点
-    fn recurse_remove_node(&mut self, node_id: u32, tracker: &mut SectionTracker) {
+    fn recurse_remove_node(&mut self, node_id: u32, tracker: &mut crate::svo::section_tracker::SectionTracker) {
         let node_type = self.store.get_node_type(node_id);
-        let pos = self.store.read_node(node_id).position;
+        let pos = self.store.node_position(node_id);
 
         if node_type == NodeType::Inner {
             let child_ptr = self.store.get_child_ptr(node_id);
-            let mask = self.store.get_child_existence(node_id);
+            let mask = self.store.get_node_child_existence(node_id);
             // 递归移除所有存在的子节点
             for i in 0..8 {
                 if (mask & (1 << i)) != 0 {
-                    let child_id = child_ptr + i;
+                    let child_id = child_ptr as u32 + i;
                     self.pos_to_id.remove(&make_child_pos(pos, i));
                     self.recurse_remove_node(child_id, tracker);
                 }
             }
-            self.store.free_contiguous(child_ptr, 8);
+            self.store.free_contiguous(child_ptr as u32, 8);
         } else if node_type == NodeType::Leaf {
             // 释放几何体 (由外部系统处理)
             self.clear_geometry(node_id, tracker);
@@ -174,12 +198,11 @@ impl NodeManager {
     ///
     /// 优化：先检查 8 个子节点的内容，只有非空时才分配写入，
     /// 避免 "先分配再回退" 浪费。
-    fn request_leaf_node(&mut self, node_id: u32, tracker: &mut SectionTracker) {
-        let entry = self.store.read_node(node_id);
-        let pos = entry.position;
+    fn request_leaf_node(&mut self, node_id: u32, tracker: &mut crate::svo::section_tracker::SectionTracker) {
+        let pos = self.store.node_position(node_id);
         let lvl = decode_level(pos);
 
-        self.store.set_in_flight(node_id, true);
+        self.store.mark_request_in_flight(node_id);
 
         if lvl == 0 {
             // LOD=0: 直接从 tracker 获取 section 数据
@@ -191,16 +214,16 @@ impl NodeManager {
             // 如果 section 为空，标记为空几何体
             if child_mask == 0 {
                 self.store.set_node_type(node_id, NodeType::Leaf);
-                self.store.set_geometry_handle(node_id, 0); // 空几何体
-                self.store.set_in_flight(node_id, false);
+                self.store.set_node_geometry(node_id, -2); // 空几何体
+                self.store.unmark_request_in_flight(node_id);
                 self.mark_node_dirty(node_id);
                 return;
             }
 
             // 标记为叶子节点 (几何体由 meshing 系统处理)
             self.store.set_node_type(node_id, NodeType::Leaf);
-            self.store.set_child_existence(node_id, child_mask);
-            self.store.set_in_flight(node_id, false);
+            self.store.set_node_child_existence(node_id, child_mask);
+            self.store.unmark_request_in_flight(node_id);
             self.mark_node_dirty(node_id);
         } else {
             // LOD>0: 先检查子节点内容，再分配
@@ -222,8 +245,8 @@ impl NodeManager {
             // 所有子节点都为空 → 本节点为空叶子，不继续展开
             if existence_mask == 0 {
                 self.store.set_node_type(node_id, NodeType::Leaf);
-                self.store.set_geometry_handle(node_id, 0);
-                self.store.set_in_flight(node_id, false);
+                self.store.set_node_geometry(node_id, -2); // 空几何体
+                self.store.unmark_request_in_flight(node_id);
                 self.mark_node_dirty(node_id);
                 return;
             }
@@ -233,25 +256,28 @@ impl NodeManager {
                 Some(base) => base,
                 None => {
                     bevy::log::warn!("[SVO] Cannot allocate children for L{} node", lvl);
-                    self.store.set_in_flight(node_id, false);
+                    self.store.unmark_request_in_flight(node_id);
                     return;
                 }
             };
 
             // 标记为内部节点
             self.store.set_node_type(node_id, NodeType::Inner);
-            self.store.set_child_ptr(node_id, child_base);
-            self.store.set_child_existence(node_id, existence_mask);
+            self.store.set_child_ptr(node_id, child_base as i32);
+            self.store.set_node_child_existence(node_id, existence_mask);
+            self.store.set_child_ptr_count(node_id, 8);
 
             // Step 3: 只写入非空子节点（空子节点保持 None 避免 HashMap 污染）
             for i in 0..8u32 {
                 let child_pos = make_child_pos(pos, i);
                 let child_id = child_base + i;
                 if child_has_content[i as usize] {
-                    self.store.write_node(child_id, child_pos, NodeType::Pending);
+                    self.store.set_node_position(child_id, child_pos);
+                    self.store.set_node_type(child_id, NodeType::Pending);
                     self.pos_to_id.insert(child_pos, child_id);
                 } else {
-                    self.store.write_node(child_id, child_pos, NodeType::None);
+                    self.store.set_node_position(child_id, child_pos);
+                    self.store.set_node_type(child_id, NodeType::None);
                 }
             }
 
@@ -263,7 +289,7 @@ impl NodeManager {
                 }
             }
 
-            self.store.set_in_flight(node_id, false);
+            self.store.unmark_request_in_flight(node_id);
             self.mark_node_dirty(node_id);
         }
     }
@@ -275,7 +301,7 @@ impl NodeManager {
         x: i32,
         y: i32,
         z: i32,
-        tracker: &SectionTracker,
+        tracker: &crate::svo::section_tracker::SectionTracker,
     ) -> bool {
         if lvl == 0 {
             // 直接检查 section
@@ -308,7 +334,7 @@ impl NodeManager {
             for oz in 0..2 {
                 for ox in 0..2 {
                     for oy in 0..2 {
-                        let child_pos = encode_position(
+                        let child_pos = crate::svo::encode_position(
                             lvl - 1,
                             x * 2 + ox,
                             y * 2 + oy,
@@ -326,9 +352,9 @@ impl NodeManager {
     }
 
     /// 清除节点几何体
-    fn clear_geometry(&mut self, node_id: u32, _tracker: &mut SectionTracker) {
-        self.store.set_geometry_handle(node_id, 0);
-        self.store.set_child_existence(node_id, 0);
+    fn clear_geometry(&mut self, node_id: u32, _tracker: &mut crate::svo::section_tracker::SectionTracker) {
+        self.store.set_node_geometry(node_id, 0);
+        self.store.set_node_child_existence(node_id, 0);
         self.mark_node_dirty(node_id);
     }
 
@@ -339,8 +365,7 @@ impl NodeManager {
         }
         self.store.set_dirty(node_id, true);
 
-        let entry = self.store.read_node(node_id);
-        let gpu_node = GpuNode::from_entry(&entry);
+        let gpu_node = GpuNode::from_store(&self.store, node_id);
         self.dirty_nodes.push(DirtyNode {
             node_id,
             gpu_data: gpu_node,
@@ -388,12 +413,11 @@ impl NodeManager {
         }
 
         // 缓存失效 → 重建
-        let count = self.store.max_id() as usize;
+        let count = self.store.end_node_id() as usize + 1;
         let mut new_data = Vec::with_capacity(count);
         for id in 0..count as u32 {
             if self.store.node_exists(id) {
-                let entry = self.store.read_node(id);
-                new_data.push(GpuNode::from_entry(&entry));
+                new_data.push(GpuNode::from_store(&self.store, id));
             } else {
                 new_data.push(GpuNode::zeroed());
             }
@@ -405,6 +429,6 @@ impl NodeManager {
 
     /// 当前节点总数
     pub fn node_count(&self) -> u32 {
-        self.store.count()
+        self.store.node_count()
     }
 }

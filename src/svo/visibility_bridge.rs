@@ -13,7 +13,7 @@ use bevy::prelude::*;
 use crate::chunk::ChunkCoord;
 use crate::chunk_manager::LoadedChunks;
 use crate::svo::config::SECTION_SIZE;
-use crate::svo::node_manager::NodeManager;
+use crate::svo::node_manager::{NodeManager, GpuNode};
 
 // ── 常量 ──────────────────────────────────────────────────────────────
 
@@ -134,20 +134,17 @@ fn decode_level(pos: u64) -> u32 {
 
 /// 从编码位置中解码 X（带符号扩展）
 fn decode_x(pos: u64) -> i32 {
-    let raw = ((pos >> 4) & 0xFFFFFF) as i64;
-    (raw << 40 >> 40) as i32
+    ((pos << 4) as i64 >> 44) as i32
 }
 
 /// 从编码位置中解码 Y（带符号扩展）
 fn decode_y(pos: u64) -> i32 {
-    let raw = ((pos >> 52) & 0xFF) as i64;
-    (raw << 56 >> 56) as i32
+    ((pos << 24) as i64 >> 44) as i32
 }
 
 /// 从编码位置中解码 Z（带符号扩展）
 fn decode_z(pos: u64) -> i32 {
-    let raw = ((pos >> 28) & 0xFFFFFF) as i64;
-    (raw << 40 >> 40) as i32
+    ((pos << 44) as i64 >> 44) as i32
 }
 
 // ── 可见性计算 ─────────────────────────────────────────────────────────
@@ -170,7 +167,7 @@ struct VisibleRegion {
 /// 使用与 GPU shader 相同的距离剔除 + 视锥体剔除逻辑。
 /// 返回可见区域列表，每个区域是 16×16×16 section 的立方体。
 fn compute_visible_regions(
-    node_data: &[crate::svo::node_store::GpuNode],
+    node_data: &[GpuNode],
     cam_pos: Vec3,
     frustum_planes: &[FrustumPlane; 6],
 ) -> Vec<VisibleRegion> {

@@ -12,6 +12,7 @@
 //! 3. non-empty children: 8-bit mask, 表示 8 个 octant 是否有体素
 //! 4. 扁平数组存储，GPU 作为 SSBO 直接读取
 
+mod hierarchical_bitset;
 mod node_store;
 mod node_manager;
 mod section;
@@ -55,14 +56,17 @@ impl Plugin for SvoPlugin {
 
 /// 配置常量
 pub mod config {
-    /// 最大节点数 (2^18 = 262k, 约 4MB 的节点数据)
+    /// 最大节点数 (2^18 = 262k, 约 8MB 的节点数据)
     pub const MAX_NODES: usize = 1 << 18;
 
-    /// 每个节点的字节数 (2x u64 = 16 bytes)
-    pub const NODE_SIZE_BYTES: usize = 16;
+    /// 每个节点的字节数 (4x u64 = 32 bytes, 但 GPU 只需要 16 bytes)
+    pub const NODE_SIZE_BYTES: usize = 32;
+
+    /// GPU 端节点大小 (紧凑格式: 2x u64 = 16 bytes)
+    pub const GPU_NODE_SIZE_BYTES: usize = 16;
 
     /// 节点数据总字节数 (GPU buffer)
-    pub const NODE_BUFFER_SIZE: usize = MAX_NODES * NODE_SIZE_BYTES;
+    pub const NODE_BUFFER_SIZE: usize = MAX_NODES * GPU_NODE_SIZE_BYTES;
 
     /// Section (区块) 边长 (体素数)
     pub const SECTION_SIZE: u32 = 32;
@@ -84,15 +88,15 @@ pub mod config {
 }
 
 /// 位置编码函数
-/// 编码: (lvl:4) | (y:8) | (z:24) | (x:24) | (pad:4)
+/// 编码: (lvl:4) | (x:20) | (y:20) | (z:20)
 /// 注意: 这里的坐标是 section 坐标 (非体素坐标)
 #[inline]
 pub fn encode_position(lvl: u32, x: i32, y: i32, z: i32) -> u64 {
     let lvl = (lvl as u64) << 60;
-    let y = ((y as u64) & 0xFF) << 52;
-    let z = ((z as u64) & 0xFFFFFF) << 28;
-    let x = ((x as u64) & 0xFFFFFF) << 4;
-    lvl | y | z | x
+    let x = ((x as u64) & 0xFFFFF) << 40;
+    let y = ((y as u64) & 0xFFFFF) << 20;
+    let z = (z as u64) & 0xFFFFF;
+    lvl | x | y | z
 }
 
 #[inline]
@@ -102,17 +106,17 @@ pub fn decode_level(pos: u64) -> u32 {
 
 #[inline]
 pub fn decode_x(pos: u64) -> i32 {
-    ((pos << 36) as i64 >> 40) as i32
+    ((pos << 4) as i64 >> 44) as i32
 }
 
 #[inline]
 pub fn decode_y(pos: u64) -> i32 {
-    ((pos << 4) as i64 >> 56) as i32
+    ((pos << 24) as i64 >> 44) as i32
 }
 
 #[inline]
 pub fn decode_z(pos: u64) -> i32 {
-    ((pos << 12) as i64 >> 40) as i32
+    ((pos << 44) as i64 >> 44) as i32
 }
 
 /// 生成子节点的位置 (octant 0-7)
@@ -172,6 +176,24 @@ mod tests {
     }
 
     #[test]
+    fn test_position_encoding_negative() {
+        let pos = encode_position(2, -5, -10, -15);
+        assert_eq!(decode_level(pos), 2);
+        assert_eq!(decode_x(pos), -5);
+        assert_eq!(decode_y(pos), -10);
+        assert_eq!(decode_z(pos), -15);
+    }
+
+    #[test]
+    fn test_position_encoding_large() {
+        let pos = encode_position(4, 100, 200, 300);
+        assert_eq!(decode_level(pos), 4);
+        assert_eq!(decode_x(pos), 100);
+        assert_eq!(decode_y(pos), 200);
+        assert_eq!(decode_z(pos), 300);
+    }
+
+    #[test]
     fn test_child_parent_roundtrip() {
         let parent = encode_position(2, 1, 1, 1);
         for i in 0..8 {
@@ -180,5 +202,24 @@ mod tests {
             let parent2 = make_parent_pos(child);
             assert_eq!(parent, parent2);
         }
+    }
+
+    #[test]
+    fn test_child_position_generation() {
+        let parent = encode_position(2, 0, 0, 0);
+
+        // 子节点 0: (0,0,0)
+        let child0 = make_child_pos(parent, 0);
+        assert_eq!(decode_level(child0), 1);
+        assert_eq!(decode_x(child0), 0);
+        assert_eq!(decode_y(child0), 0);
+        assert_eq!(decode_z(child0), 0);
+
+        // 子节点 7: (1,1,1)
+        let child7 = make_child_pos(parent, 7);
+        assert_eq!(decode_level(child7), 1);
+        assert_eq!(decode_x(child7), 1);
+        assert_eq!(decode_y(child7), 1);
+        assert_eq!(decode_z(child7), 1);
     }
 }
