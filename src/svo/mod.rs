@@ -26,6 +26,7 @@ pub use node_manager::*;
 pub use section::*;
 pub use section_tracker::*;
 pub use render_distance::*;
+pub use gpu_traversal::SvoRenderQueue;
 
 use bevy::prelude::*;
 

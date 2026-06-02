@@ -31,6 +31,64 @@ const SHADER_ASSET_PATH: &str = "shaders/svo_traversal.wgsl";
 
 // ── CPU 侧数据 (Main World) ──────────────────────────────────────────
 
+/// 渲染队列：存储 GPU 遍历输出的可见节点列表
+///
+/// GPU Compute Shader 遍历八叉树后，将可见节点的 ID 写入此队列。
+/// CPU 端读取此队列来决定哪些节点需要渲染。
+#[derive(Resource, Clone, ExtractResource)]
+pub struct SvoRenderQueue {
+    /// 可见节点 ID 列表（从 GPU 回读）
+    pub visible_node_ids: Vec<u32>,
+    /// 可见节点数量
+    pub visible_count: u32,
+    /// 最大容量
+    pub max_capacity: u32,
+    /// 是否有新数据（GPU 已写入）
+    pub has_new_data: bool,
+}
+
+impl Default for SvoRenderQueue {
+    fn default() -> Self {
+        Self {
+            visible_node_ids: Vec::with_capacity(MAX_VISIBLE_NODES as usize),
+            visible_count: 0,
+            max_capacity: MAX_VISIBLE_NODES,
+            has_new_data: false,
+        }
+    }
+}
+
+impl SvoRenderQueue {
+    /// 获取可见节点数量
+    pub fn len(&self) -> u32 {
+        self.visible_count
+    }
+
+    /// 是否为空
+    pub fn is_empty(&self) -> bool {
+        self.visible_count == 0
+    }
+
+    /// 获取可见节点 ID 列表
+    pub fn node_ids(&self) -> &[u32] {
+        &self.visible_node_ids[..self.visible_count as usize]
+    }
+
+    /// 清空队列（每帧开始时调用）
+    pub fn clear(&mut self) {
+        self.visible_count = 0;
+        self.has_new_data = false;
+    }
+
+    /// 从 GPU 回读数据后更新
+    pub fn update_from_gpu(&mut self, data: &[u32], count: u32) {
+        self.visible_node_ids.clear();
+        self.visible_node_ids.extend_from_slice(&data[..count as usize]);
+        self.visible_count = count;
+        self.has_new_data = true;
+    }
+}
+
 /// SVO 遍历提取数据
 #[derive(Resource, Clone, ExtractResource, Default)]
 pub struct SvoExtractData {
@@ -262,9 +320,12 @@ fn init_render_pipeline(
 fn prepare_gpu_resources(
     gpu_buffers: Res<SvoGpuBuffers>,
     data: Res<SvoExtractData>,
+    mut render_queue: ResMut<SvoRenderQueue>,
     queue: Res<RenderQueue>,
     camera_query: Query<&Camera>,
 ) {
+    // 清空渲染队列（每帧开始时）
+    render_queue.clear();
     let camera_uniform = if let Ok(camera) = camera_query.single() {
         let frustum_planes = extract_frustum_planes(camera);
         CameraUniformRaw {
@@ -352,12 +413,15 @@ impl Plugin for SvoGpuTraversalPlugin {
     fn build(&self, app: &mut App) {
         // 主世界: 注册提取资源
         app.init_resource::<SvoExtractData>();
+        app.init_resource::<SvoRenderQueue>();
         app.add_plugins(ExtractResourcePlugin::<SvoExtractData>::default());
+        app.add_plugins(ExtractResourcePlugin::<SvoRenderQueue>::default());
 
         // 渲染世界: 提取系统 + 渲染节点
         let render_app = app.sub_app_mut(RenderApp);
         render_app
             .init_resource::<SvoExtractData>()
+            .init_resource::<SvoRenderQueue>()
             .add_systems(ExtractSchedule, extract_svo_data)
             .add_systems(RenderStartup, init_render_pipeline)
             .add_systems(Render, prepare_gpu_resources.in_set(RenderSystems::PrepareBindGroups));
