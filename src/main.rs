@@ -36,6 +36,7 @@ fn main() {
         .init_resource::<lod::LodManager>()
         .init_resource::<hud::HardwareInfo>()
         .init_resource::<hud::CachedTriangleCount>()
+        .init_resource::<hud::DebugHudVisible>()
         .insert_resource(hud::TriangleUpdateTimer(Timer::from_seconds(
             0.1,
             TimerMode::Repeating,
@@ -89,6 +90,7 @@ fn main() {
                 camera::camera_movement,
                 camera::camera_rotation,
                 input::cursor_grab_system,
+                input::toggle_debug_hud,
             )
                 .chain(),
         )

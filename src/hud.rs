@@ -83,6 +83,26 @@ pub struct TriangleUpdateTimer(pub Timer);
 #[derive(Resource, Default)]
 pub struct CachedTriangleCount(pub u32);
 
+/// 控制调试 HUD 面板的显示/隐藏状态。
+/// 默认 `false`：游戏启动时不显示任何调试信息。
+/// 按 F3 键切换。
+#[derive(Resource)]
+pub struct DebugHudVisible(pub bool);
+
+impl Default for DebugHudVisible {
+    fn default() -> Self {
+        Self(false)
+    }
+}
+
+/// 左侧调试 HUD 面板根节点标记组件。
+#[derive(Component)]
+pub(crate) struct DebugHudLeftPanel;
+
+/// 右侧硬件信息 HUD 面板根节点标记组件。
+#[derive(Component)]
+pub(crate) struct DebugHudRightPanel;
+
 pub fn setup_hud(commands: &mut Commands, camera_entity: Entity) {
     commands
         .spawn((
@@ -96,6 +116,8 @@ pub fn setup_hud(commands: &mut Commands, camera_entity: Entity) {
             },
             BackgroundColor(Color::BLACK.with_alpha(0.6)),
             UiTargetCamera(camera_entity),
+            DebugHudLeftPanel,
+            Visibility::Hidden,
         ))
         .with_children(|parent| {
             parent.spawn((
@@ -237,6 +259,15 @@ pub fn setup_hud(commands: &mut Commands, camera_entity: Entity) {
                 TextColor(Color::srgb(0.65, 0.65, 0.65)),
                 KeyBindingText,
             ));
+            parent.spawn((
+                Text::new("[F3] Debug Info Toggle"),
+                TextFont {
+                    font_size: 12.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.65, 0.65, 0.65)),
+                KeyBindingText,
+            ));
         });
 
     // Spawn crosshair tied to the same camera
@@ -244,11 +275,15 @@ pub fn setup_hud(commands: &mut Commands, camera_entity: Entity) {
 }
 
 pub fn update_hud(
+    visible: Res<DebugHudVisible>,
     query: Query<&Transform, With<Camera3d>>,
     mut pos_query: Query<&mut Text, (With<PositionText>, Without<TargetText>)>,
     mut target_query: Query<&mut Text, (With<TargetText>, Without<PositionText>)>,
     hit_state: Res<crate::raycast::RayHitState>,
 ) {
+    if !visible.0 {
+        return;
+    }
     let Ok(transform) = query.single() else {
         return;
     };
@@ -267,11 +302,15 @@ pub fn update_hud(
 }
 
 pub fn update_triangle_count(
+    visible: Res<DebugHudVisible>,
     time: Res<Time>,
     mut timer: ResMut<TriangleUpdateTimer>,
     cached: Res<CachedTriangleCount>,
     mut text_query: Query<&mut Text, With<TriangleCountText>>,
 ) {
+    if !visible.0 {
+        return;
+    }
     timer.0.tick(time.delta());
     if !timer.0.just_finished() {
         return;
@@ -294,9 +333,13 @@ pub fn chunk_count_changed(loaded: Res<LoadedChunks>) -> bool {
 
 /// 仅在区块数量变化时更新 HUD 中显示的已加载区块数量。
 pub fn update_chunk_count(
+    visible: Res<DebugHudVisible>,
     loaded: Res<LoadedChunks>,
     mut text_query: Query<&mut Text, With<ChunkCountText>>,
 ) {
+    if !visible.0 {
+        return;
+    }
     if let Ok(mut text) = text_query.single_mut() {
         **text = format!("Chunks: {}", loaded.entries.len());
     }
@@ -311,9 +354,13 @@ pub fn update_view_distance(mut text_query: Query<&mut Text, With<ViewDistanceTe
 
 /// 更新左上角 HUD 中世界类型文本
 pub fn update_world_type(
+    visible: Res<DebugHudVisible>,
     mut text_query: Query<&mut Text, With<WorldTypeText>>,
     world_type: Res<crate::chunk::WorldTypeResource>,
 ) {
+    if !visible.0 {
+        return;
+    }
     if let Ok(mut text) = text_query.single_mut() {
         let type_str = match world_type.0 {
             crate::chunk::WorldType::Noise => "Noise",
@@ -332,6 +379,7 @@ pub fn update_world_type(
 /// Query 冲突检测（B0001）——虽然各查询通过不同标记组件定位不同实体，
 /// 但静态分析无法验证不相交性。
 pub fn update_fps_and_hardware_info(
+    visible: Res<DebugHudVisible>,
     time: Res<Time>,
     diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
     mut timer: ResMut<HardwareInfoTimer>,
@@ -364,6 +412,9 @@ pub fn update_fps_and_hardware_info(
         )>,
     )>,
 ) {
+    if !visible.0 {
+        return;
+    }
     timer.0.tick(time.delta());
     if !timer.0.just_finished() {
         return;
@@ -524,6 +575,8 @@ pub fn setup_hardware_info_hud(commands: &mut Commands, camera_entity: Entity) {
             },
             BackgroundColor(Color::BLACK.with_alpha(0.6)),
             UiTargetCamera(camera_entity),
+            DebugHudRightPanel,
+            Visibility::Hidden,
         ))
         .with_children(|parent| {
             // 标题
