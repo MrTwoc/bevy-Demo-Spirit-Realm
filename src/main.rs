@@ -6,6 +6,7 @@ mod chunk_changes;
 mod chunk_dirty;
 mod chunk_manager;
 mod chunk_wire_frame;
+mod compact_vertex;
 mod greedy_mesh;
 mod hud;
 mod input;

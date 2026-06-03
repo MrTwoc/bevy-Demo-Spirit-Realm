@@ -21,12 +21,14 @@ mod render_distance;
 mod terrain_bridge;
 mod gpu_traversal;
 mod visibility_bridge;
+mod batch_renderer;
 
 pub use node_manager::*;
 pub use section::*;
 pub use section_tracker::*;
 pub use render_distance::*;
 pub use gpu_traversal::SvoRenderQueue;
+pub use batch_renderer::*;
 
 use bevy::prelude::*;
 
@@ -52,6 +54,9 @@ impl Plugin for SvoPlugin {
 
         // 注册 GPU 遍历插件
         app.add_plugins(gpu_traversal::SvoGpuTraversalPlugin);
+
+        // 注册批量渲染插件
+        app.add_plugins(batch_renderer::BatchRendererPlugin);
     }
 }
 
