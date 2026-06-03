@@ -103,7 +103,10 @@ impl RenderDistanceController {
             for dx in -rd..=rd {
                 let x = tx + dx;
                 let z = tz + dz;
-                if dx * dx + dz * dz <= rd * rd {
+                // Chebyshev 距离（方形范围），确保对角线方向也被覆盖
+                // 之前用欧氏距离 dx*dx+dz*dz <= rd*rd 会漏掉对角线方向的 section，
+                // 导致玩家移动时身后/脚下的区块因 SVO 中缺少对应 top-level 节点而被错误隐藏。
+                if dx.abs().max(dz.abs()) <= rd {
                     for y in self.min_y..=self.max_y {
                         new_loaded.insert((x, y, z));
                     }

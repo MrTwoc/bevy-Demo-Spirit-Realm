@@ -177,11 +177,19 @@ fn compute_visible_regions(
 
     for node in node_data {
         let pos = node.position;
+
+        // 跳过零值节点（gpu_node_data 中不存在的节点用 GpuNode::zeroed() 填充）
+        if pos == 0 {
+            continue;
+        }
+
         let lvl = decode_level(pos);
 
-        // 只处理 top-level（LOD=4）节点
+        // 只处理 top-level（LOD=4）节点，跳过低 LOD 节点
+        // 低 LOD 节点的 scale、half_size、sections_per_node 计算不同，
+        // 错误处理会产生尺寸不匹配的可见区域，干扰 chunk 可见性判断
         if lvl != 4 {
-            // LOD 不匹配时，保守处理：按完整区域计算
+            continue;
         }
 
         let nx = decode_x(pos);
@@ -351,9 +359,7 @@ pub fn apply_svo_visibility(
             *vis = if is_visible {
                 Visibility::Inherited
             } else {
-                // 强调：修复跑图时身边区块突然消失的问题，将Visibility 改为Inherited 即可
-                // Visibility::Hidden
-                Visibility::Inherited
+                Visibility::Hidden
             };
             if is_visible {
                 visible_count += 1;
