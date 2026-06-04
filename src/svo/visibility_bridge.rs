@@ -314,7 +314,9 @@ pub fn apply_svo_visibility(
 
     // ── 获取 top-level 节点数据 ──
     let node_data = node_manager.gpu_node_data();
-    let node_count = node_data.len() as u32;
+    // 使用 node_count() 而不是 node_data.len()，因为 node_data.len() 返回的是
+    // end_node_id() + 1（最大 ID + 1），而不是实际节点数量
+    let node_count = node_manager.node_count();
 
     // 调试：SVO 节点数量
     // bevy::log::info!(

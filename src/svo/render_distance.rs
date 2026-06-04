@@ -171,19 +171,30 @@ pub fn process_render_distance(
     // 处理插入
     for &(x, y, z) in to_add.iter().take(add_count) {
         let pos = encode_position(MAX_LOD, x, y, z);
-        // 先确保 section 在 tracker 中
+        // 先确保 section 在 tracker 中（acquire 会创建 section 并填充地形数据）
         let coord = SectionCoord::new(
             x << MAX_LOD,
             y << MAX_LOD,
             z << MAX_LOD,
         );
-        // 不强制创建 section，只插入节点
+        // acquire 会创建 section 并调用 on_create_section 回调填充地形数据
+        // 不立即 release，让 section 保持活跃（ref_count > 0）
+        let _section = tracker.acquire(coord);
+        // 插入节点
         node_manager.insert_top_level(pos);
     }
 
     // 处理移除 (全部移除)
     for &(x, y, z) in &to_remove {
         let pos = encode_position(MAX_LOD, x, y, z);
+        // 先释放 section（坐标与插入时一致）
+        let coord = SectionCoord::new(
+            x << MAX_LOD,
+            y << MAX_LOD,
+            z << MAX_LOD,
+        );
+        tracker.release(coord.encode());
+        // 再移除节点
         node_manager.remove_top_level(pos);
     }
 
@@ -215,5 +226,13 @@ pub fn process_render_distance(
             cached_sections,
             node_count,
         );
+        
+        // 调试：检查 section 引用计数
+        if active_sections == 0 && node_count > 0 {
+            bevy::log::warn!(
+                "[SVO-DEBUG] No active sections but {} nodes exist. This indicates section lifecycle issue.",
+                node_count
+            );
+        }
     }
 }

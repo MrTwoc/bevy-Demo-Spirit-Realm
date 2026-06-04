@@ -173,6 +173,7 @@ impl NodeManager {
     fn recurse_remove_node(&mut self, node_id: u32, tracker: &mut crate::svo::section_tracker::SectionTracker) {
         let node_type = self.store.get_node_type(node_id);
         let pos = self.store.node_position(node_id);
+        let lvl = decode_level(pos);
 
         if node_type == NodeType::Inner {
             let child_ptr = self.store.get_child_ptr(node_id);
@@ -189,6 +190,8 @@ impl NodeManager {
         } else if node_type == NodeType::Leaf {
             // 释放几何体 (由外部系统处理)
             self.clear_geometry(node_id, tracker);
+            // 注意：section 的 release 在 render_distance.rs 中处理
+            // 这里只清理节点数据，不释放 section
         }
 
         self.store.free(node_id);
@@ -209,7 +212,8 @@ impl NodeManager {
             let coord = crate::svo::SectionCoord::decode(pos);
             let section = tracker.acquire(coord);
             let child_mask = section.non_empty_children;
-            tracker.release(pos);
+            // 使用 coord.encode() 而不是 pos，确保 key 一致
+            tracker.release(coord.encode());
 
             // 如果 section 为空，标记为空几何体
             if child_mask == 0 {
