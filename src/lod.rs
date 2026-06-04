@@ -13,7 +13,7 @@
 
 use std::collections::HashMap;
 
-use crate::async_mesh::{SubMeshData, UvLookupTable};
+use crate::async_mesh::{SubMeshData, UvLookupTable, MeshVertex};
 use crate::chunk::{BlockId, CHUNK_SIZE, ChunkCoord, ChunkData, ChunkNeighbors, should_cull_face};
 use bevy::prelude::Resource;
 
@@ -337,10 +337,8 @@ pub fn generate_lod_mesh_separated(
         LodLevel::Lod0 => 48000,
     };
 
-    let mut positions = Vec::with_capacity(capacity);
-    let mut uvs = Vec::with_capacity(capacity);
-    let mut normals = Vec::with_capacity(capacity);
-    let mut indices = Vec::with_capacity(capacity * 2);
+    let mut vertices = Vec::with_capacity(capacity * 4); // 4 vertices per face
+    let mut indices = Vec::with_capacity(capacity * 6);   // 6 indices per face
 
     // ── Phase 2: 面剔除与网格生成 ──────────────────────────────────
     for sz in 0..sample_size {
@@ -370,16 +368,18 @@ pub fn generate_lod_mesh_separated(
                         continue;
                     }
 
-                    let base_index = positions.len() as u32;
+                    let base_index = vertices.len() as u32;
 
                     let uv = uv_table.get_uv(block_id, uv_idx);
 
                     let (face_verts, face_uvs, face_normal) =
                         face_quad_lod(x, y, z, face, uv, step_f);
 
-                    positions.extend(face_verts);
-                    uvs.extend(face_uvs);
-                    normals.extend([face_normal; 4]);
+                    // AoS 布局：4 个顶点连续 push，单次写入 32 字节
+                    vertices.push(MeshVertex { position: face_verts[0], normal: face_normal, uv: face_uvs[0] });
+                    vertices.push(MeshVertex { position: face_verts[1], normal: face_normal, uv: face_uvs[1] });
+                    vertices.push(MeshVertex { position: face_verts[2], normal: face_normal, uv: face_uvs[2] });
+                    vertices.push(MeshVertex { position: face_verts[3], normal: face_normal, uv: face_uvs[3] });
                     indices.extend([
                         base_index,
                         base_index + 2,
@@ -395,9 +395,7 @@ pub fn generate_lod_mesh_separated(
 
     let solid = SubMeshData {
         triangle_count: indices.len() as u32 / 3,
-        positions,
-        uvs,
-        normals,
+        vertices,
         indices,
     };
 

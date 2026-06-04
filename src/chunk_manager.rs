@@ -422,15 +422,10 @@ pub fn chunk_loader_system(
             )
         };
 
-        // ── 将网格数据包装为 Arc，避免后续克隆产生完整 memcpy ──
-        // 固体网格数据仅走 Bevy Mesh 管线（Mesh3d + MeshMaterial3d）
-        let solid_positions = Arc::new(result.solid.positions);
-        let solid_normals = Arc::new(result.solid.normals);
-        let solid_uvs = Arc::new(result.solid.uvs);
-        let solid_indices = Arc::new(result.solid.indices);
-
         // 1. 处理固体 Mesh
         let solid_triangle_count = result.solid.triangle_count;
+        // ── 将 AoS 顶点拆分为 Bevy 分离数组（消耗 result.solid）──
+        let (solid_positions, solid_uvs, solid_normals, solid_indices) = result.solid.split_for_bevy();
         let new_handle: Handle<Mesh>;
 
         if solid_triangle_count > 0 {
@@ -438,10 +433,10 @@ pub fn chunk_loader_system(
             if old_handle != shared_empty_mesh.handle {
                 // 已有独立 Handle → 原地更新顶点/索引数据
                 if let Some(mesh) = meshes.get_mut(&old_handle) {
-                    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, (*solid_positions).clone());
-                    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, (*solid_uvs).clone());
-                    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, (*solid_normals).clone());
-                    mesh.insert_indices(bevy::mesh::Indices::U32((*solid_indices).clone()));
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, solid_positions.clone());
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, solid_uvs.clone());
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, solid_normals.clone());
+                    mesh.insert_indices(bevy::mesh::Indices::U32(solid_indices.clone()));
                 }
                 new_handle = old_handle.clone();
             } else {
@@ -451,10 +446,10 @@ pub fn chunk_loader_system(
                         bevy::render::render_resource::PrimitiveTopology::TriangleList,
                         RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
                     )
-                    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, (*solid_positions).clone())
-                    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, (*solid_uvs).clone())
-                    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, (*solid_normals).clone())
-                    .with_inserted_indices(bevy::mesh::Indices::U32((*solid_indices).clone())),
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, solid_positions.clone())
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, solid_uvs.clone())
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, solid_normals.clone())
+                    .with_inserted_indices(bevy::mesh::Indices::U32(solid_indices.clone())),
                 );
             }
 
@@ -501,15 +496,17 @@ pub fn chunk_loader_system(
         // 2. 处理水 Mesh（作为主实体的子节点）
         if let Some(water_data) = result.water {
             let water_triangle_count = water_data.triangle_count;
+            // AoS → SoA 拆分
+            let (water_positions, water_uvs, water_normals, water_indices) = water_data.split_for_bevy();
 
             // 尝试原地更新现有水 Mesh，不存在则创建新 Handle
             let water_mesh_handle = if let Some(handle) = old_water_handle {
                 // 复用现有 Handle，原地更新顶点/索引数据
                 if let Some(mesh) = meshes.get_mut(&handle) {
-                    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, water_data.positions);
-                    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, water_data.uvs);
-                    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, water_data.normals);
-                    mesh.insert_indices(bevy::mesh::Indices::U32(water_data.indices));
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, water_positions);
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, water_uvs);
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, water_normals);
+                    mesh.insert_indices(bevy::mesh::Indices::U32(water_indices));
                 }
                 handle
             } else {
@@ -518,10 +515,10 @@ pub fn chunk_loader_system(
                         bevy::render::render_resource::PrimitiveTopology::TriangleList,
                         RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
                     )
-                    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, water_data.positions)
-                    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, water_data.uvs)
-                    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, water_data.normals)
-                    .with_inserted_indices(bevy::mesh::Indices::U32(water_data.indices)),
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, water_positions)
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, water_uvs)
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, water_normals)
+                    .with_inserted_indices(bevy::mesh::Indices::U32(water_indices)),
                 )
             };
 
@@ -873,6 +870,8 @@ pub fn collect_and_upload_meshes(
         let old_tri_count = entry.triangle_count;
 
         let solid_triangle_count = result.solid.triangle_count;
+        // AoS → SoA 拆分（仅在 GPU 上传时调用一次）
+        let (solid_positions, solid_uvs, solid_normals, solid_indices) = result.solid.split_for_bevy();
 
         // ── 固体 Mesh 上传 ──────────────────────────────────────────────
         // 将可能的 3 条路径（原地更新 / 从空创建 / 变为空）收敛为
@@ -885,29 +884,29 @@ pub fn collect_and_upload_meshes(
             if old_handle != shared_empty_mesh.handle {
                 // 正常重建路径：尝试原地更新现有 Mesh（最常见，无 Command 开销）
                 if let Some(mesh) = meshes.get_mut(&old_handle) {
-                    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, result.solid.positions);
-                    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, result.solid.uvs);
-                    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, result.solid.normals);
-                    mesh.insert_indices(bevy::mesh::Indices::U32(result.solid.indices));
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, solid_positions.clone());
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, solid_uvs.clone());
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, solid_normals.clone());
+                    mesh.insert_indices(bevy::mesh::Indices::U32(solid_indices.clone()));
                     new_handle = old_handle;
                 } else {
                     // 安全网：old_handle 无效（如 Handle::default()），创建新 Mesh
                     // 触发场景：place_block 在纯空气区块按需创建实体时使用了无效的占位句柄
                     new_handle = meshes.add(build_bevy_mesh(
-                        result.solid.positions,
-                        result.solid.uvs,
-                        result.solid.normals,
-                        result.solid.indices,
+                        solid_positions,
+                        solid_uvs,
+                        solid_normals,
+                        solid_indices,
                     ));
                     needs_insert = true;
                 }
             } else {
                 // 从空 Mesh 变为有几何体：创建新 Mesh，Handle 必然变化
                 new_handle = meshes.add(build_bevy_mesh(
-                    result.solid.positions,
-                    result.solid.uvs,
-                    result.solid.normals,
-                    result.solid.indices,
+                    solid_positions,
+                    solid_uvs,
+                    solid_normals,
+                    solid_indices,
                 ));
                 needs_insert = true;
             }
@@ -940,6 +939,8 @@ pub fn collect_and_upload_meshes(
         let (new_water_entity, new_water_handle, new_water_tri_count) =
             if let Some(water_data) = result.water {
                 let water_triangle_count = water_data.triangle_count;
+                // AoS → SoA 拆分
+                let (water_positions, water_uvs, water_normals, water_indices) = water_data.split_for_bevy();
 
                 let (water_mesh_handle, water_needs_insert) =
                     if let Some(handle) = old_water_handle {
@@ -947,20 +948,20 @@ pub fn collect_and_upload_meshes(
                             // 原地更新：Handle 不变，无 Command
                             mesh.insert_attribute(
                                 Mesh::ATTRIBUTE_POSITION,
-                                water_data.positions,
+                                water_positions,
                             );
-                            mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, water_data.uvs);
-                            mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, water_data.normals);
-                            mesh.insert_indices(bevy::mesh::Indices::U32(water_data.indices));
+                            mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, water_uvs);
+                            mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, water_normals);
+                            mesh.insert_indices(bevy::mesh::Indices::U32(water_indices));
                             (handle, false)
                         } else {
                             // get_mut 失败：创建新 Mesh（修复旧代码静默失败的 bug）
                             (
                                 meshes.add(build_bevy_mesh(
-                                    water_data.positions,
-                                    water_data.uvs,
-                                    water_data.normals,
-                                    water_data.indices,
+                                    water_positions,
+                                    water_uvs,
+                                    water_normals,
+                                    water_indices,
                                 )),
                                 true,
                             )
@@ -969,10 +970,10 @@ pub fn collect_and_upload_meshes(
                         // 首次创建水 Mesh
                         (
                             meshes.add(build_bevy_mesh(
-                                water_data.positions,
-                                water_data.uvs,
-                                water_data.normals,
-                                water_data.indices,
+                                water_positions,
+                                water_uvs,
+                                water_normals,
+                                water_indices,
                             )),
                             true,
                         )
