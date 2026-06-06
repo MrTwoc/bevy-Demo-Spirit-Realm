@@ -9,6 +9,7 @@
 //! 这是方案 C 的核心：SVO 剔除驱动 Bevy PBR 渲染，不碰 VoxelBuffers
 
 use bevy::prelude::*;
+use std::collections::HashSet;
 
 use crate::chunk::ChunkCoord;
 use crate::chunk_manager::LoadedChunks;
@@ -111,6 +112,8 @@ pub struct SvoVisibilityState {
     last_cam_pos: Vec3,
     /// 上一帧记录的 SVO generation（检测树变化）
     svo_generation: u64,
+    /// 复用缓冲区：可见 chunk 坐标集合（每帧 clear + 重建，避免 HashSet 分配）
+    visible_coords: HashSet<ChunkCoord>,
 }
 
 impl Default for SvoVisibilityState {
@@ -121,6 +124,7 @@ impl Default for SvoVisibilityState {
             hidden_chunk_count: 0,
             last_cam_pos: Vec3::ZERO,
             svo_generation: 0,
+            visible_coords: HashSet::new(),
         }
     }
 }
@@ -256,22 +260,6 @@ fn compute_visible_regions(
     regions
 }
 
-/// 检查 ChunkCoord 是否在任何可见区域内
-fn is_chunk_visible(coord: &ChunkCoord, regions: &[VisibleRegion]) -> bool {
-    for region in regions {
-        if coord.cx >= region.x_start
-            && coord.cx < region.x_end
-            && coord.cy >= region.y_start
-            && coord.cy < region.y_end
-            && coord.cz >= region.z_start
-            && coord.cz < region.z_end
-        {
-            return true;
-        }
-    }
-    false
-}
-
 // ── 主要系统 ──────────────────────────────────────────────────────────
 
 /// SVO 可见性系统：根据 NodeManager 中的 top-level 节点数据，
@@ -347,6 +335,20 @@ pub fn apply_svo_visibility(
         return;
     }
 
+    // ── 预计算可见 chunk 坐标集（O(regions × volume) → 一次性） ──
+    // 将所有可见区域内的 chunk 坐标插入 HashSet，
+    // 后续每个 chunk 的可见性查询从 O(regions) 线性搜索降为 O(1) HashSet 查找。
+    state.visible_coords.clear();
+    for region in &regions {
+        for cx in region.x_start..region.x_end {
+            for cy in region.y_start..region.y_end {
+                for cz in region.z_start..region.z_end {
+                    state.visible_coords.insert(ChunkCoord { cx, cy, cz });
+                }
+            }
+        }
+    }
+
     // ── 遍历所有已加载 chunk，设置可见性 ──
     let mut visible_count = 0usize;
     let mut hidden_count = 0usize;
@@ -355,7 +357,8 @@ pub fn apply_svo_visibility(
     for (_coord, entry) in loaded_chunks.entries.iter() {
         let coord = _coord;
         let entity = entry.entity;
-        let is_visible = is_chunk_visible(coord, &regions);
+        // O(1) HashSet 查找替代 O(regions) 线性搜索
+        let is_visible = state.visible_coords.contains(coord);
 
         if let Ok(mut vis) = visibility_query.get_mut(entity) {
             *vis = if is_visible {

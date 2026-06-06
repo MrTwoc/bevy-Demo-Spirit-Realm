@@ -120,6 +120,11 @@ pub struct LoadedChunks {
     pub needs_unload_check: bool,
     pending_deletions: Vec<PendingDeletion>,
     load_queue_build_state: Option<LoadQueueBuildState>,
+    // ── 复用缓冲区（避免每帧堆分配临时 Vec） ──
+    /// LRU 淘汰候选缓冲区（lru_evict 复用）
+    evict_candidates: Vec<(ChunkCoord, u64, i32)>,
+    /// 远距离卸载缓冲区（unload_distant_chunks 复用）
+    unload_buf: Vec<ChunkCoord>,
 }
 
 impl Default for LoadedChunks {
@@ -133,6 +138,8 @@ impl Default for LoadedChunks {
             needs_unload_check: false,
             pending_deletions: Vec::new(),
             load_queue_build_state: None,
+            evict_candidates: Vec::new(),
+            unload_buf: Vec::new(),
         }
     }
 }
@@ -1338,6 +1345,8 @@ fn rebuild_load_queue(
 }
 
 /// 卸载超出加载范围的区块实体
+///
+/// 使用 `unload_buf` 复用缓冲区避免每帧堆分配临时 Vec。
 fn unload_distant_chunks(
     center: ChunkCoord,
     loaded: &mut LoadedChunks,
@@ -1351,19 +1360,18 @@ fn unload_distant_chunks(
     }
     loaded.needs_unload_check = false;
 
-    let to_remove: Vec<ChunkCoord> = loaded
-        .entries
-        .keys()
-        .filter(|coord| {
-            let dx = (coord.cx - center.cx).abs();
-            let dz = (coord.cz - center.cz).abs();
-            let dy = (coord.cy - center.cy).abs();
-            dx > UNLOAD_DISTANCE || dz > UNLOAD_DISTANCE || dy > Y_UNLOAD_RADIUS
-        })
-        .copied()
-        .collect();
+    // 复用缓冲区：clear + fill 替代 collect → 新 Vec 分配
+    loaded.unload_buf.clear();
+    for coord in loaded.entries.keys() {
+        let dx = (coord.cx - center.cx).abs();
+        let dz = (coord.cz - center.cz).abs();
+        let dy = (coord.cy - center.cy).abs();
+        if dx > UNLOAD_DISTANCE || dz > UNLOAD_DISTANCE || dy > Y_UNLOAD_RADIUS {
+            loaded.unload_buf.push(*coord);
+        }
+    }
 
-    for coord in to_remove {
+    for &coord in &loaded.unload_buf {
         async_mesh.cancel_task(coord);
         lod_manager.remove(&coord);
 
@@ -1385,6 +1393,9 @@ fn unload_distant_chunks(
 }
 
 /// LRU 缓存淘汰
+///
+/// 使用 `evict_candidates` 复用缓冲区避免每帧堆分配临时 Vec。
+/// `select_nth_unstable_by` 保持 O(N) 选择，但消除了 O(N) 的 Vec 分配开销。
 fn lru_evict(
     center: ChunkCoord,
     loaded: &mut LoadedChunks,
@@ -1396,42 +1407,35 @@ fn lru_evict(
         return;
     }
 
-    let mut candidates: Vec<(ChunkCoord, u64, i32)> = loaded
-        .entries
-        .iter()
-        .filter(|(coord, _)| {
-            let dx = (coord.cx - center.cx).abs();
-            let dz = (coord.cz - center.cz).abs();
-            dx > RENDER_DISTANCE || dz > RENDER_DISTANCE
-        })
-        .map(|(coord, entry)| {
-            let dx = (coord.cx - center.cx).abs();
+    // 复用缓冲区：clear + fill 替代每帧 collect → 新 Vec 分配
+    loaded.evict_candidates.clear();
+    for (coord, entry) in loaded.entries.iter() {
+        let dx = (coord.cx - center.cx).abs();
+        let dz = (coord.cz - center.cz).abs();
+        if dx > RENDER_DISTANCE || dz > RENDER_DISTANCE {
             let dy = (coord.cy - center.cy).abs();
-            let dz = (coord.cz - center.cz).abs();
             let dist_sq = dx * dx + dy * dy + dz * dz;
-            (*coord, entry.last_accessed, dist_sq)
-        })
-        .collect();
+            loaded.evict_candidates.push((*coord, entry.last_accessed, dist_sq));
+        }
+    }
 
     let evict_count = (loaded.entries.len() - MAX_CACHED_CHUNKS)
         .min(LRU_UNLOADS_PER_FRAME)
-        .min(candidates.len());
+        .min(loaded.evict_candidates.len());
 
     if evict_count == 0 {
         return;
     }
 
-    // 改用 select_nth_unstable_by 选出前 evict_count 个项（O(N)），再局部排序
-    candidates.select_nth_unstable_by(evict_count - 1, |a, b| {
+    // O(N) 选择前 evict_count 个最久未访问的项
+    loaded.evict_candidates.select_nth_unstable_by(evict_count - 1, |a, b| {
         a.1.cmp(&b.1).then_with(|| b.2.cmp(&a.2))
     });
-    candidates[..evict_count].sort_by(|a, b| a.1.cmp(&b.1).then_with(|| b.2.cmp(&a.2)));
+    loaded.evict_candidates[..evict_count].sort_by(|a, b| a.1.cmp(&b.1).then_with(|| b.2.cmp(&a.2)));
 
-    // 收集待淘汰坐标，用于批量过滤 entries_ordered
-    let mut evicted_coords = std::collections::HashSet::with_capacity(evict_count);
-
+    // 淘汰 + 批量过滤 entries_ordered
     for i in 0..evict_count {
-        let coord = candidates[i].0;
+        let coord = loaded.evict_candidates[i].0;
 
         async_mesh.cancel_task(coord);
         lod_manager.remove(&coord);
@@ -1445,11 +1449,10 @@ fn lru_evict(
                 water_mesh_handle: entry.water_mesh_handle,
             });
         }
-        evicted_coords.insert(coord);
     }
 
-    // 批量过滤 entries_ordered：O(N) retain，替代 O(N × evict_count) 的逐条 position + swap_remove
+    // 批量过滤 entries_ordered
     loaded
         .entries_ordered
-        .retain(|c| !evicted_coords.contains(c));
+        .retain(|c| loaded.entries.contains_key(c));
 }

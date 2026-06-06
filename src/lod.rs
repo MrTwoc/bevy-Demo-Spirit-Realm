@@ -146,26 +146,64 @@ impl LodManager {
         to_rebuild
     }
 
-    /// 仅在玩家跨越区块边界时触发全量 LOD 检查。
+    /// 增量 LOD 更新：只检查 LOD 边界附近的区块。
     ///
-    /// 旧版 `update_incremental` 每帧只检查 200 个区块，对 3000+ 区块需要 15 帧
-    /// 才能完整遍历一次，移动速度快时 LOD 切换明显滞后。
+    /// LOD 阈值在距离 9/17/25 处。当玩家移动时，只有距离接近这些阈值的区块
+    /// 才可能改变 LOD 级别。远处的区块（如距离 3 或 30）不可能因玩家移动而改变 LOD。
     ///
-    /// 新版仅在 `player_chunk` 变化时执行一次全量遍历（`update`）。
-    /// LOD 检查本身只做整数距离平方比较（O(1)/区块），3000 区块全量遍历 < 0.5ms。
+    /// 边界判定：区块当前 LOD 的阈值距离 ± MARGIN 内的区块需要检查。
+    /// MARGIN 设为 4，覆盖玩家单帧最大移动距离（~3 区块/帧 @ 120km/h）。
     pub fn update_incremental(
         &mut self,
         player_chunk: ChunkCoord,
         loaded: &super::chunk_manager::LoadedChunks,
     ) -> Vec<(ChunkCoord, LodLevel)> {
-        // 仅在玩家跨越区块边界时触发全量检查
+        // 仅在玩家跨越区块边界时触发检查
         if self.last_player_chunk == Some(player_chunk) {
             return Vec::new();
         }
         self.last_player_chunk = Some(player_chunk);
 
-        // 全量遍历：距离平方比较是纯整数运算，3000 区块 < 0.5ms
-        self.update(player_chunk, loaded)
+        // LOD 边界阈值（距离平方）：9²=81, 17²=289, 25²=625
+        const BOUNDARIES: [i32; 3] = [81, 289, 625];
+        // 边界检查余量（距离 ±4 区块 → 距离平方膨胀量）
+        // (d+4)² - d² = 8d + 16，最大 d=25 时为 216
+        const MARGIN: i32 = 216;
+
+        let mut to_rebuild = Vec::new();
+
+        for (coord, _) in &loaded.entries {
+            let dist_sq = Self::chunk_distance_sq(*coord, player_chunk);
+            let current_lod = self
+                .chunk_lods
+                .get(coord)
+                .copied()
+                .unwrap_or(LodLevel::Lod0);
+
+            // 快速跳过：区块不在任何 LOD 边界附近
+            // 对于每个边界，检查 |dist_sq - boundary| <= MARGIN
+            let near_boundary = match current_lod {
+                LodLevel::Lod0 => (dist_sq - BOUNDARIES[0]).abs() <= MARGIN,
+                LodLevel::Lod1 => (dist_sq - BOUNDARIES[0]).abs() <= MARGIN
+                    || (dist_sq - BOUNDARIES[1]).abs() <= MARGIN,
+                LodLevel::Lod2 => (dist_sq - BOUNDARIES[1]).abs() <= MARGIN
+                    || (dist_sq - BOUNDARIES[2]).abs() <= MARGIN,
+                LodLevel::Lod3 => (dist_sq - BOUNDARIES[2]).abs() <= MARGIN,
+            };
+
+            if !near_boundary {
+                continue;
+            }
+
+            // 边界附近：检查是否需要切换 LOD
+            let new_lod = LodLevel::from_chunk_distance_sq(dist_sq);
+            if new_lod != current_lod && self.should_switch_sq(current_lod, new_lod, dist_sq) {
+                self.chunk_lods.insert(*coord, new_lod);
+                to_rebuild.push((*coord, new_lod));
+            }
+        }
+
+        to_rebuild
     }
 
     pub fn get_lod(&self, coord: &ChunkCoord) -> LodLevel {
