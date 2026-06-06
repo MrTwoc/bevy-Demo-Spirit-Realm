@@ -462,7 +462,8 @@ fn emit_quad<F>(
     // local_u 范围 [0, width], local_v 范围 [0, height]
     // 着色器通过 fract() 实现平铺
     let (u_min, _u_max, _v_min, _v_max) = get_uv(block_id, face.face_name);
-    let layer_index = u_min; // u_min 就是纹理层索引
+    // 使用 floor() 获取原始层索引（UV 已添加半纹素内缩，u_min = layer + half_texel）
+    let layer_index = u_min.floor();
     let u_start_f = u_start as f32;
     let v_start_f = v_start as f32;
 

@@ -92,6 +92,8 @@ pub struct TextureInfo {
     pub uv: (f32, f32, f32, f32),
     /// Texture Array 层索引
     pub layer_index: u32,
+    /// 半纹素偏移量（用于 UV 内缩，防止纹理出血）
+    pub half_texel: f32,
 }
 
 /// 动态 Atlas 图集
@@ -561,11 +563,16 @@ impl ResourcePackManager {
                 }
 
                 let layer = *texture_index_map.get(texture_name).unwrap_or(&0) as f32;
+                // 半纹素偏移：防止 UV 恰好落在纹理边界导致的纹理出血
+                // 问题：当 UV.x = layer + 1.0 时，floor() 跳到下一层，fract() 返回 0.0
+                // 当 UV.y = 1.0 时，fract() 返回 0.0，采样到错误的纹素
+                // 解决：UV 向内收缩半个纹素，确保采样始终在正确的纹素中心附近
+                let half_texel = 0.5 / tex_size as f32;
                 // Texture Array UV: x = layer_index + u, y = v
-                let u_min = layer;
-                let u_max = layer + 1.0;
-                let v_min = 0.0;
-                let v_max = 1.0;
+                let u_min = layer + half_texel;
+                let u_max = layer + 1.0 - half_texel;
+                let v_min = half_texel;
+                let v_max = 1.0 - half_texel;
 
                 texture_infos.insert(
                     texture_name.clone(),
@@ -574,6 +581,7 @@ impl ResourcePackManager {
                         size: (*src_w, *src_h),
                         uv: (u_min, u_max, v_min, v_max),
                         layer_index: *texture_index_map.get(texture_name).unwrap_or(&0),
+                        half_texel,
                     },
                 );
             }
