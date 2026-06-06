@@ -21,6 +21,7 @@ pub use crate::terrain_noise::{
 // 向后兼容别名：tree_gen 等模块仍在使用 WATER_LEVEL
 pub const WATER_LEVEL: i32 = SEA_LEVEL;
 
+use crate::biome;
 use crate::chunk_dirty::ChunkMeshHandle;
 use crate::resource_pack::{ResourcePackManager, VoxelMaterial};
 
@@ -716,19 +717,15 @@ pub fn get_surface_height(world_x: f64, world_z: f64, world_type: WorldType) -> 
     }
 }
 
-/// 使用 5 层噪声系统填充区块地形。
+/// 使用 5 层噪声系统 + 生物群系填充区块地形。
 ///
 /// # 算法
 ///
 /// 1. 采样 5 个噪声层（大陆性、侵蚀、山脊、温度、植被）
 /// 2. 通过 `NoiseSample::compute_base_height()` 计算地表高度
-/// 3. 逐方块填充：地表=草地(1)，浅层=泥土(3)，深层=石头(2)
-/// 4. 海平面以下的地表凹陷处填充水(5)
-///
-/// # S1 阶段说明
-///
-/// 地表方块暂不区分生物群系，统一使用草地/泥土/石头。
-/// S2 阶段将根据 BiomeType 替换为群系特化方块。
+/// 3. 通过 `get_biome()` 判定生物群系
+/// 4. 根据群系选择地表/地下方块
+/// 5. 海平面以下的地表凹陷处填充水(5)
 pub fn fill_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
     let noise = get_terrain_noise();
 
@@ -739,6 +736,7 @@ pub fn fill_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
 
             let sample = noise.sample_all(world_x, world_z);
             let surface_height = sample.compute_base_height() as i32;
+            let biome = biome::get_biome(&sample, surface_height);
 
             for y in 0..CHUNK_SIZE {
                 let world_y = coord.cy as i32 * CHUNK_SIZE as i32 + y as i32;
@@ -756,14 +754,12 @@ pub fn fill_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
                     continue;
                 }
 
-                // 地表及以下：分层填充
+                // 地表及以下：根据群系选择方块
                 let depth = surface_height - world_y;
                 let block_id = if depth == 0 {
-                    1 // grass（S2 替换为群系方块）
-                } else if depth <= DIRT_LAYER_DEPTH {
-                    3 // dirt
+                    biome.surface_block(world_y)
                 } else {
-                    2 // stone
+                    biome.subsurface_block(depth)
                 };
 
                 chunk.set(x, y, z, block_id);

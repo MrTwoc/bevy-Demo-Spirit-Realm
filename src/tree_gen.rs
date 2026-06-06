@@ -18,6 +18,8 @@
 //! 4. 只放置落在本区块 XZY 范围内的方块
 
 use crate::chunk::{BlockId, CHUNK_SIZE, ChunkCoord, ChunkData, WATER_LEVEL, get_surface_height, WorldType};
+use crate::terrain_noise::get_terrain_noise;
+use crate::biome;
 use bevy::prelude::Resource;
 use noise::{NoiseFn, Perlin};
 
@@ -350,9 +352,35 @@ pub fn generate_trees_in_chunk(
                 continue;
             }
 
-            // ── 阶段 ②：昂贵 FBM 噪声（地表高度） ──
+            // ── 阶段 ②：昂贵 FBM 噪声（地表高度 + 群系） ──
             // 仅 ~12% 的候选到达此处
             let surface_y = get_surface_height(trunk_x as f64, trunk_z as f64, world_type);
+
+            // ── 群系密度过滤 ──
+            // 沙漠无树，山脉极少，森林密集
+            let terrain_noise = get_terrain_noise();
+            let sample = terrain_noise.sample_all(trunk_x as f64, trunk_z as f64);
+            let biome = biome::get_biome(&sample, surface_y);
+            let density_mult = biome.tree_density_multiplier();
+
+            // 密度乘数为 0 → 该群系完全不生成树木
+            if density_mult <= 0.0 {
+                trunk_z += step;
+                continue;
+            }
+
+            // 密度乘数 < 1 → 降低有效 spawn_chance，让更多候选被过滤
+            // 使用 spawn_prob 的二次采样来实现概率性跳过
+            if density_mult < 1.0 {
+                let density_noise = noise
+                    .height_variation
+                    .get([trunk_x as f64 * 0.07, trunk_z as f64 * 0.07]);
+                let density_prob = density_noise * 0.5 + 0.5;
+                if density_prob > density_mult {
+                    trunk_z += step;
+                    continue;
+                }
+            }
 
             // 跳过地表高度超出树木能触及范围的候选项
             if surface_y < min_trunk_y || surface_y > max_trunk_y {

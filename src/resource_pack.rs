@@ -306,6 +306,43 @@ impl ResourcePackManager {
         map.insert((7, "side".to_string()), "oak_leaves".to_string());
 
         // ─────────────────────────────────────────────────────────────
+        // block_id = 8: 沙石 (Sandstone) — 沙漠地下层
+        // ─────────────────────────────────────────────────────────────
+        map.insert((8, "top".to_string()), "sand".to_string());
+        map.insert((8, "bottom".to_string()), "sand".to_string());
+        map.insert((8, "side".to_string()), "stone".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 9: 雪地草 (Snow Grass) — 寒冷群系地表
+        // 占位：使用 grass_block_top，后期替换为专用雪地纹理
+        // ─────────────────────────────────────────────────────────────
+        map.insert((9, "top".to_string()), "grass_block_top".to_string());
+        map.insert((9, "bottom".to_string()), "dirt".to_string());
+        map.insert((9, "side".to_string()), "grass_block_side".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 10: 砂砾 (Gravel) — 河床/山脚
+        // 占位：使用 cobblestone，后期替换为专用砂砾纹理
+        // ─────────────────────────────────────────────────────────────
+        map.insert((10, "top".to_string()), "cobblestone".to_string());
+        map.insert((10, "bottom".to_string()), "cobblestone".to_string());
+        map.insert((10, "side".to_string()), "cobblestone".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 11: 岩石 (Rock) — 山脉裸露岩石
+        // ─────────────────────────────────────────────────────────────
+        map.insert((11, "top".to_string()), "stone".to_string());
+        map.insert((11, "bottom".to_string()), "stone".to_string());
+        map.insert((11, "side".to_string()), "stone".to_string());
+
+        // ─────────────────────────────────────────────────────────────
+        // block_id = 12: 泥土变体 (Mud) — 河岸/湿地
+        // ─────────────────────────────────────────────────────────────
+        map.insert((12, "top".to_string()), "dirt".to_string());
+        map.insert((12, "bottom".to_string()), "dirt".to_string());
+        map.insert((12, "side".to_string()), "dirt".to_string());
+
+        // ─────────────────────────────────────────────────────────────
         // block_id = 22: 鹅卵石 (Cobblestone)
         // ─────────────────────────────────────────────────────────────
         map.insert((22, "top".to_string()), "cobblestone".to_string());

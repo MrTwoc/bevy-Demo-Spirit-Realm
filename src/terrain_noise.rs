@@ -124,19 +124,25 @@ impl NoiseSample {
     /// 使用 **smoothstep** 在海洋和陆地之间创建平滑过渡带（海岸线），
     /// 避免 continentalness 阈值处的硬切边。
     ///
-    /// 地形由三层叠加：
+    /// 地形由多层叠加：
     /// 1. **大陆基底**：由 continentalness 决定的缓慢起伏（宽广的高原/平原）
     /// 2. **山脊叠加**：RidgedMulti 噪声产生的山脊（宽厚、圆润）
-    /// 3. **侵蚀修饰**：削平山顶，切割河谷
+    /// 3. **群系地形调制**：用温度/植被值调制地形特征（无需 biome 标签）
+    ///    - 热+干 → 沙丘起伏
+    ///    - 冷 → 山脊增强
+    ///    - 湿 → 地形更平坦
+    /// 4. **侵蚀修饰**：削平山顶，切割河谷
     ///
     /// # 输出范围
     ///
-    /// 约 -17（深海底）~ 200（高山顶）
+    /// 约 -17（深海底）~ 230（高山顶）
     #[inline]
     pub fn compute_base_height(&self) -> f64 {
         let c = self.continentalness;
         let e = self.erosion;
         let r = self.ridge;
+        let t = self.temperature;
+        let v = self.vegetation;
 
         // ── 海洋深度 ──
         let ocean_t = ((c - DEEP_OCEAN_THRESHOLD) / (OCEAN_THRESHOLD - DEEP_OCEAN_THRESHOLD))
@@ -144,39 +150,61 @@ impl NoiseSample {
         let ocean_height = SEA_LEVEL as f64 - 80.0 * (1.0 - ocean_t);
 
         // ── 大陆基底 ──
-        // continentalness 越高（越内陆），基础海拔越高
-        // 这创造了宽广的高原和平原，而不是只有薄薄的山脊线
         let inlandness = ((c - CONTINENT_THRESHOLD) / (1.0 - CONTINENT_THRESHOLD))
             .clamp(0.0, 1.0);
         let continental_base = SEA_LEVEL as f64 + 20.0 + inlandness * 40.0; // 83 ~ 123
 
-        // ── 山脊叠加 ──
-        // 使用线性映射（r^1.0）而非非线性，让山顶更圆润
-        // 正值 → 山峰，负值 → 山谷（用绝对值开方让山谷更宽）
-        let ridge_height = if r > 0.0 {
-            r * 120.0 // 线性，最高 ~120 格
+        // ── 群系地形调制（用温度/植被值，不依赖 biome 标签）──
+
+        // 沙丘效果：热+干 → 叠加正弦波状起伏
+        // dryness: 0.0（湿润）→ 1.0（干旱）
+        // hotness: 0.0（寒冷）→ 1.0（炎热）
+        let dryness = (0.17 - v).max(0.0) / 0.55; // vegetation < 0.17 → 干燥
+        let hotness = (t - (-0.12)).max(0.0) / 0.64; // temperature > -0.12 → 温暖
+        let dune_factor = dryness * hotness; // 0.0 ~ 1.0
+
+        let sand_dunes = if dune_factor > 0.1 {
+            // 用 detail 噪声模拟沙丘（频率已足够高）
+            // 正弦调制让沙丘有波浪感
+            let dune_wave = (self.detail * 6.283).sin(); // [-1, 1]
+            dune_wave * 8.0 * dune_factor // 最高 ±8 格沙丘
         } else {
-            r * 20.0 // 负值凹陷温和
+            0.0
+        };
+
+        // 山脊增强：寒冷地区山脉更陡峭
+        // coldness: 0.0（温暖）→ 1.0（极寒）
+        let coldness = ((-0.12 - t) / 0.36).clamp(0.0, 1.0);
+        let ridge_boost = 1.0 + coldness * 0.4; // 1.0 ~ 1.4 倍山脊振幅
+
+        // 平坦化：湿润地区地形更平缓
+        // wetness: 0.0（干旱）→ 1.0（湿润）
+        let wetness = ((v - 0.07) / 0.26).clamp(0.0, 1.0);
+        let flatten_factor = 1.0 - wetness * 0.25; // 1.0 ~ 0.75 倍
+
+        // ── 山脊叠加 ──
+        let ridge_height = if r > 0.0 {
+            r * 120.0 * ridge_boost
+        } else {
+            r * 20.0
         };
 
         // ── 侵蚀调制 ──
-        // 高侵蚀值削平山顶（侵蚀越大，山越矮）
         let erosion_factor = 1.0 - (e.max(0.0) * 0.5);
 
         // ── 细节层 ──
-        // 高频小振幅噪声，为山坡增添微起伏（±5 格）
-        // 振幅较小，平原保持平坦，山坡有自然纹理
         let detail = self.detail * 5.0;
 
         // ── 最终陆地高度 ──
-        let land_height = (continental_base + ridge_height + detail) * erosion_factor;
+        let land_height = (continental_base + ridge_height + detail + sand_dunes)
+            * erosion_factor * flatten_factor;
 
         // ── 海岸过渡 ──
         const COAST_START: f64 = OCEAN_THRESHOLD - 0.15;
         const COAST_END: f64 = OCEAN_THRESHOLD + 0.15;
         let land_factor = smoothstep(COAST_START, COAST_END, c);
 
-        // 海岸细节：过渡带内 ±8 格扰动
+        // 海岸细节
         let coastal_detail = if land_factor > 0.05 && land_factor < 0.95 {
             let coast_proximity = (land_factor * (1.0 - land_factor) * 4.0).min(1.0);
             e * 8.0 * coast_proximity
@@ -240,7 +268,7 @@ impl TerrainNoise {
                 .set_frequency(0.0006)
                 .set_lacunarity(2.0)
                 .set_persistence(0.5),
-            // 细节：高频低振幅，为山坡添加微起伏
+            // 细节：高频低振幅，为山坡添加微起伏，也用于沙丘波浪效果
             // 频率 0.015 → 细节跨度约 67 格，振幅 ±5 格
             detail: Fbm::<Simplex>::new(seed.wrapping_add(5))
                 .set_octaves(3)
