@@ -309,7 +309,8 @@ pub fn generate_trees_in_chunk(
 
     // 搜索范围 = 当前区块 XZ 范围 + 树叶半径扩展
     // 这样能捕获到树干在相邻区块但树叶伸入本区块的树木
-    let search_extend = config.leaf_radius + config.trunk_max_height + 2;
+    // 注：trunk_max_height 不影响 XZ 搜索范围（树叶水平延伸最多 leaf_radius 格）
+    let search_extend = config.leaf_radius;
     let search_min_x = chunk_ox - search_extend;
     let search_max_x = chunk_ox + CHUNK_SIZE as i32 + search_extend;
     let search_min_z = chunk_oz - search_extend;

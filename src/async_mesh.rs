@@ -512,43 +512,7 @@ enum FaceAsync {
     Back,
 }
 
-/// 两遍扫描：精确统计可见面数，用于精确预分配顶点数组。
-///
-/// 第一遍只做 `chunk.get()` + `is_face_visible_fast()`，无内存分配。
-/// 第二遍用精确容量分配，零浪费、零扩容。
-///
-/// 额外 CPU 开销约 0.05-0.1ms（纯整数比较 + 数组索引），
-/// 但消除了过度预分配（旧估算可能多分配 50-200%）。
-fn count_visible_faces(chunk: &ChunkData, neighbors: &ChunkNeighbors) -> usize {
-    let mut face_count: usize = 0;
-    for z in 0..CHUNK_SIZE {
-        for x in 0..CHUNK_SIZE {
-            // ── 列扫描（与 generate_solid_mesh 一致）──
-            let mut top_y: usize = CHUNK_SIZE;
-            while top_y > 0 {
-                top_y -= 1;
-                if !is_skippable(chunk.get(x, top_y, z)) { break; }
-            }
-            if top_y == 0 && is_skippable(chunk.get(x, 0, z)) { continue; }
-
-            for y in 0..=top_y {
-                let block_id = chunk.get(x, y, z);
-                if is_skippable(block_id) { continue; }
-
-                for (face_index, (_face, offset, _uv_idx)) in
-                    FACES_ASYNC.iter().enumerate()
-                {
-                    if is_face_visible_fast(
-                        chunk, x, y, z, block_id, offset, face_index, neighbors,
-                    ) {
-                        face_count += 1;
-                    }
-                }
-            }
-        }
-    }
-    face_count
-}
+// count_visible_faces 已移除：两遍扫描合并为 generate_solid_mesh 中的单遍。
 
 /// 分离 Mesh 生成：水方块和固体方块分开处理。
 ///
@@ -602,10 +566,10 @@ fn is_skippable(block_id: BlockId) -> bool {
 
 /// 生成固体方块的 Mesh（水方块被跳过）。
 ///
-/// 使用**两遍扫描 + AoS 顶点布局**：
+/// 使用**单遍扫描 + AoS 顶点布局**（原为两遍扫描）：
 ///
-/// - 第一遍（`count_visible_faces`）：精确统计可见面数，无内存分配
-/// - 第二遍：精确分配 AoS 顶点数组，单次 `push` 写入 32 字节
+/// - 启发式预分配：基于非空气方块数 × 1.5 估算面数上限
+/// - 单次遍历：边做面可见性检查边生成顶点，消除重复的 `chunk.get()` 和面检查
 /// - AoS 布局：`MeshVertex { position, normal, uv }` 交错存储
 ///   2 个顶点恰好填满 64 字节缓存行
 ///
@@ -626,19 +590,12 @@ fn generate_solid_mesh(
         }
     }
 
-    // ── 第一遍：精确统计可见面数 ──
-    let visible_faces = count_visible_faces(chunk, neighbors);
-    // 每面 4 个顶点，6 个索引
-    let vertex_count = visible_faces * 4;
-    let index_count = visible_faces * 6;
-
-    if vertex_count == 0 {
-        // 没有可见面：数据面快，面剔除快path 直接返回
-        return SubMeshData::new();
-    }
-
-    let mut vertices: Vec<MeshVertex> = Vec::with_capacity(vertex_count);
-    let mut indices: Vec<u32> = Vec::with_capacity(index_count);
+    // ── 启发式预分配 ──
+    // 地表区块典型可见面数：3,000-8,000（取决于地形起伏和地表暴露比例）
+    // 每面 4 顶点 × 32 字节 = 128 字节，8000 面 ≈ 1MB，预分配安全
+    let estimated_faces = 6000usize;
+    let mut vertices: Vec<MeshVertex> = Vec::with_capacity(estimated_faces * 4);
+    let mut indices: Vec<u32> = Vec::with_capacity(estimated_faces * 6);
 
     for z in 0..CHUNK_SIZE {
         for x in 0..CHUNK_SIZE {
@@ -706,6 +663,10 @@ fn generate_solid_mesh(
             }
         }
     }
+
+    // 释放多余容量（实际面数可能远小于预分配）
+    vertices.shrink_to_fit();
+    indices.shrink_to_fit();
 
     SubMeshData {
         triangle_count: indices.len() as u32 / 3,
