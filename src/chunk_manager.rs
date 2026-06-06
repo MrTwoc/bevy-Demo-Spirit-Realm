@@ -145,7 +145,9 @@ impl Default for LoadedChunks {
 }
 
 /// Y 轴加载半径：玩家上下各加载多少层 Y 区块。
-pub const Y_LOAD_RADIUS: i32 = 2;
+/// Y 轴加载半径。新 Y 范围 [-64, 320] = 384 格 = 12 个区块，
+/// 玩家附近需加载 ±5 个区块（320 格）以覆盖完整地形高度。
+pub const Y_LOAD_RADIUS: i32 = 5;
 /// Y 轴卸载半径：超过此距离的 Y 区块会被卸载。比加载半径大 1 避免边界闪烁。
 pub const Y_UNLOAD_RADIUS: i32 = Y_LOAD_RADIUS + 1;
 

@@ -1,6 +1,7 @@
 mod async_mesh;
 mod block_interaction;
 mod camera;
+mod terrain_noise;
 mod chunk;
 mod chunk_changes;
 mod chunk_dirty;

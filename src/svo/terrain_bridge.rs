@@ -6,9 +6,9 @@
 use crate::svo::section::{Section, SectionCoord, Voxel};
 use crate::svo::config::SECTION_SIZE;
 
-// 从 chunk.rs 导入共用的地表高度计算函数和地形常量
-use crate::chunk::{compute_surface_height, TERRAIN_BASE_HEIGHT,
-                    TERRAIN_MIN_Y, TERRAIN_MAX_Y, WATER_LEVEL};
+// 从 terrain_noise 导入地形常量和函数
+use crate::terrain_noise::{compute_surface_height,
+                    TERRAIN_MIN_Y, TERRAIN_MAX_Y, SEA_LEVEL};
 
 /// 用地形生成数据填充一个 Section
 ///
@@ -40,7 +40,7 @@ pub fn fill_section_terrain(section: &mut Section, coord: &SectionCoord) {
                 }
 
                 if world_y > surface_height {
-                    if world_y < WATER_LEVEL && surface_height < WATER_LEVEL {
+                    if world_y < SEA_LEVEL && surface_height < SEA_LEVEL {
                         section.set_voxel(x as u32, y as u32, z as u32, 5); // water
                     }
                     continue;

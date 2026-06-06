@@ -8,10 +8,18 @@
 use bevy::{
     asset::RenderAssetUsages, mesh::Indices, prelude::*, render::render_resource::PrimitiveTopology,
 };
-use noise::{Fbm, MultiFractal, NoiseFn, Simplex};
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::Arc;
+
+// 从 terrain_noise re-export 地形常量和函数，保持外部模块兼容
+pub use crate::terrain_noise::{
+    TERRAIN_BASE_HEIGHT, DIRT_LAYER_DEPTH,
+    TERRAIN_MIN_Y, TERRAIN_MAX_Y, SEA_LEVEL,
+    compute_surface_height, get_terrain_noise,
+};
+// 向后兼容别名：tree_gen 等模块仍在使用 WATER_LEVEL
+pub const WATER_LEVEL: i32 = SEA_LEVEL;
 
 use crate::chunk_dirty::ChunkMeshHandle;
 use crate::resource_pack::{ResourcePackManager, VoxelMaterial};
@@ -690,152 +698,12 @@ impl BlockPos {
 }
 
 // ============================================================================
-// Terrain generation
+// Terrain generation — 多层噪声系统（常量和函数由 terrain_noise.rs 提供）
 // ============================================================================
-
-/// Terrain noise seed
-pub const TERRAIN_SEED: u32 = 12345;
-
-/// Base terrain height (world Y coordinate)
-pub const TERRAIN_BASE_HEIGHT: i32 = 96;
-
-/// Terrain height amplitude (max deviation from base)
-pub const TERRAIN_AMPLITUDE: f64 = 180.0;
-
-/// Depth of dirt layer below surface
-pub const DIRT_LAYER_DEPTH: i32 = 4;
-
-/// Water level (base height for water to appear)
-pub const WATER_LEVEL: i32 = 80;
-
-/// Minimum terrain generation height
-pub const TERRAIN_MIN_Y: i32 = -256;
-/// Maximum terrain generation height
-pub const TERRAIN_MAX_Y: i32 = 256;
-
-/// 细节层噪声振幅（小丘陵/凹陷的高度变化，±20 blocks）
-pub const TERRAIN_DETAIL_AMP: f64 = 20.0;
-
-/// 全局噪声缓存（线程安全）
-///
-/// 使用 std::sync::OnceLock 缓存噪声函数，避免每次调用 fill_terrain 都重新创建。
-static TERRAIN_NOISE: std::sync::OnceLock<Fbm<Simplex>> = std::sync::OnceLock::new();
-
-// ── powf 查表优化 ─────────────────────────────────────────────────
-//
-// compute_surface_height 中的 2.0_f64.powf(x) 是昂贵的 f64 指数运算（~20-30 周期）。
-// 由于输入 x ∈ [-1, 1]（FBM 噪声输出范围），可预计算 2^x 的查找表，
-// 使用线性插值替代运行时 powf 调用。
-// 257 项精度误差 < 0.0004，对地形高度（整数）完全无影响。
-
-/// 2^x 查找表，x ∈ [-1, 1]，257 项（含两端），线性插值精度 < 0.0004
-static POWF_TABLE: [f64; 257] = {
-    let mut table = [0.0f64; 257];
-    let mut i = 0;
-    while i < 257 {
-        let x = -1.0 + (i as f64) * (2.0 / 256.0);
-        // 手动泰勒展开计算 2^x = e^(x*ln2)
-        // 使用 Horner 形式的 12 阶泰勒多项式，精度 ~1e-15
-        let xln2 = x * 0.6931471805599453;
-        // e^t 的 12 阶泰勒展开：1 + t + t²/2! + ... + t¹²/12!
-        let t = xln2;
-        let t2 = t * t;
-        let t3 = t2 * t;
-        let t4 = t3 * t;
-        let t5 = t4 * t;
-        let t6 = t5 * t;
-        let t7 = t6 * t;
-        let t8 = t7 * t;
-        let t9 = t8 * t;
-        let t10 = t9 * t;
-        let t11 = t10 * t;
-        let t12 = t11 * t;
-        table[i] = 1.0
-            + t
-            + t2 * 0.5
-            + t3 * (1.0 / 6.0)
-            + t4 * (1.0 / 24.0)
-            + t5 * (1.0 / 120.0)
-            + t6 * (1.0 / 720.0)
-            + t7 * (1.0 / 5040.0)
-            + t8 * (1.0 / 40320.0)
-            + t9 * (1.0 / 362880.0)
-            + t10 * (1.0 / 3628800.0)
-            + t11 * (1.0 / 39916800.0)
-            + t12 * (1.0 / 479001600.0);
-        i += 1;
-    }
-    table
-};
-
-/// 快速 2^x 计算（查表 + 线性插值），替代 f64::powf。
-///
-/// 输入范围：x ∈ [-1, 1]（FBM 噪声输出范围）
-/// 输出范围：[0.5, 2.0]
-/// 精度误差：< 0.0004（对整数地形高度完全无影响）
-/// 性能：~2-3 周期 vs powf 的 ~20-30 周期
-#[inline]
-fn fast_pow2(x: f64) -> f64 {
-    // 将 [-1, 1] 映射到 [0, 256]
-    let t = (x + 1.0) * 128.0;
-    let i = t as usize;
-    let f = t - i as f64;
-    // 边界保护（x 可能因浮点精度略超出 [-1, 1]）
-    if i >= 256 {
-        return POWF_TABLE[256];
-    }
-    // 线性插值
-    POWF_TABLE[i] * (1.0 - f) + POWF_TABLE[i + 1] * f
-}
-
-/// 获取缓存的粗轮廓噪声函数（低频 FBM，大山脉/谷地）
-pub fn get_terrain_noise() -> &'static Fbm<Simplex> {
-    TERRAIN_NOISE.get_or_init(|| {
-        Fbm::<Simplex>::new(TERRAIN_SEED)
-            .set_octaves(5)
-            .set_frequency(0.003)
-            .set_lacunarity(2.0)
-            .set_persistence(0.5)
-    })
-}
-
-/// 细节层噪声缓存（高频，小丘陵/凹陷）
-static TERRAIN_DETAIL_NOISE: std::sync::OnceLock<Fbm<Simplex>> = std::sync::OnceLock::new();
-
-/// 获取缓存的细节噪声函数（高频 3 octaves，频率 ~7x 于粗轮廓）
-pub fn get_terrain_detail_noise() -> &'static Fbm<Simplex> {
-    TERRAIN_DETAIL_NOISE.get_or_init(|| {
-        Fbm::<Simplex>::new(TERRAIN_SEED.wrapping_add(1))
-            .set_octaves(3)
-            .set_frequency(0.02)
-            .set_lacunarity(2.0)
-            .set_persistence(0.5)
-    })
-}
-
-/// 计算噪声地形的地表高度（核心公式，被 fill_terrain、get_surface_height、terrain_bridge 共享）。
-///
-/// 公式：`base + (2^coarse - 1) * amplitude + detail * detail_amp`
-///
-/// - **粗轮廓** (`2^coarse - 1`)：将 [-1,1] 噪声映射为 [-0.5, 1.0] 的非线性乘数，
-///   产生大面积平坦低地 + 少量高耸山峰的效果。
-/// - **细节层**：叠加高频小振幅噪声，为平原和山坡增添微起伏。
-///
-/// # 性能优化
-///
-/// 使用 `fast_pow2` 查表 + 线性插值替代 `f64::powf`（~2-3 周期 vs ~20-30 周期）。
-#[inline]
-pub fn compute_surface_height(world_x: f64, world_z: f64) -> i32 {
-    let coarse_val = get_terrain_noise().get([world_x, world_z]);       // [-1, 1]
-    let coarse_mult = fast_pow2(coarse_val) - 1.0;                      // [-0.5, 1.0]
-    let detail_val = get_terrain_detail_noise().get([world_x, world_z]); // [-1, 1]
-    TERRAIN_BASE_HEIGHT
-        + (coarse_mult * TERRAIN_AMPLITUDE + detail_val * TERRAIN_DETAIL_AMP) as i32
-}
 
 /// 获取世界坐标 (world_x, world_z) 处的**地表高度**。
 ///
-/// 使用与 `fill_terrain` 完全相同的噪声配置和计算公式，
+/// 使用 5 层噪声系统（`terrain_noise::compute_surface_height`）计算，
 /// 确保在任何位置（跨越区块边界）计算的地表高度一致。
 ///
 /// 此函数是确定性的——相同的 (world_x, world_z) 总是返回相同的高度值。
@@ -843,50 +711,57 @@ pub fn compute_surface_height(world_x: f64, world_z: f64) -> i32 {
 pub fn get_surface_height(world_x: f64, world_z: f64, world_type: WorldType) -> i32 {
     match world_type {
         WorldType::Flat => TERRAIN_BASE_HEIGHT,
-        WorldType::Void => i32::MIN,
+        WorldType::Void | WorldType::MengerSponge => i32::MIN,
         WorldType::Noise => compute_surface_height(world_x, world_z),
-        WorldType::MengerSponge => i32::MIN,
     }
 }
 
-/// Fills a chunk with noise-generated terrain.
+/// 使用 5 层噪声系统填充区块地形。
 ///
-/// 使用指数高度映射（`2^coarse - 1`）+ 高频细节层生成地形。
-/// 公式：`base + (2^coarse - 1) * amplitude + detail * detail_amp`
-/// 地形分层：地表=草地(1)，浅层=泥土(3)，深层=石头(2)，土壤厚度=4。
+/// # 算法
+///
+/// 1. 采样 5 个噪声层（大陆性、侵蚀、山脊、温度、植被）
+/// 2. 通过 `NoiseSample::compute_base_height()` 计算地表高度
+/// 3. 逐方块填充：地表=草地(1)，浅层=泥土(3)，深层=石头(2)
+/// 4. 海平面以下的地表凹陷处填充水(5)
+///
+/// # S1 阶段说明
+///
+/// 地表方块暂不区分生物群系，统一使用草地/泥土/石头。
+/// S2 阶段将根据 BiomeType 替换为群系特化方块。
 pub fn fill_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
+    let noise = get_terrain_noise();
+
     for z in 0..CHUNK_SIZE {
         for x in 0..CHUNK_SIZE {
             let world_x = coord.cx as f64 * CHUNK_SIZE as f64 + x as f64;
             let world_z = coord.cz as f64 * CHUNK_SIZE as f64 + z as f64;
 
-            let surface_height = compute_surface_height(world_x, world_z);
-
-            let surface_block: BlockId = 1; // grass
-            let under_surface_block: BlockId = 3; // dirt
-            let soil_thickness = 4;
+            let sample = noise.sample_all(world_x, world_z);
+            let surface_height = sample.compute_base_height() as i32;
 
             for y in 0..CHUNK_SIZE {
                 let world_y = coord.cy as i32 * CHUNK_SIZE as i32 + y as i32;
 
-                if world_y > TERRAIN_MAX_Y {
-                    continue;
-                }
-                if world_y < TERRAIN_MIN_Y {
+                if world_y > TERRAIN_MAX_Y || world_y < TERRAIN_MIN_Y {
                     continue;
                 }
 
+                // 地表以上
                 if world_y > surface_height {
-                    if world_y < WATER_LEVEL && surface_height < WATER_LEVEL {
+                    // 海平面以下的凹陷处填充水
+                    if world_y <= SEA_LEVEL && surface_height < SEA_LEVEL {
                         chunk.set(x, y, z, 5); // water
                     }
                     continue;
                 }
 
-                let block_id = if world_y == surface_height {
-                    surface_block
-                } else if world_y > surface_height - soil_thickness {
-                    under_surface_block
+                // 地表及以下：分层填充
+                let depth = surface_height - world_y;
+                let block_id = if depth == 0 {
+                    1 // grass（S2 替换为群系方块）
+                } else if depth <= DIRT_LAYER_DEPTH {
+                    3 // dirt
                 } else {
                     2 // stone
                 };
@@ -899,8 +774,8 @@ pub fn fill_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
 
 /// 填充平台世界地形（超平坦，只有草方块和泥土）
 ///
-/// 表面 Y=96（`TERRAIN_BASE_HEIGHT`）为草方块(grass=1)，
-/// 下方 `DIRT_LAYER_DEPTH` 层为泥土(dirt=3)，
+/// 表面 Y=`TERRAIN_BASE_HEIGHT`(80) 为草方块(grass=1)，
+/// 下方 `DIRT_LAYER_DEPTH`(4) 层为泥土(dirt=3)，
 /// 不生成石头和水（与噪声世界截然不同）。
 pub fn fill_flat_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
     for z in 0..CHUNK_SIZE {
