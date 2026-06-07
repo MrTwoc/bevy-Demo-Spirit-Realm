@@ -3,7 +3,7 @@
 //! 当 SectionTracker 创建新的空 Section 时，通过回调填入地形数据。
 //! 这样 NodeManager 在查询 section 数据时就能得到正确的体素信息。
 //!
-//! 使用与 `chunk::fill_terrain` 完全相同的 6+1 层噪声 + 生物群系 + 区域系统。
+//! 使用与 `chunk::fill_terrain` 完全相同的 6+1 层噪声 + 生物群系 + 区域系统 + 洞穴。
 
 use crate::svo::section::{Section, SectionCoord, Voxel};
 use crate::svo::config::SECTION_SIZE;
@@ -15,7 +15,7 @@ use crate::biome;
 
 /// 用地形生成数据填充一个 Section
 ///
-/// 使用 6+1 层噪声系统 + 生物群系 + 区域系统，与 `chunk::fill_terrain` 完全一致。
+/// 使用 6+1 层噪声系统 + 生物群系 + 区域系统 + 洞穴，与 `chunk::fill_terrain` 完全一致。
 pub fn fill_section_terrain(section: &mut Section, coord: &SectionCoord) {
     let size = SECTION_SIZE as usize;
     let noise = get_terrain_noise();
@@ -45,6 +45,12 @@ pub fn fill_section_terrain(section: &mut Section, coord: &SectionCoord) {
                 }
 
                 let depth = surface_height - world_y;
+
+                // 洞穴检测
+                if depth > 5 && noise.is_cave(world_x, world_y as f64, world_z, depth) {
+                    continue; // 挖空
+                }
+
                 let block_id: Voxel = if depth == 0 {
                     biome.surface_block(world_y) as Voxel
                 } else {

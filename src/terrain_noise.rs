@@ -314,6 +314,8 @@ pub struct TerrainNoise {
     pub detail: Fbm<Simplex>,
     /// 区域选择器：极低频噪声，产生大尺度地形区域（~3000 格跨度）
     pub region: Fbm<Simplex>,
+    /// 洞穴噪声：单个 3D Simplex 噪声
+    pub cave: Simplex,
 }
 
 impl TerrainNoise {
@@ -364,6 +366,8 @@ impl TerrainNoise {
                 .set_frequency(0.0003)
                 .set_lacunarity(2.0)
                 .set_persistence(0.5),
+            // 洞穴：单个 3D Simplex 噪声（最基础实现）
+            cave: Simplex::new(seed.wrapping_add(8)),
         }
     }
 
@@ -381,6 +385,50 @@ impl TerrainNoise {
             detail: self.detail.get([wx, wz]),
             region: self.region.get([wx, wz]),
         }
+    }
+
+    /// 计算世界坐标 (wx, wy, wz) 处是否应该挖空（洞穴）。
+    ///
+    /// 使用两种洞穴类型：
+    /// 1. **大型空腔**：Simplex 噪声 > 阈值 → 球状空腔
+    /// 2. **蜿蜒隧道**：`abs(Simplex)` < 阈值 → 连接的脊线状隧道
+    ///
+    /// # 深度衰减
+    ///
+    /// - 地表以下 5 格内：不生成洞穴（避免地表穿透）
+    /// - 深度 5~40 格：渐进增强
+    /// - 深度 40+ 格：完全生效
+    ///
+    /// # 返回值
+    ///
+    /// `true` = 该位置应该挖空（空气）
+    #[inline]
+    pub fn is_cave(&self, wx: f64, wy: f64, wz: f64, depth_from_surface: i32) -> bool {
+        // 地表附近不生成洞穴
+        if depth_from_surface < 5 {
+            return false;
+        }
+
+        // 深度衰减因子：5 格开始，40 格完全生效
+        let depth_factor = ((depth_from_surface - 5) as f64 / 35.0).clamp(0.0, 1.0);
+
+        // ── 大型空腔 ──
+        // 反转逻辑：噪声 < 阈值 → 洞穴（低值区域大面积连通）
+        let cheese_val = self.cave.get([wx * 0.012, wy * 0.015, wz * 0.012]);
+        let cheese_threshold = -0.3 + depth_factor * 0.15; // 浅层 -0.3，深层 -0.15
+        if cheese_val < cheese_threshold {
+            return true;
+        }
+
+        // ── 蜿蜒隧道 ──
+        // 反转逻辑：abs(noise) > 阈值 → 洞穴（脊线之间的区域连通）
+        let spaghetti_val = self.cave.get([wx * 0.025, wy * 0.035, wz * 0.025]).abs();
+        let spaghetti_threshold = 0.6 - depth_factor * 0.15; // 浅层 0.6，深层 0.45
+        if spaghetti_val > spaghetti_threshold {
+            return true;
+        }
+
+        false
     }
 }
 

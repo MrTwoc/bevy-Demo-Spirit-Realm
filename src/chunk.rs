@@ -756,6 +756,12 @@ pub fn fill_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
 
                 // ── 地表及以下：根据群系选择方块 ──
                 let depth = surface_height - world_y;
+
+                // 洞穴检测：地下 5 格以下才生成洞穴
+                if depth > 5 && noise.is_cave(world_x, world_y as f64, world_z, depth) {
+                    continue; // 挖空（空气）
+                }
+
                 let block_id = if depth == 0 {
                     biome.surface_block(world_y)
                 } else {
