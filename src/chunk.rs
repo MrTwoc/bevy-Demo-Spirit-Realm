@@ -745,16 +745,16 @@ pub fn fill_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
                     continue;
                 }
 
-                // 地表以上
+                // ── 地表以上 ──
                 if world_y > surface_height {
-                    // 海平面以下的凹陷处填充水
+                    // 海平面以下的凹陷处填充水（河流、海洋）
                     if world_y <= SEA_LEVEL && surface_height < SEA_LEVEL {
                         chunk.set(x, y, z, 5); // water
                     }
                     continue;
                 }
 
-                // 地表及以下：根据群系选择方块
+                // ── 地表及以下：根据群系选择方块 ──
                 let depth = surface_height - world_y;
                 let block_id = if depth == 0 {
                     biome.surface_block(world_y)

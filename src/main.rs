@@ -2,6 +2,7 @@ mod async_mesh;
 mod biome;
 mod block_interaction;
 mod camera;
+mod spline;
 mod terrain_noise;
 mod chunk;
 mod chunk_changes;

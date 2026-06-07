@@ -341,10 +341,10 @@ pub fn generate_trees_in_chunk(
         let mut trunk_z = search_min_z;
         while trunk_z <= search_max_z {
             // ── 阶段 ①：廉价 Perlin 噪声（单次求值） ──
-            // 提前过滤 88% 候选，避免后续昂贵的 FBM 求值
+            // 频率 0.12 → 波长 ~50 格，产生小簇分布而非大片聚集
             let noise_val = noise
                 .distribution
-                .get([trunk_x as f64 * 0.035, trunk_z as f64 * 0.035]);
+                .get([trunk_x as f64 * 0.12, trunk_z as f64 * 0.12]);
             let spawn_prob = noise_val * 0.5 + 0.5;
 
             if spawn_prob > config.spawn_chance as f64 {
