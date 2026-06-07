@@ -114,17 +114,17 @@ impl NodeManager {
 
     /// 处理所有待处理的插入
     pub fn process_pending(&mut self, tracker: &mut crate::svo::section_tracker::SectionTracker) {
-        // 处理插入
-        for &pos in &self.pending_insert.clone() {
+        // 处理插入（用 take 避免 clone 整个 Vec）
+        let pending_insert = std::mem::take(&mut self.pending_insert);
+        for pos in pending_insert {
             self._insert_top_level_inner(pos, tracker);
         }
-        self.pending_insert.clear();
 
         // 处理移除
-        for &pos in &self.pending_remove.clone() {
+        let pending_remove = std::mem::take(&mut self.pending_remove);
+        for pos in pending_remove {
             self._remove_top_level_inner(pos, tracker);
         }
-        self.pending_remove.clear();
     }
 
     fn _insert_top_level_inner(&mut self, pos: u64, tracker: &mut crate::svo::section_tracker::SectionTracker) {

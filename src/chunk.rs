@@ -891,7 +891,7 @@ pub fn spawn_chunk_entity(
 
     let entity = commands
         .spawn((
-            chunk.clone(),
+            ChunkComponent(Arc::new(chunk)),
             Transform::from_translation(position),
             Visibility::default(),
             Mesh3d(mesh_handle.clone()),

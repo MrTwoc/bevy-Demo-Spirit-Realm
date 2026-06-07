@@ -442,10 +442,10 @@ pub fn chunk_loader_system(
             if old_handle != shared_empty_mesh.handle {
                 // 已有独立 Handle → 原地更新顶点/索引数据
                 if let Some(mesh) = meshes.get_mut(&old_handle) {
-                    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, solid_positions.clone());
-                    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, solid_uvs.clone());
-                    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, solid_normals.clone());
-                    mesh.insert_indices(bevy::mesh::Indices::U32(solid_indices.clone()));
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, solid_positions);
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, solid_uvs);
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, solid_normals);
+                    mesh.insert_indices(bevy::mesh::Indices::U32(solid_indices));
                 }
                 new_handle = old_handle.clone();
             } else {
@@ -455,20 +455,21 @@ pub fn chunk_loader_system(
                         bevy::render::render_resource::PrimitiveTopology::TriangleList,
                         RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
                     )
-                    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, solid_positions.clone())
-                    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, solid_uvs.clone())
-                    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, solid_normals.clone())
-                    .with_inserted_indices(bevy::mesh::Indices::U32(solid_indices.clone())),
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, solid_positions)
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, solid_uvs)
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, solid_normals)
+                    .with_inserted_indices(bevy::mesh::Indices::U32(solid_indices)),
                 );
             }
 
             // 更新固体实体
+            let mat_handle = shared_material.handle.clone();
             commands.entity(entity).insert((
                 Mesh3d(new_handle.clone()),
-                MeshMaterial3d(shared_material.handle.clone()),
+                MeshMaterial3d(mat_handle.clone()),
                 ChunkMeshHandle {
                     mesh: new_handle.clone(),
-                    material: shared_material.handle.clone(),
+                    material: mat_handle,
                 },
             ));
 
@@ -486,13 +487,14 @@ pub fn chunk_loader_system(
                 meshes.remove(&old_handle);
             }
             let empty_mesh = shared_empty_mesh.handle.clone();
+            let mat_handle = shared_material.handle.clone();
 
             commands.entity(entity).insert((
                 Mesh3d(empty_mesh.clone()),
-                MeshMaterial3d(shared_material.handle.clone()),
+                MeshMaterial3d(mat_handle.clone()),
                 ChunkMeshHandle {
                     mesh: empty_mesh.clone(),
-                    material: shared_material.handle.clone(),
+                    material: mat_handle,
                 },
             ));
 
