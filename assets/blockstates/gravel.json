@@ -1,0 +1,11 @@
+{
+  "id": 10,
+  "name": "gravel",
+  "solid": true,
+  "transparent": false,
+  "textures": {
+    "top": "gravel",
+    "bottom": "gravel",
+    "side": "gravel"
+  }
+}

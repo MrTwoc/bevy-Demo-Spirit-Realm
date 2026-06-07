@@ -4,56 +4,28 @@
 //! 每个子文件夹即为一个材质包。可通过 `ResourcePackManager::selected_pack`
 //! 指定要使用的材质包名称（子文件夹名），默认使用第一个找到的材质包。
 //!
-//! # 方块→纹理映射机制（当前实现 vs Minecraft）
+//! # 方块→纹理映射机制（JSON 驱动）
 //!
-//! ## 当前实现（硬编码映射）
-//!
-//! 当前使用 `block_texture_map: HashMap<(u8, String), String>` 进行映射：
-//! - Key: `(block_id, face)` — 方块 ID + 面名称（"top"/"bottom"/"side"）
-//! - Value: 纹理名称（对应材质包中的 PNG 文件名，不含扩展名）
-//!
-//! 映射链路：
+//! 使用 `assets/blockstates/*.json` 定义方块属性和纹理映射：
 //! ```text
-//! block_id + face → block_texture_map → texture_name → Atlas UV
+//! block_id → blockstates/*.json → textures → Atlas UV
 //! ```
 //!
-//! ## Minecraft 实现（JSON 驱动映射）
-//!
-//! Minecraft 使用四层 JSON 引用链：
-//! ```text
-//! block_id → blockstates/*.json → models/*.json → textures → Atlas UV
-//! ```
-//!
-//! 示例（草方块）：
+//! 每个 JSON 文件定义一种方块：
 //! ```json
-//! // blockstates/grass_block.json
-//! { "variants": { "": { "model": "block/grass_block" } } }
-//!
-//! // models/block/grass_block.json
 //! {
-//!   "textures": {
-//!     "top": "block/grass_top",
-//!     "side": "block/grass_side",
-//!     "bottom": "block/dirt"
-//!   },
-//!   "elements": [{
-//!     "faces": {
-//!       "up":    { "texture": "#top" },
-//!       "north": { "texture": "#side" },
-//!       "down":  { "texture": "#bottom" }
-//!     }
-//!   }]
+//!   "id": 1,
+//!   "name": "grass_block",
+//!   "solid": true,
+//!   "transparent": false,
+//!   "textures": { "top": "grass_block_top", "bottom": "dirt", "side": "grass_block_side" }
 //! }
 //! ```
 //!
-//! ## 待完善事项（TODO）
-//!
-//! 1. **Phase 2**: 实现 `blockstates/*.json` 解析，替代硬编码映射
-//! 2. **Phase 3**: 实现 `models/*.json` 解析，支持复杂模型和状态变体
-//! 3. **纹理命名规范化**: 从简单文件名改为路径式命名（如 `block/grass_top`）
-//! 4. **回退机制**: 纹理缺失时显示紫黑棋盘格（missing texture）
-//!
-//! 参见: `docs/动态Atlas材质包系统.md`
+//! 加新方块只需：
+//! 1. 在 `assets/blockstates/` 下创建 JSON 文件
+//! 2. 在材质包目录下放入对应的 PNG 纹理
+//! 3. 无需修改代码，重启即可生效
 
 use bevy::prelude::*;
 use bevy::reflect::TypePath;
@@ -61,6 +33,8 @@ use bevy::render::render_resource::AsBindGroup;
 use bevy::shader::ShaderRef;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+
+use crate::block_definition::{self, BlockDefinition};
 
 /// 需要生物群系着色（biome tint）的纹理列表
 ///
@@ -159,7 +133,7 @@ pub struct ResourcePackManager {
     pub available_packs: Vec<String>,
     pub texture_cache: HashMap<String, (Vec<u8>, u32, u32)>, // (pixels, width, height)
     pub atlas: Option<TextureAtlas>,
-    /// 方块→纹理映射表（硬编码，待改为 JSON 驱动）
+    /// 方块→纹理映射表（从 `blockstates/*.json` 自动生成）
     ///
     /// # 映射结构
     ///
@@ -171,21 +145,7 @@ pub struct ResourcePackManager {
     ///   - 对应材质包中的 PNG 文件名（不含扩展名）
     ///   - 例如 "dirt" 对应 `assets/resourcepacks/1号材质包/dirt.png`
     ///
-    /// # 与 Minecraft 的对比
-    ///
-    /// | 方面 | 当前实现 | Minecraft |
-    /// |------|----------|-----------|
-    /// | 映射方式 | 硬编码 HashMap | blockstates/models JSON |
-    /// | 面定义 | 仅 top/bottom/side | up/down/north/south/east/west |
-    /// | 状态变体 | 不支持 | 支持（如朝向、水位等） |
-    /// | 模型复用 | 不支持 | 支持（JSON 引用） |
-    ///
-    /// # TODO: Phase 2-3 改造
-    ///
-    /// 将此硬编码映射替换为 JSON 驱动的映射系统：
-    /// 1. 加载 `blockstates/*.json` 获取方块→模型映射
-    /// 2. 加载 `models/*.json` 获取模型→纹理映射
-    /// 3. 解析 `#variable` 引用（如 `#side` → `block/grass_side`）
+    /// 在 `load_resource_pack()` 中从 `block_definitions` 自动生成。
     pub block_texture_map: HashMap<(u8, String), String>,
     /// 预构建的 UV 数组缓存，用于主线程网格生成的 O(1) 零分配查找。
     ///
@@ -193,6 +153,8 @@ pub struct ResourcePackManager {
     /// face_index: 0=top, 1=bottom, 2=side
     /// 在 `build_atlas()` 时自动构建。
     block_uv_array: [[Option<(f32, f32, f32, f32)>; 3]; 256],
+    /// 从 JSON 加载的方块定义（blockstates/*.json）
+    pub block_definitions: HashMap<u8, BlockDefinition>,
 }
 
 impl Default for ResourcePackManager {
@@ -204,165 +166,28 @@ impl Default for ResourcePackManager {
             available_packs: Vec::new(),
             texture_cache: HashMap::new(),
             atlas: None,
-            block_texture_map: Self::default_block_texture_map(),
+            block_texture_map: HashMap::new(),
             block_uv_array: [[None; 3]; 256],
+            block_definitions: HashMap::new(),
         }
     }
 }
 
 impl ResourcePackManager {
-    /// 默认的方块纹理映射表（硬编码，待改为 JSON 驱动）
+    /// 从 JSON 方块定义生成纹理映射表
     ///
-    /// # 当前映射关系
-    ///
-    /// | block_id | 方块名称 | top | bottom | side | 备注 |
-    /// |----------|----------|-----|--------|------|------|
-    /// | 1 | 草方块 | grass_block_top | dirt | grass_block_side | 顶部/侧面/底部分别使用不同材质 |
-    /// | 2 | 石头 | stone | stone | stone | 使用 stone.png |
-    /// | 3 | 泥土 | dirt | dirt | dirt | - |
-    /// | 4 | 沙子 | sand | sand | sand | 使用 sand.png |
-    ///
-    /// # Minecraft 对应实现
-    ///
-    /// Minecraft 中草方块的映射（通过 JSON 链）：
-    /// ```text
-    /// block_id=grass_block
-    ///   → blockstates/grass_block.json → model="block/grass_block"
-    ///   → models/block/grass_block.json
-    ///     → top=#top → "block/grass_top"
-    ///     → side=#side → "block/grass_side"
-    ///     → bottom=#bottom → "block/dirt"
-    /// ```
-    ///
-    /// # TODO: Phase 2 改造
-    ///
-    /// 将此函数替换为 JSON 加载逻辑：
-    /// ```rust
-    /// fn load_block_texture_map_from_json(dir: &Path) -> HashMap<(u8, String), String> {
-    ///     // 1. 加载 blockstates/*.json
-    ///     // 2. 加载 models/*.json
-    ///     // 3. 解析 #variable 引用
-    ///     // 4. 构建映射表
-    /// }
-    /// ```
-    fn default_block_texture_map() -> HashMap<(u8, String), String> {
-        let mut map = HashMap::new();
-
-        // ═════════════════════════════════════════════════════════════
-        // 以下映射仅引用 `assets/resourcepacks/1号材质包/` 中实际存在的 PNG 文件。
-        // 若材质包文件更新，请同步修改此处。
-        // 当前可用纹理：cobblestone, dirt, dirt_path_side, grass_block_side,
-        //   grass_block_side_overlay, grass_block_top, oak_leaves,
-        //   oak_log, oak_log_bottom, oak_log_top, sand, stone, water
-        // ═════════════════════════════════════════════════════════════
-
-        // ─────────────────────────────────────────────────────────────
-        // block_id = 1: 草方块 (Grass Block)
-        // ─────────────────────────────────────────────────────────────
-        map.insert((1, "top".to_string()), "grass_block_top".to_string());
-        map.insert((1, "bottom".to_string()), "dirt".to_string());
-        map.insert((1, "side".to_string()), "grass_block_side".to_string());
-
-        // ─────────────────────────────────────────────────────────────
-        // block_id = 2: 石头 (Stone)
-        // ─────────────────────────────────────────────────────────────
-        map.insert((2, "top".to_string()), "stone".to_string());
-        map.insert((2, "bottom".to_string()), "stone".to_string());
-        map.insert((2, "side".to_string()), "stone".to_string());
-
-        // ─────────────────────────────────────────────────────────────
-        // block_id = 3: 泥土 (Dirt)
-        // ─────────────────────────────────────────────────────────────
-        map.insert((3, "top".to_string()), "dirt".to_string());
-        map.insert((3, "bottom".to_string()), "dirt".to_string());
-        map.insert((3, "side".to_string()), "dirt".to_string());
-
-        // ─────────────────────────────────────────────────────────────
-        // block_id = 4: 沙子 (Sand)
-        // ─────────────────────────────────────────────────────────────
-        map.insert((4, "top".to_string()), "sand".to_string());
-        map.insert((4, "bottom".to_string()), "sand".to_string());
-        map.insert((4, "side".to_string()), "sand".to_string());
-
-        // ─────────────────────────────────────────────────────────────
-        // block_id = 5: 水 (Water)
-        // ─────────────────────────────────────────────────────────────
-        map.insert((5, "top".to_string()), "water".to_string());
-        map.insert((5, "bottom".to_string()), "water".to_string());
-        map.insert((5, "side".to_string()), "water".to_string());
-
-        // ─────────────────────────────────────────────────────────────
-        // block_id = 6: 橡木原木 (Oak Log)
-        // ─────────────────────────────────────────────────────────────
-        map.insert((6, "top".to_string()), "oak_log_top".to_string());
-        map.insert((6, "bottom".to_string()), "oak_log_top".to_string());
-        map.insert((6, "side".to_string()), "oak_log".to_string());
-
-        // ─────────────────────────────────────────────────────────────
-        // block_id = 7: 橡木树叶 (Oak Leaves)
-        // ─────────────────────────────────────────────────────────────
-        map.insert((7, "top".to_string()), "oak_leaves".to_string());
-        map.insert((7, "bottom".to_string()), "oak_leaves".to_string());
-        map.insert((7, "side".to_string()), "oak_leaves".to_string());
-
-        // ─────────────────────────────────────────────────────────────
-        // block_id = 8: 沙石 (Sandstone) — 沙漠地下层
-        // ─────────────────────────────────────────────────────────────
-        map.insert((8, "top".to_string()), "sandstone_top".to_string());
-        map.insert((8, "bottom".to_string()), "sandstone_bottom".to_string());
-        map.insert((8, "side".to_string()), "sandstone".to_string());
-
-        // ─────────────────────────────────────────────────────────────
-        // block_id = 9: 雪地草 (Snow Grass) — 寒冷群系地表
-        // ─────────────────────────────────────────────────────────────
-        map.insert((9, "top".to_string()), "snow".to_string());
-        map.insert((9, "bottom".to_string()), "dirt".to_string());
-        map.insert((9, "side".to_string()), "grass_block_snow".to_string());
-
-        // ─────────────────────────────────────────────────────────────
-        // block_id = 10: 砂砾 (Gravel) — 河床/山脚
-        // ─────────────────────────────────────────────────────────────
-        map.insert((10, "top".to_string()), "gravel".to_string());
-        map.insert((10, "bottom".to_string()), "gravel".to_string());
-        map.insert((10, "side".to_string()), "gravel".to_string());
-
-        // ─────────────────────────────────────────────────────────────
-        // block_id = 11: 岩石 (Rock) — 山脉裸露岩石（使用 stone 纹理）
-        // ─────────────────────────────────────────────────────────────
-        map.insert((11, "top".to_string()), "stone".to_string());
-        map.insert((11, "bottom".to_string()), "stone".to_string());
-        map.insert((11, "side".to_string()), "stone".to_string());
-
-        // ─────────────────────────────────────────────────────────────
-        // block_id = 12: 泥土变体 (Mud) — 河岸/湿地
-        // ─────────────────────────────────────────────────────────────
-        map.insert((12, "top".to_string()), "dirt".to_string());
-        map.insert((12, "bottom".to_string()), "dirt".to_string());
-        map.insert((12, "side".to_string()), "dirt".to_string());
-
-        // ─────────────────────────────────────────────────────────────
-        // block_id = 22: 鹅卵石 (Cobblestone)
-        // ─────────────────────────────────────────────────────────────
-        map.insert((22, "top".to_string()), "cobblestone".to_string());
-        map.insert((22, "bottom".to_string()), "cobblestone".to_string());
-        map.insert((22, "side".to_string()), "cobblestone".to_string());
-
-        // ─────────────────────────────────────────────────────────────
-        // block_id = 24: 橡木按钮 (Oak Log Button)
-        // ─────────────────────────────────────────────────────────────
-        map.insert((24, "top".to_string()), "oak_log_bottom".to_string());
-        map.insert((24, "bottom".to_string()), "oak_log_bottom".to_string());
-        map.insert((24, "side".to_string()), "oak_log_bottom".to_string());
-
-        // ─────────────────────────────────────────────────────────────
-        // block_id = 31: 泥径 (Dirt Path)
-        // top 使用 grass_block_top 作占位，side 使用 dirt_path_side
-        // ─────────────────────────────────────────────────────────────
-        map.insert((31, "top".to_string()), "grass_block_top".to_string());
-        map.insert((31, "bottom".to_string()), "dirt".to_string());
-        map.insert((31, "side".to_string()), "dirt_path_side".to_string());
-
-        map
+    /// 遍历 `block_definitions`，将每个方块的 textures 字段
+    /// 转换为 `block_texture_map` 格式：`(block_id, face) → texture_name`。
+    fn build_block_texture_map_from_definitions(&mut self) {
+        self.block_texture_map.clear();
+        for def in self.block_definitions.values() {
+            self.block_texture_map
+                .insert((def.id, "top".to_string()), def.textures.top.clone());
+            self.block_texture_map
+                .insert((def.id, "bottom".to_string()), def.textures.bottom.clone());
+            self.block_texture_map
+                .insert((def.id, "side".to_string()), def.textures.side.clone());
+        }
     }
 
     /// 扫描 `assets/resourcepacks/` 下所有可用材质包
@@ -389,6 +214,15 @@ impl ResourcePackManager {
     pub fn load_resource_pack(&mut self) -> Result<(), String> {
         // 确保材质包根目录存在
         std::fs::create_dir_all(&self.packs_dir).map_err(|e| e.to_string())?;
+
+        // 加载方块定义（blockstates/*.json）
+        self.block_definitions = block_definition::load_block_definitions();
+        self.build_block_texture_map_from_definitions();
+
+        // 初始化全局方块属性表（用于 is_block_solid 热路径）
+        let props_table =
+            block_definition::BlockPropertiesTable::from_definitions(&self.block_definitions);
+        block_definition::init_block_properties(props_table);
 
         // 扫描可用材质包
         self.scan_available_packs();

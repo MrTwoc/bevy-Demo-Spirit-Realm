@@ -1,0 +1,11 @@
+{
+  "id": 1,
+  "name": "grass_block",
+  "solid": true,
+  "transparent": false,
+  "textures": {
+    "top": "grass_block_top",
+    "bottom": "dirt",
+    "side": "grass_block_side"
+  }
+}

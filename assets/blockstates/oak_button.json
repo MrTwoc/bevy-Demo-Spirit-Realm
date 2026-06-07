@@ -1,0 +1,11 @@
+{
+  "id": 24,
+  "name": "oak_button",
+  "solid": true,
+  "transparent": false,
+  "textures": {
+    "top": "oak_log_bottom",
+    "bottom": "oak_log_bottom",
+    "side": "oak_log_bottom"
+  }
+}

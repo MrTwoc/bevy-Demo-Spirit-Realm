@@ -1,0 +1,11 @@
+{
+  "id": 5,
+  "name": "water",
+  "solid": false,
+  "transparent": true,
+  "textures": {
+    "top": "water",
+    "bottom": "water",
+    "side": "water"
+  }
+}

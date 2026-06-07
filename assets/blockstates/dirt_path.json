@@ -1,0 +1,11 @@
+{
+  "id": 31,
+  "name": "dirt_path",
+  "solid": true,
+  "transparent": false,
+  "textures": {
+    "top": "grass_block_top",
+    "bottom": "dirt",
+    "side": "dirt_path_side"
+  }
+}

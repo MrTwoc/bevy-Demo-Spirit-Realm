@@ -1,0 +1,11 @@
+{
+  "id": 9,
+  "name": "snow_grass",
+  "solid": true,
+  "transparent": false,
+  "textures": {
+    "top": "snow",
+    "bottom": "dirt",
+    "side": "grass_block_snow"
+  }
+}

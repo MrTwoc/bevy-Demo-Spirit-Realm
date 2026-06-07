@@ -1,0 +1,11 @@
+{
+  "id": 2,
+  "name": "stone",
+  "solid": true,
+  "transparent": false,
+  "textures": {
+    "top": "stone",
+    "bottom": "stone",
+    "side": "stone"
+  }
+}

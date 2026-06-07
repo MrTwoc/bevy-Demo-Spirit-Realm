@@ -1,0 +1,11 @@
+{
+  "id": 8,
+  "name": "sandstone",
+  "solid": true,
+  "transparent": false,
+  "textures": {
+    "top": "sandstone_top",
+    "bottom": "sandstone_bottom",
+    "side": "sandstone"
+  }
+}

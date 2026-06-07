@@ -1,0 +1,11 @@
+{
+  "id": 22,
+  "name": "cobblestone",
+  "solid": true,
+  "transparent": false,
+  "textures": {
+    "top": "cobblestone",
+    "bottom": "cobblestone",
+    "side": "cobblestone"
+  }
+}

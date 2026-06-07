@@ -55,18 +55,12 @@ pub struct WorldTypeResource(pub WorldType);
 
 /// 判断方块 ID 是否为实体（不透明）方块，用于面剔除优化。
 ///
-/// 实体方块（草地=1, 石头=2, 泥土=3, 沙=4）完全遮挡相邻方向的拼接面，
-/// 即使方块 ID 不同，两个实体方块之间也不应渲染面。
-/// 非实体方块（空气=0, 水=5）不遮挡面，其与实体方块之间的界面应当渲染。
-///
-/// 这是核心优化：旧代码使用 `neighbor_id != current_id` 检查，
-/// 导致不同实体类型（如石头 vs 泥土）之间生成大量冗余三角面。
+/// 数据驱动：从全局 `BlockPropertiesTable` 读取（由 `assets/blockstates/*.json` 定义）。
+/// 实体方块完全遮挡相邻方向的拼接面，即使方块 ID 不同。
+/// 非实体方块（空气、水）不遮挡面，其与实体方块之间的界面应当渲染。
 #[inline]
 pub fn is_block_solid(block_id: BlockId) -> bool {
-    match block_id {
-        0 | 5 => false, // 空气、水 → 非实体，不遮挡
-        _ => true,      // 草地(1)、石头(2)、泥土(3)、沙(4) → 实体，完全遮挡
-    }
+    crate::block_definition::is_block_solid_from_table(block_id)
 }
 
 /// 核心剔除规则：判断两个方块之间的面是否应该被剔除。

@@ -1,0 +1,11 @@
+{
+  "id": 0,
+  "name": "air",
+  "solid": false,
+  "transparent": true,
+  "textures": {
+    "top": "dirt",
+    "bottom": "dirt",
+    "side": "dirt"
+  }
+}

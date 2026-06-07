@@ -1,0 +1,11 @@
+{
+  "id": 6,
+  "name": "oak_log",
+  "solid": true,
+  "transparent": false,
+  "textures": {
+    "top": "oak_log_top",
+    "bottom": "oak_log_top",
+    "side": "oak_log"
+  }
+}

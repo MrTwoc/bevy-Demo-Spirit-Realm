@@ -1,0 +1,11 @@
+{
+  "id": 7,
+  "name": "oak_leaves",
+  "solid": true,
+  "transparent": true,
+  "textures": {
+    "top": "oak_leaves",
+    "bottom": "oak_leaves",
+    "side": "oak_leaves"
+  }
+}

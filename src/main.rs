@@ -1,5 +1,6 @@
 mod async_mesh;
 mod biome;
+mod block_definition;
 mod block_interaction;
 mod camera;
 mod spline;
