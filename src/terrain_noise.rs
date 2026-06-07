@@ -333,15 +333,15 @@ pub struct TerrainNoise {
 impl TerrainNoise {
     pub fn new(seed: u32) -> Self {
         Self {
-            // 大陆性：低频 6 octaves，决定海洋/陆地的大尺度划分
+            // 大陆性：低频 4 octaves（从 6 降至 4，减少 33% 计算量）
             continentalness: Fbm::<Simplex>::new(seed)
-                .set_octaves(6)
+                .set_octaves(4)
                 .set_frequency(0.0008)
                 .set_lacunarity(2.0)
                 .set_persistence(0.5),
-            // 侵蚀：中频 6 octaves，决定地形侵蚀程度
+            // 侵蚀：中频 4 octaves（从 6 降至 4）
             erosion: Fbm::<Simplex>::new(seed.wrapping_add(1))
-                .set_octaves(6)
+                .set_octaves(4)
                 .set_frequency(0.0015)
                 .set_lacunarity(2.0)
                 .set_persistence(0.5),
@@ -449,6 +449,7 @@ impl TerrainNoise {
 
         false
     }
+
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

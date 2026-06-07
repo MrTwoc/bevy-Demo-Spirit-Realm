@@ -48,7 +48,7 @@ pub fn fill_section_terrain(section: &mut Section, coord: &SectionCoord) {
 
                 // 洞穴检测
                 if depth > 5 && noise.is_cave(world_x, world_y as f64, world_z, depth) {
-                    continue; // 挖空
+                    continue;
                 }
 
                 let block_id: Voxel = if depth == 0 {

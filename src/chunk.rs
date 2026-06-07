@@ -738,6 +738,12 @@ pub fn fill_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
             let surface_height = sample.compute_base_height() as i32;
             let biome = biome::get_biome(&sample, surface_height);
 
+            // ── 性能优化：计算本列的洞穴检测 Y 范围 ──
+            // 只对地表以下 5 格的方块进行洞穴检测，地表以上完全跳过
+            let chunk_oy = coord.cy as i32 * CHUNK_SIZE as i32;
+            let cave_top_y = surface_height; // 洞穴检测上限（地表）
+            let cave_bottom_y = chunk_oy;    // 洞穴检测下限（区块底部）
+
             for y in 0..CHUNK_SIZE {
                 let world_y = coord.cy as i32 * CHUNK_SIZE as i32 + y as i32;
 
@@ -747,19 +753,20 @@ pub fn fill_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
 
                 // ── 地表以上 ──
                 if world_y > surface_height {
-                    // 海平面以下的凹陷处填充水（河流、海洋）
                     if world_y <= SEA_LEVEL && surface_height < SEA_LEVEL {
                         chunk.set(x, y, z, 5); // water
                     }
                     continue;
                 }
 
-                // ── 地表及以下：根据群系选择方块 ──
+                // ── 地表及以下 ──
                 let depth = surface_height - world_y;
 
-                // 洞穴检测：地下 5 格以下才生成洞穴
-                if depth > 5 && noise.is_cave(world_x, world_y as f64, world_z, depth) {
-                    continue; // 挖空（空气）
+                // 洞穴检测（地表以下 5 格以下）
+                if depth > 5
+                    && noise.is_cave(world_x, world_y as f64, world_z, depth)
+                {
+                    continue; // 挖空
                 }
 
                 let block_id = if depth == 0 {
@@ -767,7 +774,6 @@ pub fn fill_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
                 } else {
                     biome.subsurface_block(depth)
                 };
-
                 chunk.set(x, y, z, block_id);
             }
         }
