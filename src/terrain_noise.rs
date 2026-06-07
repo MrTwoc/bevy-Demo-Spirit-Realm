@@ -163,10 +163,9 @@ pub struct NoiseSample {
     pub vegetation: f64,
     pub detail: f64,
     /// 区域选择器：极低频噪声，决定地形区域类型
-    /// < -0.1 → Club（高原+河谷）
-    /// -0.1 ~ 0.1 → Diamond（过渡）
-    /// > 0.1 → Heart（起伏丘陵）
     pub region: f64,
+    /// 风化噪声：决定山脉哪里被风化侵蚀
+    pub weathering: f64,
 }
 
 impl NoiseSample {
@@ -267,10 +266,21 @@ impl NoiseSample {
         // 基底降低 10 格，叠加柔和起伏
         let heart_hills = heart_weight * (self.detail.abs() * 15.0 - 7.5);
 
-        // ── 山脊高度（Spline 控制，非线性 + 区域调制）──
-        // 低 ridge 值 → 缓坡，高 ridge 值 → 陡峭山峰
-        let ridge_height = RIDGE_HEIGHT_SPLINE.evaluate(r) * ridge_boost
-            + club_valley_deep; // Club 区域河谷加深
+        // ── 山脉风化（参考 Tectonic weathering 系统）──
+        // 低频噪声产生大面积风化区域，山脊在风化区自然断裂
+        // |weathering| < 0.3 → 风化区域（山脊削弱至 50%）
+        // |weathering| > 0.3 → 完整山脊
+        let weathering_val = self.weathering.abs();
+        let weathering_factor = if weathering_val < 0.3 {
+            let fade = weathering_val / 0.3;
+            0.5 + fade * 0.5 // 0.5 ~ 1.0
+        } else {
+            1.0
+        };
+
+        // ── 山脊高度（Spline 控制，非线性 + 区域调制 + 风化）──
+        let ridge_height = (RIDGE_HEIGHT_SPLINE.evaluate(r) * ridge_boost
+            + club_valley_deep) * weathering_factor;
 
         // ── 侵蚀因子（Spline 控制）──
         // 替代旧的 1.0 - (e.max(0.0) * 0.5) 线性公式
@@ -316,6 +326,8 @@ pub struct TerrainNoise {
     pub region: Fbm<Simplex>,
     /// 洞穴噪声：单个 3D Simplex 噪声
     pub cave: Simplex,
+    /// 风化噪声：决定山脉哪里被风化侵蚀（山脊断裂效果）
+    pub weathering: Fbm<Simplex>,
 }
 
 impl TerrainNoise {
@@ -368,10 +380,16 @@ impl TerrainNoise {
                 .set_persistence(0.5),
             // 洞穴：单个 3D Simplex 噪声（最基础实现）
             cave: Simplex::new(seed.wrapping_add(8)),
+            // 风化：低频噪声，产生大面积风化区域（~100 格跨度）
+            weathering: Fbm::<Simplex>::new(seed.wrapping_add(10))
+                .set_octaves(3)
+                .set_frequency(0.008)
+                .set_lacunarity(2.0)
+                .set_persistence(0.5),
         }
     }
 
-    /// 在世界坐标 (wx, wz) 处采样所有 6+1 个噪声层。
+    /// 在世界坐标 (wx, wz) 处采样所有 7+1 个噪声层。
     ///
     /// 一次调用获取全部噪声值，避免重复采样。
     #[inline]
@@ -384,6 +402,7 @@ impl TerrainNoise {
             vegetation: self.vegetation.get([wx, wz]),
             detail: self.detail.get([wx, wz]),
             region: self.region.get([wx, wz]),
+            weathering: self.weathering.get([wx, wz]),
         }
     }
 
