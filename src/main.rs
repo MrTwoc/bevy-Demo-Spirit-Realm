@@ -3,6 +3,7 @@ mod biome;
 mod block_definition;
 mod block_interaction;
 mod camera;
+mod player;
 mod spline;
 mod terrain_noise;
 mod chunk;
@@ -92,7 +93,7 @@ fn main() {
         .add_systems(
             Update,
             (
-                camera::camera_movement,
+                player::player_movement,
                 camera::camera_rotation,
                 input::cursor_grab_system,
                 input::toggle_debug_hud,

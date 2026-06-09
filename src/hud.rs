@@ -7,6 +7,7 @@ use bevy::{
 use sysinfo::{Pid, System};
 
 use crate::chunk_manager::LoadedChunks;
+use crate::player::Player;
 
 /// Spawns a white Minecraft-style crosshair centered on screen.
 /// Must be called with a valid camera entity so the UI targets the correct camera.
@@ -276,7 +277,7 @@ pub fn setup_hud(commands: &mut Commands, camera_entity: Entity) {
 
 pub fn update_hud(
     visible: Res<DebugHudVisible>,
-    query: Query<&Transform, With<Camera3d>>,
+    query: Query<&Transform, With<Player>>,
     mut pos_query: Query<&mut Text, (With<PositionText>, Without<TargetText>)>,
     mut target_query: Query<&mut Text, (With<TargetText>, Without<PositionText>)>,
     hit_state: Res<crate::raycast::RayHitState>,

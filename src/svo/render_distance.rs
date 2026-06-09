@@ -9,6 +9,7 @@ use bevy::prelude::*;
 use std::collections::HashSet;
 
 use crate::chunk_manager::RENDER_DISTANCE;
+use crate::player::Player;
 use crate::svo::{
     encode_position, format_pos,
     config::{MAX_LOD, TOP_LEVEL_SIZE, TOP_LEVEL_CACHE_SIZE},
@@ -146,7 +147,7 @@ pub fn process_render_distance(
     mut controller: ResMut<RenderDistanceController>,
     mut node_manager: ResMut<NodeManager>,
     mut tracker: ResMut<SectionTracker>,
-    camera_query: Query<&Transform, With<Camera3d>>,
+    camera_query: Query<&Transform, With<Player>>,
 ) {
     let cam_transform = if let Some(t) = camera_query.iter().next() {
         t

@@ -230,12 +230,12 @@ impl ResourcePackManager {
         // 确定要加载的材质包路径
         let pack_path = self.resolve_pack_path()?;
 
-        info!("Loading resource pack from: {:?}", pack_path);
+        // info!("Loading resource pack from: {:?}", pack_path);
         self.current_pack = pack_path.clone();
 
         match self.scan_textures(&pack_path) {
             Ok(count) => {
-                info!("Loaded {} textures from {:?}", count, pack_path);
+                // info!("Loaded {} textures from {:?}", count, pack_path);
             }
             Err(e) => {
                 warn!(
@@ -348,12 +348,12 @@ impl ResourcePackManager {
                             .find(|(name, _)| *name == filename)
                         {
                             apply_biome_tint(&mut pixels, tint.1);
-                            info!(
-                                "  Loaded texture: {} ({}x{}) [biome tinted]",
-                                filename, width, height
-                            );
+                            // info!(
+                            //     "  Loaded texture: {} ({}x{}) [biome tinted]",
+                            //     filename, width, height
+                            // );
                         } else {
-                            info!("  Loaded texture: {} ({}x{})", filename, width, height);
+                            // info!("  Loaded texture: {} ({}x{})", filename, width, height);
                         }
                         self.texture_cache.insert(filename, (pixels, width, height));
                         *count += 1;

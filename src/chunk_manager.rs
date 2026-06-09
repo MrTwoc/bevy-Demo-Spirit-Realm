@@ -31,8 +31,6 @@
 //! - **LRU 缓存**：超过 `MAX_CACHED_CHUNKS` 时逐步淘汰远处区块。
 
 use bevy::asset::RenderAssetUsages;
-use bevy::camera::visibility::NoCpuCulling;
-use bevy::core_pipeline::Skybox;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::prelude::*;
 use bevy::render::render_resource::Extent3d;
@@ -49,6 +47,7 @@ use crate::chunk_dirty::{
 };
 use crate::hud::CachedTriangleCount;
 use crate::lod::{LodLevel, LodManager};
+use crate::player::Player;
 use crate::resource_pack::{ResourcePackManager, VoxelMaterial};
 use crate::tree_gen::{TreeConfig, TreeNoise};
 
@@ -346,23 +345,12 @@ pub fn setup_world(
     // 插入世界类型资源，默认是 Noise（覆盖已存在的旧值也没问题）
     commands.insert_resource(WorldTypeResource::default());
 
-    use crate::camera::CameraController;
     use crate::skybox::SKYBOX_PATH;
     let skybox_handle: Handle<Image> = asset_server.load(SKYBOX_PATH);
-    let camera_transform = Transform::from_xyz(16.0, 64.0, 16.0);
-    let camera_entity = commands
-        .spawn((
-            Camera3d::default(),
-            camera_transform,
-            CameraController::default(),
-            // NoCpuCulling,
-            Skybox {
-                image: skybox_handle,
-                brightness: 1000.0,
-                ..default()
-            },
-        ))
-        .id();
+
+    let (_player_entity, camera_entity) =
+        crate::player::spawn_player(&mut commands, Vec3::new(16.0, 64.0, 16.0));
+    crate::player::insert_camera_components(&mut commands, camera_entity, skybox_handle);
 
     crate::hud::setup_hud(&mut commands, camera_entity);
     crate::hud::setup_hardware_info_hud(&mut commands, camera_entity);
@@ -390,7 +378,7 @@ pub fn chunk_loader_system(
     mut loaded: ResMut<LoadedChunks>,
     mut cached: ResMut<CachedTriangleCount>,
     async_mesh: Res<AsyncMeshManager>,
-    camera_query: Query<&Transform, With<Camera3d>>,
+    camera_query: Query<&Transform, With<Player>>,
     atlas_handle: Res<AtlasTextureHandle>,
     shared_material: Res<SharedVoxelMaterial>,
     transparent_material: Res<TransparentVoxelMaterial>,
@@ -1074,7 +1062,7 @@ pub fn manage_chunk_load_state(
     async_mesh: Res<AsyncMeshManager>,
     mut lod_manager: ResMut<LodManager>,
     mut cached: ResMut<CachedTriangleCount>,
-    camera_query: Query<&Transform, With<Camera3d>>,
+    camera_query: Query<&Transform, With<Player>>,
 ) {
     let Ok(cam_transform) = camera_query.single() else {
         return;

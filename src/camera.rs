@@ -1,4 +1,4 @@
-//! Camera controller: position, rotation, and WASD movement.
+//! Camera controller: rotation only. Movement is handled by the Player entity.
 
 use bevy::{
     ecs::message::MessageReader,
@@ -6,9 +6,6 @@ use bevy::{
     prelude::*,
     window::{CursorGrabMode, CursorOptions},
 };
-
-/// Movement speed for the camera in units per second.
-pub const CAMERA_MOVE_SPEED: f32 = 30.0;
 
 /// Mouse sensitivity for looking around.
 pub const MOUSE_SENSITIVITY: f32 = 0.002;
@@ -28,71 +25,6 @@ impl Default for CameraController {
             pitch: -0.3,
             yaw: -0.8,
         }
-    }
-}
-
-/// Handles WASD + Space/Shift camera movement. Ctrl accelerates speed 3x.
-/// Only moves when the cursor is locked (pointer grab active), like Minecraft.
-pub fn camera_movement(
-    time: Res<Time>,
-    keys: Res<ButtonInput<KeyCode>>,
-    cursor_options: Single<&CursorOptions>,
-    mut query: Query<(&mut Transform, &CameraController), With<Camera3d>>,
-) {
-    // Only move when cursor is locked.
-    if cursor_options.grab_mode != CursorGrabMode::Locked {
-        return;
-    }
-
-    let Ok((mut transform, _controller)) = query.single_mut() else {
-        return;
-    };
-
-    let mut movement = Vec3::ZERO;
-
-    if keys.pressed(KeyCode::KeyW) {
-        movement.z += 1.0;
-    }
-    if keys.pressed(KeyCode::KeyS) {
-        movement.z -= 1.0;
-    }
-    if keys.pressed(KeyCode::KeyA) {
-        movement.x -= 1.0;
-    }
-    if keys.pressed(KeyCode::KeyD) {
-        movement.x += 1.0;
-    }
-    if keys.pressed(KeyCode::Space) {
-        movement.y += 1.0;
-    }
-    if keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight) {
-        movement.y -= 1.0;
-    }
-    // Ctrl 键：速度 3 倍加速
-    let speed_multiplier =
-        if keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight) {
-            3.0
-        } else {
-            1.0
-        };
-
-    if movement != Vec3::ZERO {
-        let normalized_movement = movement.normalize();
-
-        // Project onto XZ plane so movement stays ground-relative.
-        let forward = transform.forward();
-        let right = transform.right();
-        let horizontal_forward = Vec3::new(forward.x, 0.0, forward.z).normalize();
-        let horizontal_right = Vec3::new(right.x, 0.0, right.z).normalize();
-
-        let delta = (horizontal_forward * normalized_movement.z
-            + horizontal_right * normalized_movement.x
-            + Vec3::Y * normalized_movement.y)
-            * CAMERA_MOVE_SPEED
-            * speed_multiplier
-            * time.delta_secs();
-
-        transform.translation += delta;
     }
 }
 

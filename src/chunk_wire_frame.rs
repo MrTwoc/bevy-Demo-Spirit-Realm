@@ -7,6 +7,7 @@
 use bevy::{gizmos::gizmos::Gizmos, pbr::wireframe::Wireframe, prelude::*};
 
 use crate::chunk::{self, ChunkComponent, ChunkCoord};
+use crate::player::Player;
 use crate::chunk_dirty::ChunkCoordComponent;
 
 /// Tracks the current wireframe mode state.
@@ -27,9 +28,9 @@ pub fn sync_chunk_wireframe(
     mode: Res<WireframeMode>,
     mut commands: Commands,
     chunks: Query<(Entity, &ChunkCoordComponent), With<ChunkComponent>>,
-    camera_query: Query<&Transform, With<Camera3d>>,
+    camera_query: Query<&Transform, With<Player>>,
 ) {
-    // 获取摄像机所在的区块坐标
+    // 获取玩家所在的区块坐标
     let Ok(cam_transform) = camera_query.single() else {
         return;
     };
@@ -61,7 +62,7 @@ pub fn draw_wireframes(
         &ChunkCoordComponent,
         &ViewVisibility,
     )>,
-    camera_query: Query<&Transform, With<Camera3d>>,
+    camera_query: Query<&Transform, With<Player>>,
     mut gizmos: Gizmos,
 ) {
     if !mode.0 {
