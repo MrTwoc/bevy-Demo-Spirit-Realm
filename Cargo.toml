@@ -15,11 +15,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sysinfo = "0.34"
 
-# 物理/角色控制
-avian3d = "0.6.1"
-bevy-tnua = "0.31.0"
-bevy-tnua-avian3d = "0.11.1"
-
 [profile.dev]
 opt-level = 1
 [profile.dev.package."*"]

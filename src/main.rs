@@ -3,6 +3,7 @@ mod biome;
 mod block_definition;
 mod block_interaction;
 mod camera;
+mod character_controller;
 mod player;
 mod spline;
 mod terrain_noise;
@@ -89,11 +90,12 @@ fn main() {
         )
         // ── 天空盒：等待纹理加载完成后重解释 PNG 为 CubeMap ──
         .add_systems(Update, skybox::asset_loaded)
-        // ── 相机/输入：不依赖 LoadedChunks，与区块管道完全并行 ──
+        // ── 角色控制 + 相机/输入：链式执行，物理 → 旋转 → 光标 → HUD ──
         .add_systems(
             Update,
             (
-                player::player_movement,
+                character_controller::character_controller_input,
+                character_controller::character_controller_physics,
                 camera::camera_rotation,
                 input::cursor_grab_system,
                 input::toggle_debug_hud,

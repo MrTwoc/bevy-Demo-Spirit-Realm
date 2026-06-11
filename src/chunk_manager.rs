@@ -348,8 +348,18 @@ pub fn setup_world(
     use crate::skybox::SKYBOX_PATH;
     let skybox_handle: Handle<Image> = asset_server.load(SKYBOX_PATH);
 
+    // 根据世界类型计算地表高度，让玩家从地表上方生成
+    let spawn_x = 16.0_f64;
+    let spawn_z = 16.0_f64;
+    let world_type = WorldTypeResource::default().0;
+    let surface_y = crate::chunk::get_surface_height(spawn_x, spawn_z, world_type);
+    let spawn_y = if surface_y > i32::MIN {
+        surface_y as f32 + 2.0
+    } else {
+        64.0 // Void/MengerSponge 世界使用默认高度
+    };
     let (_player_entity, camera_entity) =
-        crate::player::spawn_player(&mut commands, Vec3::new(16.0, 64.0, 16.0));
+        crate::player::spawn_player(&mut commands, Vec3::new(spawn_x as f32, spawn_y, spawn_z as f32));
     crate::player::insert_camera_components(&mut commands, camera_entity, skybox_handle);
 
     crate::hud::setup_hud(&mut commands, camera_entity);
