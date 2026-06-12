@@ -9,10 +9,34 @@ use crate::character_controller::CharacterController;
 #[derive(Component)]
 pub struct Player;
 
+/// 玩家模型标记组件（用于在视角切换时控制可见性）
+#[derive(Component)]
+pub struct PlayerModel;
+
 /// Spawns the player entity with a Camera3d as a child.
 /// Returns (player_entity, camera_entity) for HUD attachment.
-pub fn spawn_player(commands: &mut Commands, initial_pos: Vec3) -> (Entity, Entity) {
+/// Also spawns a player model (cube) as a child entity.
+pub fn spawn_player(
+    commands: &mut Commands,
+    initial_pos: Vec3,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<StandardMaterial>>,
+) -> (Entity, Entity) {
     let camera_entity = commands.spawn_empty().id();
+
+    // 创建玩家模型（立方体）
+    let player_model_entity = commands
+        .spawn((
+            PlayerModel,
+            Mesh3d(meshes.add(Cuboid::new(0.6, 1.8, 0.6))),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::srgb(0.2, 0.7, 0.3),
+                ..default()
+            })),
+            Transform::from_xyz(0.0, 0.9, 0.0), // 底部对齐脚部
+            Visibility::Hidden,                   // 默认隐藏（第一人称）
+        ))
+        .id();
 
     let player_entity = commands
         .spawn((
@@ -22,6 +46,7 @@ pub fn spawn_player(commands: &mut Commands, initial_pos: Vec3) -> (Entity, Enti
             Visibility::default(),
         ))
         .add_child(camera_entity)
+        .add_child(player_model_entity)
         .id();
 
     (player_entity, camera_entity)

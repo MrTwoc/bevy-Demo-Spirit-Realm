@@ -267,6 +267,7 @@ pub fn setup_world(
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<VoxelMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut standard_materials: ResMut<Assets<StandardMaterial>>,
     tree_config: Res<TreeConfig>,
     tree_noise: Res<TreeNoise>,
     asset_server: Res<AssetServer>,
@@ -359,7 +360,7 @@ pub fn setup_world(
         64.0 // Void/MengerSponge 世界使用默认高度
     };
     let (_player_entity, camera_entity) =
-        crate::player::spawn_player(&mut commands, Vec3::new(spawn_x as f32, spawn_y, spawn_z as f32));
+        crate::player::spawn_player(&mut commands, Vec3::new(spawn_x as f32, spawn_y, spawn_z as f32), &mut meshes, &mut standard_materials);
     crate::player::insert_camera_components(&mut commands, camera_entity, skybox_handle);
 
     crate::hud::setup_hud(&mut commands, camera_entity);

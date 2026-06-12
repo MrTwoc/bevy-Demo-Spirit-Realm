@@ -5,7 +5,9 @@ use bevy::{
     window::{CursorGrabMode, CursorOptions},
 };
 
+use crate::camera::ViewMode;
 use crate::hud::{DebugHudLeftPanel, DebugHudRightPanel, DebugHudVisible};
+use crate::player::PlayerModel;
 
 /// Toggles cursor lock on ESC (Minecraft-style: ESC toggles locked↔free).
 /// Left-click is no longer used for grabbing — only ESC controls the lock state.
@@ -53,6 +55,34 @@ pub fn toggle_debug_hud(
         *vis = new_visibility;
     }
     if let Ok(mut vis) = queries.p1().single_mut() {
+        *vis = new_visibility;
+    }
+}
+
+/// 按 F5 键切换视角模式（第一人称/第三人称）
+/// 同时更新玩家模型的可见性
+pub fn toggle_view_mode(
+    key: Res<ButtonInput<KeyCode>>,
+    mut view_mode: ResMut<ViewMode>,
+    mut query: Query<&mut Visibility, With<PlayerModel>>,
+) {
+    if !key.just_pressed(KeyCode::F5) {
+        return;
+    }
+
+    // 切换视角模式
+    *view_mode = match *view_mode {
+        ViewMode::FirstPerson => ViewMode::ThirdPerson,
+        ViewMode::ThirdPerson => ViewMode::FirstPerson,
+    };
+
+    // 更新玩家模型可见性
+    let new_visibility = match *view_mode {
+        ViewMode::FirstPerson => Visibility::Hidden,
+        ViewMode::ThirdPerson => Visibility::Inherited,
+    };
+
+    if let Ok(mut vis) = query.single_mut() {
         *vis = new_visibility;
     }
 }

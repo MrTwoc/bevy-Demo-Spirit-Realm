@@ -38,6 +38,7 @@ fn main() {
     App::new()
         .insert_resource(ClearColor(Color::srgb(0.53, 0.81, 0.92))) // 天空蓝背景
         .init_resource::<WireframeMode>()
+        .init_resource::<camera::ViewMode>()
         .init_resource::<raycast::RayHitState>()
         .init_resource::<chunk_manager::LoadedChunks>()
         .init_resource::<lod::LodManager>()
@@ -90,12 +91,13 @@ fn main() {
         )
         // ── 天空盒：等待纹理加载完成后重解释 PNG 为 CubeMap ──
         .add_systems(Update, skybox::asset_loaded)
-        // ── 角色控制 + 相机/输入：链式执行，物理 → 旋转 → 光标 → HUD ──
+        // ── 角色控制 + 相机/输入：链式执行，物理 → 视角切换 → 旋转 → 光标 → HUD ──
         .add_systems(
             Update,
             (
                 character_controller::character_controller_input,
                 character_controller::character_controller_physics,
+                input::toggle_view_mode,
                 camera::camera_rotation,
                 input::cursor_grab_system,
                 input::toggle_debug_hud,
