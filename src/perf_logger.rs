@@ -36,7 +36,7 @@ impl Default for PerfLoggerConfig {
 /// 性能记录器的内部状态。
 #[derive(Resource)]
 struct PerfLoggerState {
-    writer: BufWriter<File>,
+    writer: Option<BufWriter<File>>,  // 改为 Option，禁用时为 None
     timer: Timer,
     start_time: Instant,
     frame_count: u64,
@@ -53,7 +53,14 @@ impl Plugin for PerfLoggerPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PerfLoggerConfig>()
             .add_systems(Startup, init_perf_logger)
-            .add_systems(Update, record_perf_metrics);
+            .add_systems(
+                Update,
+                (
+                    toggle_perf_logger,
+                    manage_perf_file,
+                    record_perf_metrics.run_if(|config: Res<PerfLoggerConfig>| config.enabled),
+                ),
+            );
     }
 }
 
@@ -129,46 +136,48 @@ fn is_leap_year(year: u64) -> bool {
     (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
 }
 
-/// 初始化性能记录器，创建输出目录和带时间戳的 CSV 文件并写入表头。
+/// 初始化性能记录器。
+/// 总是创建 PerfLoggerState 资源，但仅在 enabled=true 时才打开日志文件。
 fn init_perf_logger(mut commands: Commands, config: Res<PerfLoggerConfig>) {
-    if !config.enabled {
-        return;
-    }
-
-    // 创建输出目录（如果不存在）
-    if let Err(e) = fs::create_dir_all(&config.output_dir) {
-        error!("无法创建性能日志目录 {:?}: {}", config.output_dir, e);
-        return;
-    }
-
-    // 生成带时间戳的文件名
-    let filename = generate_timestamp_filename();
-    let file_path = config.output_dir.join(&filename);
-
-    let file = match File::create(&file_path) {
-        Ok(f) => f,
-        Err(e) => {
-            error!("无法创建性能日志文件 {:?}: {}", file_path, e);
-            return;
+    // 创建输出目录（如果不存在且已启用）
+    if config.enabled {
+        if let Err(e) = fs::create_dir_all(&config.output_dir) {
+            error!("无法创建性能日志目录 {:?}: {}", config.output_dir, e);
         }
-    };
-
-    let mut writer = BufWriter::new(file);
-
-    // 写入 CSV 表头
-    // 注意：GPU 三角形数暂不支持（Bevy 不暴露），只记录 CPU 三角形数
-    if let Err(e) = writeln!(
-        writer,
-        "elapsed_secs,fps,frame_time_ms,chunk_count,triangle_count_cpu"
-    ) {
-        error!("写入 CSV 表头失败: {}", e);
-        return;
     }
 
-    info!(
-        "性能记录器已启动，输出文件: {:?}，间隔: {}s",
-        file_path, config.interval_secs
-    );
+    // 如果启用，打开日志文件并写入表头
+    let writer = if config.enabled {
+        let filename = generate_timestamp_filename();
+        let file_path = config.output_dir.join(&filename);
+
+        match File::create(&file_path) {
+            Ok(file) => {
+                let mut writer = BufWriter::new(file);
+
+                // 写入 CSV 表头
+                if let Err(e) = writeln!(
+                    writer,
+                    "elapsed_secs,fps,frame_time_ms,chunk_count,triangle_count_cpu"
+                ) {
+                    error!("写入 CSV 表头失败: {}", e);
+                    None
+                } else {
+                    info!(
+                        "性能记录器已启动，输出文件: {:?}，间隔: {}s",
+                        file_path, config.interval_secs
+                    );
+                    Some(writer)
+                }
+            }
+            Err(e) => {
+                error!("无法创建性能日志文件 {:?}: {}", file_path, e);
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     commands.insert_resource(PerfLoggerState {
         writer,
@@ -198,23 +207,115 @@ fn discover_triangle_diagnostics(diagnostics: &DiagnosticsStore) -> Vec<Diagnost
     triangle_paths
 }
 
+/// 监听 F2 按键，切换性能记录器的启用状态。
+fn toggle_perf_logger(
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut config: ResMut<PerfLoggerConfig>,
+) {
+    if keyboard_input.just_pressed(KeyCode::F2) {
+        config.enabled = !config.enabled;
+        if config.enabled {
+            info!("性能记录器已启用 (F2 禁用)");
+        } else {
+            info!("性能记录器已禁用 (F2 启用)");
+        }
+    }
+}
+
+/// 管理性能日志文件的打开和关闭。
+/// 当 enabled 从 false 变为 true 时，打开新的日志文件；
+/// 当 enabled 从 true 变为 false 时，关闭当前文件并 flush。
+fn manage_perf_file(
+    config: Res<PerfLoggerConfig>,
+    mut state: Option<ResMut<PerfLoggerState>>,
+    mut commands: Commands,
+) {
+    // 如果 PerfLoggerState 不存在，创建它（防御性编程）
+    let state = match state {
+        Some(s) => s,
+        None => {
+            // 这不应该发生，因为 init_perf_logger 总是创建它
+            commands.insert_resource(PerfLoggerState {
+                writer: None,
+                timer: Timer::from_seconds(config.interval_secs, TimerMode::Repeating),
+                start_time: Instant::now(),
+                frame_count: 0,
+                diagnostics_printed: false,
+                triangle_paths: Vec::new(),
+            });
+            return;
+        }
+    };
+
+    let state = state.into_inner();
+
+    if config.enabled && state.writer.is_none() {
+        // 需要打开新文件
+        if let Err(e) = fs::create_dir_all(&config.output_dir) {
+            error!("无法创建性能日志目录 {:?}: {}", config.output_dir, e);
+            return;
+        }
+
+        let filename = generate_timestamp_filename();
+        let file_path = config.output_dir.join(&filename);
+
+        match File::create(&file_path) {
+            Ok(file) => {
+                let mut writer = BufWriter::new(file);
+
+                // 写入 CSV 表头
+                if let Err(e) = writeln!(
+                    writer,
+                    "elapsed_secs,fps,frame_time_ms,chunk_count,triangle_count_cpu"
+                ) {
+                    error!("写入 CSV 表头失败: {}", e);
+                } else {
+                    info!(
+                        "性能记录器已启动，输出文件: {:?}，间隔: {}s",
+                        file_path, config.interval_secs
+                    );
+                    state.writer = Some(writer);
+                    state.start_time = Instant::now();  // 重置开始时间
+                    state.frame_count = 0;  // 重置帧计数
+                }
+            }
+            Err(e) => {
+                error!("无法创建性能日志文件 {:?}: {}", file_path, e);
+            }
+        }
+    } else if !config.enabled && state.writer.is_some() {
+        // 需要关闭文件
+        if let Some(mut writer) = state.writer.take() {
+            if let Err(e) = writer.flush() {
+                error!("刷新性能日志文件失败: {}", e);
+            }
+            info!("性能记录器已禁用，日志文件已关闭");
+        }
+    }
+}
+
 /// 定期记录性能指标到 CSV 文件。
 fn record_perf_metrics(
     time: Res<Time>,
-    config: Res<PerfLoggerConfig>,
     diagnostics: Res<DiagnosticsStore>,
     loaded_chunks: Res<LoadedChunks>,
     cached_triangles: Res<CachedTriangleCount>,
     mut state: Option<ResMut<PerfLoggerState>>,
 ) {
-    if !config.enabled {
-        return;
-    }
-
-    let Some(ref mut state) = state else {
+    let Some(mut state) = state else {
         return;
     };
 
+    // 自动发现三角面诊断路径（仅首次运行时）
+    if !state.diagnostics_printed {
+        state.triangle_paths = discover_triangle_diagnostics(&diagnostics);
+        if !state.triangle_paths.is_empty() {
+            info!("发现三角面诊断路径: {:?}", state.triangle_paths);
+        }
+        state.diagnostics_printed = true;
+    }
+
+    // 先更新计时器和帧计数（不借用 writer）
     state.timer.tick(time.delta());
     state.frame_count += 1;
 
@@ -254,18 +355,20 @@ fn record_perf_metrics(
     // 避免遍历所有 2000+ Mesh3d 实体统计三角形数
     let cpu_triangles = cached_triangles.0;
 
-    // 写入 CSV 行
-    // 注意：GPU 三角形数暂不支持（Bevy 不暴露），只记录 CPU 三角形数
-    if let Err(e) = writeln!(
-        state.writer,
-        "{:.2},{:.1},{:.3},{},{}",
-        elapsed, fps, frame_time_ms, chunk_count, cpu_triangles
-    ) {
-        error!("写入性能日志失败: {}", e);
-    }
+    // 现在借用 writer 并写入数据
+    if let Some(writer) = &mut state.writer {
+        // 写入 CSV 行
+        if let Err(e) = writeln!(
+            writer,
+            "{:.2},{:.1},{:.3},{},{}",
+            elapsed, fps, frame_time_ms, chunk_count, cpu_triangles
+        ) {
+            error!("写入性能日志失败: {}", e);
+        }
 
-    // 定期 flush 确保数据写入磁盘
-    if let Err(e) = state.writer.flush() {
-        error!("刷新性能日志文件失败: {}", e);
+        // 定期 flush 确保数据写入磁盘
+        if let Err(e) = writer.flush() {
+            error!("刷新性能日志文件失败: {}", e);
+        }
     }
 }

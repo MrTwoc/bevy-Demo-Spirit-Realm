@@ -17,9 +17,9 @@ use crate::player::Player;
 /// 重力加速度（m/s²），比现实值大以获得 Minecraft 风格的手感。
 const GRAVITY: f32 = -28.0;
 /// 跳跃初速度（m/s）。
-const JUMP_VELOCITY: f32 = 9.0;
-/// 空中跳跃初速度（m/s），比地面跳跃稍低以提供更好的手感。
-const AIR_JUMP_VELOCITY: f32 = 8.0;
+const JUMP_VELOCITY: f32 = 10.6;
+/// 空中跳跃初速度（m/s），比地面跳跃更高以实现二段跳总高度 5 米。
+const AIR_JUMP_VELOCITY: f32 = 13.0;
 /// 行走速度（m/s）。
 const WALK_SPEED: f32 = 4.317;
 /// 冲刺速度（m/s）。
