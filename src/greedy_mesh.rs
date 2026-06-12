@@ -176,14 +176,14 @@ where
 
     // 如果区块不包含水方块，提前返回（避免不必要的计算）
     // 注意：对于 Paletted 区块，contains_block 只检查调色板而非所有方块，开销很小
-    // if !chunk.contains_block(WATER_BLOCK_ID) {
-    //     return GreedyMeshResult {
-    //         positions: Vec::new(),
-    //         uvs: Vec::new(),
-    //         normals: Vec::new(),
-    //         indices: Vec::new(),
-    //     };
-    // }
+    if !chunk.contains_block(WATER_BLOCK_ID) {
+        return GreedyMeshResult {
+            positions: Vec::new(),
+            uvs: Vec::new(),
+            normals: Vec::new(),
+            indices: Vec::new(),
+        };
+    }
 
     // 预分配容量（Greedy Meshing 后顶点数大幅减少）
     let mut positions = Vec::with_capacity(8000);
