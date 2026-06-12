@@ -37,6 +37,7 @@ pub fn insert_camera_components(
     commands.entity(camera_entity).insert((
         Camera3d::default(),
         CameraController::default(),
+        Transform::from_translation(Vec3::new(0.0, 1.80, 0.0)), // 眼睛高度
         Skybox {
             image: skybox_image,
             brightness: 1000.0,
