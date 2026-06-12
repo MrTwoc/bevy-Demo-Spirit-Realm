@@ -98,13 +98,80 @@ impl LodLevel {
 }
 
 // ============================================================================
+// LOD 切换延迟条目
+// ============================================================================
+
+/// LOD 切换延迟条目，用于实现帧延迟判断。
+///
+/// 只有当 `pending` LOD 级别连续 `stable_frames` 帧保持不变，
+/// 且 `stable_frames >= LOD_SWITCH_DELAY_FRAMES` 时，才真正切换 LOD。
+/// 这避免了玩家快速通过 LOD 边界时触发大量无用切换。
+#[derive(Clone, Copy)]
+struct LodEntry {
+    /// 当前已生效的 LOD 级别
+    current: LodLevel,
+    /// 建议的 LOD 级别（可能尚未生效）
+    pending: LodLevel,
+    /// `pending` 连续保持相同的帧数
+    stable_frames: u8,
+}
+
+impl LodEntry {
+    /// 创建新的 LOD 条目，初始状态视为已稳定（避免刚加载就触发切换）
+    fn new(initial: LodLevel) -> Self {
+        Self {
+            current: initial,
+            pending: initial,
+            stable_frames: LOD_SWITCH_DELAY_FRAMES,
+        }
+    }
+
+    /// 更新建议的 LOD 级别，返回是否需要切换。
+    ///
+    /// 逻辑：
+    /// - `new_lod == current` → 已稳定，重置 `stable_frames`（不切换）
+    /// - `new_lod == pending` → 稳定帧数 +1，达标后切换
+    /// - `new_lod != pending` → 重置稳定帧数（不切换）
+    fn update(&mut self, new_lod: LodLevel) -> bool {
+        if new_lod == self.current {
+            // 建议级别和当前级别相同：视为已稳定
+            self.pending = self.current;
+            self.stable_frames = LOD_SWITCH_DELAY_FRAMES;
+            false
+        } else if new_lod == self.pending {
+            // 建议级别未变，增加稳定帧数
+            self.stable_frames = self.stable_frames.saturating_add(1);
+
+            // 检查是否应该切换
+            if self.stable_frames >= LOD_SWITCH_DELAY_FRAMES {
+                self.current = self.pending;
+                true
+            } else {
+                false
+            }
+        } else {
+            // 建议级别变化，重置稳定帧数
+            self.pending = new_lod;
+            self.stable_frames = 0;
+            false
+        }
+    }
+}
+
+/// LOD 切换延迟帧数。
+///
+/// 只有连续 N 帧建议同一 LOD 级别时才真正切换，
+/// 避免快速移动时触发大量无用切换。
+/// 12 帧 ≈ 0.2 秒（@60fps），玩家不会感知到延迟。
+const LOD_SWITCH_DELAY_FRAMES: u8 = 12;
+
+// ============================================================================
 // LOD 管理器
 // ============================================================================
 
 #[derive(Resource)]
 pub struct LodManager {
-    chunk_lods: HashMap<ChunkCoord, LodLevel>,
-    hysteresis: f32,
+    chunk_lods: HashMap<ChunkCoord, LodEntry>,
     /// 上次 LOD 全量检查时的玩家区块坐标
     last_player_chunk: Option<ChunkCoord>,
 }
@@ -113,7 +180,6 @@ impl LodManager {
     pub fn new() -> Self {
         Self {
             chunk_lods: HashMap::new(),
-            hysteresis: 0.5,
             last_player_chunk: None,
         }
     }
@@ -129,30 +195,32 @@ impl LodManager {
             let dist_sq = Self::chunk_distance_sq(*coord, player_chunk);
             let new_lod = LodLevel::from_chunk_distance_sq(dist_sq);
 
-            let current_lod = self
-                .chunk_lods
-                .get(coord)
-                .copied()
-                .unwrap_or(LodLevel::Lod0);
-
-            if new_lod != current_lod {
-                if self.should_switch_sq(current_lod, new_lod, dist_sq) {
-                    self.chunk_lods.insert(*coord, new_lod);
-                    to_rebuild.push((*coord, new_lod));
-                }
+            // 获取或创建 LOD 条目
+            let entry = self.chunk_lods
+                .entry(*coord)
+                .or_insert_with(|| LodEntry::new(new_lod));
+            
+            // 全量检查：直接切换（忽略帧延迟）
+            // 用于初始化或玩家传送等场景，此时玩家已稳定在新位置
+            if new_lod != entry.current {
+                entry.current = new_lod;
+                entry.pending = new_lod;
+                entry.stable_frames = LOD_SWITCH_DELAY_FRAMES;
+                to_rebuild.push((*coord, new_lod));
             }
         }
 
         to_rebuild
     }
 
-    /// 增量 LOD 更新：只检查 LOD 边界附近的区块。
+    /// 增量 LOD 更新：实现帧延迟判断。
     ///
-    /// LOD 阈值在距离 9/17/25 处。当玩家移动时，只有距离接近这些阈值的区块
-    /// 才可能改变 LOD 级别。远处的区块（如距离 3 或 30）不可能因玩家移动而改变 LOD。
+    /// 对每个已加载的区块，计算其建议 LOD 级别，然后通过 `LodEntry::update`
+    /// 检查是否需要切换。只有当建议级别连续 `LOD_SWITCH_DELAY_FRAMES` 帧
+    /// 保持不变时，才真正切换 LOD。
     ///
-    /// 边界判定：区块当前 LOD 的阈值距离 ± MARGIN 内的区块需要检查。
-    /// MARGIN 设为 4，覆盖玩家单帧最大移动距离（~3 区块/帧 @ 120km/h）。
+    /// 这避免了玩家快速通过 LOD 边界时触发大量无用切换，也消除了
+    /// 在 LOD 边界处小幅来回移动导致的 LOD 抖动。
     pub fn update_incremental(
         &mut self,
         player_chunk: ChunkCoord,
@@ -164,42 +232,20 @@ impl LodManager {
         }
         self.last_player_chunk = Some(player_chunk);
 
-        // LOD 边界阈值（距离平方）：9²=81, 17²=289, 25²=625
-        const BOUNDARIES: [i32; 3] = [81, 289, 625];
-        // 边界检查余量（距离 ±4 区块 → 距离平方膨胀量）
-        // (d+4)² - d² = 8d + 16，最大 d=25 时为 216
-        const MARGIN: i32 = 216;
-
         let mut to_rebuild = Vec::new();
 
         for (coord, _) in &loaded.entries {
             let dist_sq = Self::chunk_distance_sq(*coord, player_chunk);
-            let current_lod = self
-                .chunk_lods
-                .get(coord)
-                .copied()
-                .unwrap_or(LodLevel::Lod0);
-
-            // 快速跳过：区块不在任何 LOD 边界附近
-            // 对于每个边界，检查 |dist_sq - boundary| <= MARGIN
-            let near_boundary = match current_lod {
-                LodLevel::Lod0 => (dist_sq - BOUNDARIES[0]).abs() <= MARGIN,
-                LodLevel::Lod1 => (dist_sq - BOUNDARIES[0]).abs() <= MARGIN
-                    || (dist_sq - BOUNDARIES[1]).abs() <= MARGIN,
-                LodLevel::Lod2 => (dist_sq - BOUNDARIES[1]).abs() <= MARGIN
-                    || (dist_sq - BOUNDARIES[2]).abs() <= MARGIN,
-                LodLevel::Lod3 => (dist_sq - BOUNDARIES[2]).abs() <= MARGIN,
-            };
-
-            if !near_boundary {
-                continue;
-            }
-
-            // 边界附近：检查是否需要切换 LOD
             let new_lod = LodLevel::from_chunk_distance_sq(dist_sq);
-            if new_lod != current_lod && self.should_switch_sq(current_lod, new_lod, dist_sq) {
-                self.chunk_lods.insert(*coord, new_lod);
-                to_rebuild.push((*coord, new_lod));
+
+            // 获取或创建 LOD 条目
+            let entry = self.chunk_lods
+                .entry(*coord)
+                .or_insert_with(|| LodEntry::new(new_lod));
+            
+            // 更新建议 LOD，检查是否需要切换
+            if entry.update(new_lod) {
+                to_rebuild.push((*coord, entry.current));
             }
         }
 
@@ -209,12 +255,16 @@ impl LodManager {
     pub fn get_lod(&self, coord: &ChunkCoord) -> LodLevel {
         self.chunk_lods
             .get(coord)
-            .copied()
+            .map(|entry| entry.current)
             .unwrap_or(LodLevel::Lod0)
     }
 
+    /// 设置区块的 LOD 级别（用于初次加载）。
+    ///
+    /// 将 `stable_frames` 设为 `LOD_SWITCH_DELAY_FRAMES`（已稳定），
+    /// 避免刚加载的区块立即触发 LOD 切换。
     pub fn set_lod(&mut self, coord: ChunkCoord, lod: LodLevel) {
-        self.chunk_lods.insert(coord, lod);
+        self.chunk_lods.insert(coord, LodEntry::new(lod));
     }
 
     pub fn remove(&mut self, coord: &ChunkCoord) {
@@ -235,20 +285,6 @@ impl LodManager {
         let dy = a.cy - b.cy;
         let dz = a.cz - b.cz;
         dx * dx + dy * dy + dz * dz
-    }
-
-    /// 基于平方距离的迟滞判断。
-    ///
-    /// 阈值预计算为平方值，避免运行时 sqrt。
-    #[inline]
-    fn should_switch_sq(&self, current: LodLevel, new: LodLevel, dist_sq: i32) -> bool {
-        if (new as i32) < (current as i32) {
-            true
-        } else {
-            let threshold = current.threshold() + self.hysteresis * 8.0;
-            let threshold_sq = (threshold * threshold) as i32;
-            dist_sq > threshold_sq
-        }
     }
 }
 
