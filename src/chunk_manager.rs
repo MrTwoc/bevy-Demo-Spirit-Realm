@@ -378,413 +378,14 @@ pub fn setup_world(
     }
 }
 
-/// 每帧系统：异步网格结果收集 + 分帧任务提交 + 卸载远处区块 + LOD 更新。
-pub fn chunk_loader_system(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut loaded: ResMut<LoadedChunks>,
-    mut cached: ResMut<CachedTriangleCount>,
-    async_mesh: Res<AsyncMeshManager>,
-    camera_query: Query<&Transform, With<Player>>,
-    atlas_handle: Res<AtlasTextureHandle>,
-    shared_material: Res<SharedVoxelMaterial>,
-    transparent_material: Res<TransparentVoxelMaterial>,
-    shared_empty_mesh: Res<SharedEmptyMesh>,
-    mut lod_manager: ResMut<LodManager>,
-) {
-    let Ok(cam_transform) = camera_query.single() else {
-        return;
-    };
-
-    let player_chunk = ChunkCoord::from_world(cam_transform.translation);
-
-    loaded.frame_counter += 1;
-    let current_frame = loaded.frame_counter;
-
-    // ── 步骤 1：收集异步结果并上传 GPU ──────────────────────────
-    // ⚠️ 无论 DirtyChunk 是否存在都应用结果，避免占位空网格持续显示。
-    // 如果 DirtyChunk 因 LOD 变更或邻居标记而存在，dirty 系统后续会
-    // 提交重建任务覆盖为正确版本。移除脏标记检查防止以下死锁场景：
-    //   - 邻居标记添加 DirtyChunk → 结果被跳过 → dirty 提交新任务但
-    //     pending_tasks 有该区块返回 false → DirtyChunk 不清理 →
-    //     下帧继续跳过 → 区块永久显示空网格
-    let results = async_mesh.collect_results(MESH_UPLOADS_PER_FRAME);
-    for result in results {
-        if !loaded.entries.contains_key(&result.coord) {
-            continue;
-        }
-
-        // 先提取 entry 中的值，避免跨越 get_mut 借用的生命周期
-        let (entity, water_entity, old_handle, old_water_handle, old_tri_count) = {
-            let entry = loaded.entries.get(&result.coord).unwrap();
-            (
-                entry.entity,
-                entry.water_entity,
-                entry.solid_mesh_handle.clone(),
-                entry.water_mesh_handle.clone(),
-                entry.triangle_count,
-            )
-        };
-
-        // 1. 处理固体 Mesh
-        let solid_triangle_count = result.solid.triangle_count;
-        // ── 将 AoS 顶点拆分为 Bevy 分离数组（消耗 result.solid）──
-        let (solid_positions, solid_uvs, solid_normals, solid_indices) = result.solid.split_for_bevy();
-        let new_handle: Handle<Mesh>;
-
-        if solid_triangle_count > 0 {
-            // 有可见面 → 原地更新 Mesh 数据（复用现有 Handle，避免 remove + add 的 Asset 系统开销）
-            if old_handle != shared_empty_mesh.handle {
-                // 已有独立 Handle → 原地更新顶点/索引数据
-                if let Some(mesh) = meshes.get_mut(&old_handle) {
-                    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, solid_positions);
-                    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, solid_uvs);
-                    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, solid_normals);
-                    mesh.insert_indices(bevy::mesh::Indices::U32(solid_indices));
-                }
-                new_handle = old_handle.clone();
-            } else {
-                // 当前是共享空 Mesh（占位或零几何体状态）→ 创建独立 Handle
-                new_handle = meshes.add(
-                    Mesh::new(
-                        bevy::render::render_resource::PrimitiveTopology::TriangleList,
-                        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
-                    )
-                    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, solid_positions)
-                    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, solid_uvs)
-                    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, solid_normals)
-                    .with_inserted_indices(bevy::mesh::Indices::U32(solid_indices)),
-                );
-            }
-
-            // 更新固体实体
-            let mat_handle = shared_material.handle.clone();
-            commands.entity(entity).insert((
-                Mesh3d(new_handle.clone()),
-                MeshMaterial3d(mat_handle.clone()),
-                ChunkMeshHandle {
-                    mesh: new_handle.clone(),
-                    material: mat_handle,
-                },
-            ));
-
-            // 更新 entry（固体 handle 仅在非共享时更新）
-            if let Some(entry) = loaded.entries.get_mut(&result.coord) {
-                if old_handle == shared_empty_mesh.handle {
-                    entry.solid_mesh_handle = new_handle;
-                }
-                entry.solid_material_handle = shared_material.handle.clone();
-            }
-        } else {
-            // 三角形数为 0（所有面被遮挡），切换到共享空 Mesh
-            if old_handle != shared_empty_mesh.handle {
-                // 之前有几何体 → 清理旧 Handle
-                meshes.remove(&old_handle);
-            }
-            let empty_mesh = shared_empty_mesh.handle.clone();
-            let mat_handle = shared_material.handle.clone();
-
-            commands.entity(entity).insert((
-                Mesh3d(empty_mesh.clone()),
-                MeshMaterial3d(mat_handle.clone()),
-                ChunkMeshHandle {
-                    mesh: empty_mesh.clone(),
-                    material: mat_handle,
-                },
-            ));
-
-            if let Some(entry) = loaded.entries.get_mut(&result.coord) {
-                entry.solid_mesh_handle = empty_mesh;
-                entry.solid_material_handle = shared_material.handle.clone();
-            }
-        }
-
-        // 2. 处理水 Mesh（作为主实体的子节点）
-        if let Some(water_data) = result.water {
-            let water_triangle_count = water_data.triangle_count;
-            // AoS → SoA 拆分
-            let (water_positions, water_uvs, water_normals, water_indices) = water_data.split_for_bevy();
-
-            // 尝试原地更新现有水 Mesh，不存在则创建新 Handle
-            let water_mesh_handle = if let Some(handle) = old_water_handle {
-                // 复用现有 Handle，原地更新顶点/索引数据
-                if let Some(mesh) = meshes.get_mut(&handle) {
-                    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, water_positions);
-                    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, water_uvs);
-                    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, water_normals);
-                    mesh.insert_indices(bevy::mesh::Indices::U32(water_indices));
-                }
-                handle
-            } else {
-                meshes.add(
-                    Mesh::new(
-                        bevy::render::render_resource::PrimitiveTopology::TriangleList,
-                        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
-                    )
-                    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, water_positions)
-                    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, water_uvs)
-                    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, water_normals)
-                    .with_inserted_indices(bevy::mesh::Indices::U32(water_indices)),
-                )
-            };
-
-            if let Some(we) = water_entity {
-                // 更新已有水子实体
-                commands.entity(we).insert((
-                    Mesh3d(water_mesh_handle.clone()),
-                    MeshMaterial3d(transparent_material.handle.clone()),
-                    Transform::IDENTITY,
-                ));
-            } else {
-                // 创建新的水子实体（挂载到父区块实体下）
-                let water_entity = commands
-                    .spawn((
-                        Mesh3d(water_mesh_handle.clone()),
-                        MeshMaterial3d(transparent_material.handle.clone()),
-                        Transform::IDENTITY,
-                        Visibility::default(),
-                    ))
-                    .id();
-                commands.entity(entity).add_child(water_entity);
-
-                if let Some(entry) = loaded.entries.get_mut(&result.coord) {
-                    entry.water_entity = Some(water_entity);
-                }
-            }
-
-            if let Some(entry) = loaded.entries.get_mut(&result.coord) {
-                entry.water_mesh_handle = Some(water_mesh_handle);
-                entry.water_triangle_count = water_triangle_count;
-            }
-        } else {
-            // 区块不再包含水，移除水子实体
-            if let Some(we) = water_entity {
-                if let Some(water_handle) = old_water_handle {
-                    meshes.remove(&water_handle);
-                }
-                commands.entity(we).despawn();
-            }
-            if let Some(entry) = loaded.entries.get_mut(&result.coord) {
-                entry.water_entity = None;
-                entry.water_mesh_handle = None;
-                entry.water_triangle_count = 0;
-            }
-        }
-
-        if let Some(entry) = loaded.entries.get_mut(&result.coord) {
-            // ⭐ 增量更新三角形数
-            cached.0 = cached
-                .0
-                .wrapping_add(solid_triangle_count)
-                .wrapping_sub(old_tri_count);
-            entry.triangle_count = solid_triangle_count;
-        }
-    }
-
-    // ── 步骤 1.5：分帧删除处理 ────────────────────────────────
-    let delete_count = DELETIONS_PER_FRAME.min(loaded.pending_deletions.len());
-    let deletions_this_frame = loaded.pending_deletions.drain(..delete_count);
-    for deletion in deletions_this_frame {
-        // 只移除独立 Mesh Handle（共享空 Handle 由 SharedEmptyMesh Resource 管理，不重复清理）
-        if deletion.mesh_handle != shared_empty_mesh.handle {
-            meshes.remove(&deletion.mesh_handle);
-        }
-        // 清理水 Mesh Handle
-        if let Some(water_handle) = deletion.water_mesh_handle {
-            meshes.remove(&water_handle);
-        }
-        // despawn 自动清理所有子节点（水实体作为子实体挂载在父实体下）
-        commands.entity(deletion.entity).despawn();
-    }
-
-    // ── 步骤 2：检测玩家移动，启动/继续分帧加载队列构建 ──────────────────────
-    let needs_rebuild =
-        loaded.load_queue_build_state.is_some() || loaded.last_player_chunk != Some(player_chunk);
-
-    if needs_rebuild {
-        if loaded.load_queue_build_state.is_none() {
-            loaded.last_player_chunk = Some(player_chunk);
-            loaded.needs_unload_check = true;
-        }
-
-        if let Some(built_queue) = rebuild_load_queue(
-            player_chunk,
-            &mut *loaded,
-            QUEUE_BUILD_STEPS_PER_FRAME,
-            DETECTION_RADIUS,
-        ) {
-            loaded.load_queue = built_queue;
-            unload_distant_chunks(
-                player_chunk,
-                &mut *loaded,
-                &*async_mesh,
-                &mut *lod_manager,
-                &mut *cached,
-            );
-        }
-    }
-
-    // ── 步骤 2.5：更新 LOD 管理器 ─────────────────────────────
-    let to_rebuild = lod_manager.update_incremental(player_chunk, &*loaded);
-    for (coord, new_lod) in to_rebuild {
-        if let Some(entry) = loaded.entries.get(&coord) {
-            commands
-                .entity(entry.entity)
-                .insert((DirtyChunk, LodChangedFlag));
-            if let Some(entry) = loaded.entries.get_mut(&coord) {
-                entry.lod_level = new_lod;
-            }
-        }
-    }
-
-    lru_evict(
-        player_chunk,
-        &mut *loaded,
-        &*async_mesh,
-        &mut *lod_manager,
-        &mut *cached,
-    );
-
-    // ── 步骤 3A：收集准备完成的区块数据，创建实体并提交网格生成任务 ──
-    // 将地形+树木生成（Prepare 阶段）的结果转化为 ECS 实体和网格生成任务。
-    // 使用 CHUNKS_PER_FRAME * 2 的收集上限以匹配两阶段流水线产出率。
-    let prepare_results = async_mesh.collect_prepare_results(CHUNKS_PER_FRAME * 2);
-    let mut dirty_neighbors: Vec<Entity> = Vec::new();
-    let mut neighbor_dirty_remaining = NEIGHBOR_DIRTY_PER_FRAME;
-
-    for prepare_result in prepare_results {
-        let coord = prepare_result.coord;
-        let chunk = prepare_result.data;
-
-        // 区块已在之前被加载（例如通过相邻区块的脏重建流程），跳过。
-        if loaded.entries.contains_key(&coord) {
-            continue;
-        }
-
-        // 纯空气区块（理论很少见）：不创建实体，不占用 ECS 资源。
-        if is_air_chunk(&chunk) {
-            continue;
-        }
-
-        let neighbors = collect_neighbors(coord, &*loaded);
-
-        let dist_sq = (coord.cx - player_chunk.cx).pow(2)
-            + (coord.cy - player_chunk.cy).pow(2)
-            + (coord.cz - player_chunk.cz).pow(2);
-        let lod_level = LodLevel::from_chunk_distance_sq(dist_sq);
-
-        // 使用共享空 Mesh 作为占位符（避免每创建一个新区块就增加一个 GPU Buffer 对象）
-        // 当异步结果返回后，有几何体的区块会被升级为独立 Handle（meshes.add），
-        // 零几何体区块继续共享此 Handle，无需额外 GPU 内存。
-        let placeholder_mesh = shared_empty_mesh.handle.clone();
-        let placeholder_mat = shared_material.handle.clone();
-
-        // 使用 Arc 包装 ChunkData，实体组件和 Entry 共享同一份数据：
-        // - 实体组件：ChunkComponent(Arc::clone(&shared)) → 引用计数 +1，O(1)
-        // - Entry.data：shared → 所有权转移，零拷贝
-        // - 异步任务：Arc::clone(&entry.data) → 引用计数 +1，O(1)
-        // 对比旧代码：chunk.clone()（~32KB）+ entry.data.clone()（~32KB）= 64KB 深拷贝
-        let shared = Arc::new(chunk);
-        let position = coord.to_world_origin();
-        let entity = commands
-            .spawn((
-                ChunkComponent(Arc::clone(&shared)),
-                Transform::from_translation(position),
-                Visibility::default(),
-                // NoCpuCulling,
-                ChunkAtlasHandle(atlas_handle.handle.clone()),
-                ChunkCoordComponent(coord),
-                Mesh3d(placeholder_mesh.clone()),
-                MeshMaterial3d(placeholder_mat.clone()),
-                ChunkMeshHandle {
-                    mesh: placeholder_mesh.clone(),
-                    material: placeholder_mat.clone(),
-                },
-            ))
-            .id();
-
-        loaded.entries.insert(
-            coord,
-            ChunkEntry {
-                entity,
-                data: shared,
-                last_accessed: current_frame,
-                solid_mesh_handle: placeholder_mesh.clone(),
-                solid_material_handle: placeholder_mat.clone(),
-                water_mesh_handle: None,
-                water_entity: None,
-                water_triangle_count: 0,
-                lod_level,
-                triangle_count: 0,
-            },
-        );
-
-        loaded.entries_ordered.push(coord);
-
-        lod_manager.set_lod(coord, lod_level);
-
-        // 提交网格生成任务（在工作线程中将准备好的区块数据转为 GPU 网格）
-        let entry = loaded.entries.get(&coord).unwrap();
-        async_mesh.submit_task(MeshTask::Generate {
-            coord,
-            data: Arc::clone(&entry.data),
-            neighbors,
-            lod_level: Some(lod_level),
-        });
-
-        // 标记相邻区块为脏块，使其网格在邻居变化后被重建
-        for (dx, dy, dz) in NEIGHBOR_OFFSETS.iter() {
-            if neighbor_dirty_remaining == 0 {
-                break;
-            }
-            let neighbor_coord = ChunkCoord {
-                cx: coord.cx + dx,
-                cy: coord.cy + dy,
-                cz: coord.cz + dz,
-            };
-            if let Some(neighbor_entry) = loaded.entries.get(&neighbor_coord) {
-                // neighbor_entry.data 是 Arc<Chunk>，通过 as_ref() 获取 &ChunkData
-                if is_air_chunk(neighbor_entry.data.as_ref()) {
-                    continue;
-                }
-                dirty_neighbors.push(neighbor_entry.entity);
-                neighbor_dirty_remaining -= 1;
-            }
-        }
-    }
-
-    // 批量应用脏标记（附带邻居变更标记）
-    for entity in dirty_neighbors {
-        commands
-            .entity(entity)
-            .insert((DirtyChunk, NeighborChangedFlag));
-    }
-
-    // ── 步骤 3B：提交区块数据准备任务（地形生成 + 树木生成，在工作线程执行） ──
-    // 从加载队列中取出区块坐标，提交 Prepare 任务。
-    // 双重 pending 检查（prepare + generate）避免重复提交和竞态。
-    let drain_count = CHUNKS_PER_FRAME.min(loaded.load_queue.len());
-    let chunks_to_submit: Vec<ChunkCoord> = loaded.load_queue.drain(..drain_count).collect();
-
-    for coord in chunks_to_submit {
-        if loaded.entries.contains_key(&coord) {
-            continue;
-        }
-        if async_mesh.is_prepare_pending(&coord) || async_mesh.is_pending(&coord) {
-            continue;
-        }
-        async_mesh.submit_prepare_task(coord);
-    }
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
-// 优化后的分帧系统（替代原 chunk_loader_system 单一入口点）
+// 分帧区块生命周期系统
 //
 // 设计目标：
 // 1. GPU 上传（collect_and_upload_meshes + process_pending_deletions）在 First
 //    调度中执行，优先于渲染阶段，减少帧尾延迟。
-// 2. CPU 密集型操作（manage_chunk_load_state + spawn_entities_from_prepare
-//    + submit_prepare_tasks）在 Update 调度中链式执行，共享加载状态。
+// 2. CPU 密集型操作（manage_chunk_load_state + spawn_entities_from_prepare）
+//    在 Update 调度中链式执行，共享加载状态。
 // 3. 更少的 ResMut 参数 → 降低各系统与相机/输入等系统的锁竞争。
 // 4. frame_counter 仅由 collect_and_upload_meshes 递增一次，后续系统通过
 //    loaded.frame_counter 读取，无需重复递增。
@@ -801,14 +402,6 @@ pub fn chunk_loader_system(
 /// 仅在 `pending_deletions` 非空时运行 `process_pending_deletions`。
 pub fn has_pending_deletions(loaded: Res<LoadedChunks>) -> bool {
     !loaded.pending_deletions.is_empty()
-}
-
-/// `run_if` 条件：加载队列是否非空。
-///
-/// 原用于 `submit_prepare_tasks` 的独立调度条件，现已合并到 `manage_chunk_load_state`。
-/// 保留供外部可能的查询使用。
-pub fn has_load_queue_items(loaded: Res<LoadedChunks>) -> bool {
-    !loaded.load_queue.is_empty()
 }
 
 /// `run_if` 条件：工作线程是否有待处理的异步任务。
@@ -841,8 +434,8 @@ fn build_bevy_mesh(
 
 /// 系统 1：收集异步网格结果并上传 GPU（First 调度，优先于渲染）。
 ///
-/// 原 `chunk_loader_system` 步骤 1：收集工作线程完成的网格数据，
-/// 原地更新或创建 Mesh Handle，更新实体组件和 CachedTriangleCount。
+/// 收集工作线程完成的网格数据，原地更新或创建 Mesh Handle，
+/// 更新实体组件和 CachedTriangleCount。
 ///
 /// # 优化
 ///
@@ -1039,7 +632,7 @@ pub fn collect_and_upload_meshes(
 
 /// 系统 2：分帧处理待删除的区块实体（First 调度）。
 ///
-/// 原 `chunk_loader_system` 步骤 1.5：清理要被卸载的区块实体的 Mesh 资源。
+/// 清理要被卸载的区块实体的 Mesh 资源。
 pub fn process_pending_deletions(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -1061,7 +654,6 @@ pub fn process_pending_deletions(
 
 /// 系统 3：区块生命周期管理（Update 调度）。
 ///
-/// 原 `chunk_loader_system` 步骤 2 + 2.5 + 2.6：
 /// 检测玩家移动 → 重建加载队列 → 卸载远处区块 → 更新 LOD → LRU 淘汰。
 pub fn manage_chunk_load_state(
     mut commands: Commands,
@@ -1151,7 +743,6 @@ pub fn manage_chunk_load_state(
 
 /// 系统 4：处理异步准备好的区块数据并创建实体（Update 调度）。
 ///
-/// 原 `chunk_loader_system` 步骤 3A：
 /// 收集工作线程完成的地形数据 → 创建 ECS 实体 → 提交网格生成任务 → 标记邻居脏块。
 pub fn spawn_entities_from_prepare(
     mut commands: Commands,

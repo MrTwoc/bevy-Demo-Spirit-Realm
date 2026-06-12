@@ -3,9 +3,9 @@
 ## 技术约定
 
 ### 系统调度
-- chunk_manager 模块已拆分为 5 个细粒度系统，main.rs 中按 First / Update 分组调度
+- chunk_manager 模块拆分为 4 个细粒度系统（collect_and_upload_meshes / process_pending_deletions / manage_chunk_load_state / spawn_entities_from_prepare），main.rs 中按 First / Update 分组调度
 - 所有 chunk 系统使用 `.chain()` 确保顺序执行（共享 LoadedChunks ResMut）
-- 旧 chunk_loader_system 已废弃，新代码请勿引用
+- `chunk_loader_system` 已于 2026-06-12 完全删除（含 has_load_queue_items），代码库零残留引用
 
 ### 渲染
 - 使用 Bevy Mesh 路径（路径 A），Indirect Draw 代码（路径 B）已于 2026-05-30 全部移除

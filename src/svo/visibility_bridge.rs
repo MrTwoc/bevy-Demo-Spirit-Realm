@@ -266,7 +266,7 @@ fn compute_visible_regions(
 /// 计算可见区域并设置所有 chunk 实体的 Visibility 组件。
 ///
 /// 运行策略：每 N 帧执行一次，避免每帧遍历所有 chunk。
-/// 在 `Update` 阶段早期运行，在 `chunk_loader_system` 之后。
+/// 在 `Update` 阶段早期运行，在区块生命周期系统之后。
 pub fn apply_svo_visibility(
     mut state: ResMut<SvoVisibilityState>,
     node_manager: Res<NodeManager>,

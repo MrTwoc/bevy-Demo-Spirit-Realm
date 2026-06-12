@@ -3,7 +3,7 @@
 //! 脏块重建通过异步网格生成系统处理：
 //! 1. 检测到 DirtyChunk 组件（附带变更标记）时，提交异步网格生成任务
 //! 2. 移除 DirtyChunk 及对应变更标记（标记为已提交）
-//! 3. 异步结果由 `chunk_loader_system` 统一收集并上传 GPU
+//! 3. 异步结果由 `collect_and_upload_meshes` 收集并上传 GPU
 //!
 //! # 变更标记
 //!
@@ -95,9 +95,9 @@ fn collect_neighbors(coord: ChunkCoord, loaded: &LoadedChunks) -> ChunkNeighbors
 /// 1. 遍历所有带 `DirtyChunk` 组件的实体
 /// 2. 全空气区块：清理旧 Mesh/Material 资源，替换为空 Mesh
 /// 3. 非空气区块：收集邻居数据，提交异步网格生成任务（携带 LOD 级别）
-/// 4. 移除 `DirtyChunk` 组件（结果将由 `chunk_loader_system` 统一处理）
+/// 4. 移除 `DirtyChunk` 组件（结果将由 `collect_and_upload_meshes` 统一处理）
 ///
-/// 异步结果通过 `chunk_loader_system` 中的 `AsyncMeshManager::collect_results()` 收集，
+/// 异步结果通过 `collect_and_upload_meshes` 中的 `AsyncMeshManager::collect_results()` 收集，
 /// 并根据 `ChunkCoord` 匹配到正确的实体进行 GPU 上传。
 pub fn rebuild_dirty_chunks(
     mut commands: Commands,
