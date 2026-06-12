@@ -278,11 +278,7 @@ pub fn setup_world(
             height: atlas.tex_size,
             depth_or_array_layers: atlas.array_layers.max(1),
         };
-        let pixel_data = if atlas.array_layers > 0 {
-            atlas.array_pixels.clone()
-        } else {
-            atlas.image.clone()
-        };
+        let pixel_data = atlas.array_pixels.clone();
         let mut bevy_image = Image::new(
             size,
             TextureDimension::D2,

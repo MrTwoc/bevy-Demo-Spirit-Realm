@@ -70,14 +70,13 @@ pub struct TextureInfo {
     pub half_texel: f32,
 }
 
-/// 动态 Atlas 图集
+/// Texture Array 图集（纹理按层排列）。
+///
+/// 渲染管线始终使用 Texture Array (2D Array) 格式，已移除传统 2D Atlas
+/// 相关字段（`image`/`width`/`height`/`size`），消除 ~260KB 沉余像素副本。
 #[derive(Debug)]
 pub struct TextureAtlas {
-    pub image: Vec<u8>,
-    pub width: u32,
-    pub height: u32,
     pub textures: HashMap<String, TextureInfo>,
-    pub size: (u32, u32),
     /// Texture Array 像素数据（所有纹理按层排列）
     pub array_pixels: Vec<u8>,
     /// Texture Array 层数
@@ -250,9 +249,9 @@ impl ResourcePackManager {
         self.build_atlas()?;
 
         info!(
-            "Resource pack loaded: {} textures, atlas size {:?}",
+            "Resource pack loaded: {} textures, tex_size={}",
             self.texture_cache.len(),
-            self.atlas.as_ref().map(|a| a.size)
+            self.atlas.as_ref().map_or(0, |a| a.tex_size)
         );
         Ok(())
     }
@@ -367,20 +366,14 @@ impl ResourcePackManager {
         Ok(())
     }
 
-    /// 构建动态 Atlas 图集（同时构建 Texture Array 数据）
+    /// 构建 Texture Array 图集（单遍：像素拷贝 + UV 编码）。
     fn build_atlas(&mut self) -> Result<(), String> {
         if self.texture_cache.is_empty() {
             return Err("No textures loaded".to_string());
         }
 
-        let (atlas_width, atlas_height, placements) = self.calculate_atlas_layout()?;
-
-        // 创建 Atlas 图像（RGBA 像素数据）
-        let mut atlas_pixels = vec![0u8; (atlas_width * atlas_height * 4) as usize];
-        let mut texture_infos = HashMap::new();
-
-        // 构建 Texture Array 数据
         let mut texture_index_map = HashMap::new();
+        let mut texture_infos = HashMap::new();
         let mut sorted_names: Vec<&String> = self.texture_cache.keys().collect();
         sorted_names.sort();
         let array_layers = sorted_names.len() as u32;
@@ -396,7 +389,8 @@ impl ResourcePackManager {
         let mut array_pixels = vec![0u8; (tex_size * tex_size * 4 * array_layers) as usize];
 
         for (layer_idx, name) in sorted_names.iter().enumerate() {
-            texture_index_map.insert(name.to_string(), layer_idx as u32);
+            let layer = layer_idx as u32;
+            texture_index_map.insert(name.to_string(), layer);
 
             if let Some((src_pixels, src_w, src_h)) = self.texture_cache.get(*name) {
                 // 复制到 Texture Array 层
@@ -404,52 +398,29 @@ impl ResourcePackManager {
                     for px in 0..*src_w {
                         let src_idx = ((py * src_w + px) * 4) as usize;
                         let dst_idx =
-                            ((layer_idx as u32 * tex_size * tex_size + py * tex_size + px) * 4)
-                                as usize;
+                            ((layer * tex_size * tex_size + py * tex_size + px) * 4) as usize;
                         if src_idx + 3 < src_pixels.len() && dst_idx + 3 < array_pixels.len() {
                             array_pixels[dst_idx..dst_idx + 4]
                                 .copy_from_slice(&src_pixels[src_idx..src_idx + 4]);
                         }
                     }
                 }
-            }
-        }
 
-        for (texture_name, (x, y, _width, _height)) in &placements {
-            if let Some((src_pixels, src_w, src_h)) = self.texture_cache.get(texture_name) {
-                // 复制像素数据到 Atlas
-                for py in 0..*src_h {
-                    for px in 0..*src_w {
-                        let src_idx = ((py * src_w + px) * 4) as usize;
-                        let dst_x = x + px;
-                        let dst_y = y + py;
-                        let dst_idx = ((dst_y * atlas_width + dst_x) * 4) as usize;
-                        if src_idx + 3 < src_pixels.len() && dst_idx + 3 < atlas_pixels.len() {
-                            atlas_pixels[dst_idx..dst_idx + 4]
-                                .copy_from_slice(&src_pixels[src_idx..src_idx + 4]);
-                        }
-                    }
-                }
-
-                let layer = *texture_index_map.get(texture_name).unwrap_or(&0) as f32;
-                // 半纹素偏移：防止 UV 恰好落在纹理边界导致的纹理出血
-                // 问题：当 UV.x = layer + 1.0 时，floor() 跳到下一层，fract() 返回 0.0
-                // 当 UV.y = 1.0 时，fract() 返回 0.0，采样到错误的纹素
-                // 解决：UV 向内收缩半个纹素，确保采样始终在正确的纹素中心附近
+                // 构建 TextureInfo（UV 编码到 Texture Array 层）
                 let half_texel = 0.5 / tex_size as f32;
-                // Texture Array UV: x = layer_index + u, y = v
-                let u_min = layer + half_texel;
-                let u_max = layer + 1.0 - half_texel;
+                let layer_f = layer as f32;
+                let u_min = layer_f + half_texel;
+                let u_max = layer_f + 1.0 - half_texel;
                 let v_min = half_texel;
                 let v_max = 1.0 - half_texel;
 
                 texture_infos.insert(
-                    texture_name.clone(),
+                    name.to_string(),
                     TextureInfo {
-                        position: (*x, *y),
+                        position: (0, 0),
                         size: (*src_w, *src_h),
                         uv: (u_min, u_max, v_min, v_max),
-                        layer_index: *texture_index_map.get(texture_name).unwrap_or(&0),
+                        layer_index: layer,
                         half_texel,
                     },
                 );
@@ -457,11 +428,7 @@ impl ResourcePackManager {
         }
 
         self.atlas = Some(TextureAtlas {
-            image: atlas_pixels,
-            width: atlas_width,
-            height: atlas_height,
             textures: texture_infos,
-            size: (atlas_width, atlas_height),
             array_pixels,
             array_layers,
             texture_index_map,
@@ -472,38 +439,6 @@ impl ResourcePackManager {
         self.build_uv_array();
 
         Ok(())
-    }
-
-    /// 计算 Atlas 布局（简单的 bin-packing 算法）
-    fn calculate_atlas_layout(
-        &self,
-    ) -> Result<(u32, u32, HashMap<String, (u32, u32, u32, u32)>), String> {
-        let mut placements = HashMap::new();
-        let mut current_x = 0u32;
-        let mut current_y = 0u32;
-        let mut row_height = 0u32;
-        let atlas_width = 256u32;
-
-        let mut textures: Vec<(&String, &(Vec<u8>, u32, u32))> =
-            self.texture_cache.iter().collect();
-        textures.sort_by_key(|(name, _)| name.to_string());
-
-        for (name, (_, width, height)) in textures {
-            if current_x + width > atlas_width {
-                current_x = 0;
-                current_y += row_height;
-                row_height = 0;
-            }
-
-            placements.insert(name.clone(), (current_x, current_y, *width, *height));
-            current_x += width;
-            row_height = row_height.max(*height);
-        }
-
-        let atlas_height = (current_y + row_height).next_power_of_two();
-        let atlas_width = atlas_width.next_power_of_two();
-
-        Ok((atlas_width, atlas_height, placements))
     }
 
     /// 获取方块指定面的纹理 UV 坐标（通过面名称字符串，保留兼容性）。
