@@ -18,6 +18,8 @@ use crate::player::Player;
 const GRAVITY: f32 = -28.0;
 /// 跳跃初速度（m/s）。
 const JUMP_VELOCITY: f32 = 9.0;
+/// 空中跳跃初速度（m/s），比地面跳跃稍低以提供更好的手感。
+const AIR_JUMP_VELOCITY: f32 = 8.0;
 /// 行走速度（m/s）。
 const WALK_SPEED: f32 = 4.317;
 /// 冲刺速度（m/s）。
@@ -44,6 +46,11 @@ pub struct CharacterController {
     pub half_width: f32,
     /// 玩家碰撞箱总高度（1.8，与 Minecraft 一致）。
     pub height: f32,
+    // ── 多段跳相关 ──
+    /// 最大跳跃次数（1=普通跳跃，2=二段跳，3=三段跳...）。
+    pub max_jumps: u8,
+    /// 剩余跳跃次数（落地时重置为 max_jumps）。
+    pub jumps_remaining: u8,
 }
 
 impl Default for CharacterController {
@@ -54,6 +61,9 @@ impl Default for CharacterController {
             sprinting: false,
             half_width: 0.3,
             height: 1.8,
+            // 多段跳默认配置：二段跳
+            max_jumps: 2,
+            jumps_remaining: 2,
         }
     }
 }
@@ -150,9 +160,17 @@ pub fn character_controller_input(
     }
 
     // ── 跳跃 ──
-    if keys.pressed(KeyCode::Space) && ctrl.grounded {
-        ctrl.velocity.y = JUMP_VELOCITY;
-        ctrl.grounded = false;
+    if keys.just_pressed(KeyCode::Space) {
+        if ctrl.grounded {
+            // 地面跳跃：消耗一次跳跃机会
+            ctrl.velocity.y = JUMP_VELOCITY;
+            ctrl.grounded = false;
+            ctrl.jumps_remaining = ctrl.jumps_remaining.saturating_sub(1);
+        } else if ctrl.jumps_remaining > 0 {
+            // 空中跳跃（多段跳）：消耗一次跳跃机会
+            ctrl.velocity.y = AIR_JUMP_VELOCITY;
+            ctrl.jumps_remaining = ctrl.jumps_remaining.saturating_sub(1);
+        }
     }
 }
 
@@ -219,7 +237,12 @@ pub fn character_controller_physics(
         );
     }
 
-    // ── 3. 摩擦 / 阻力 ──
+    // ── 3. 落地时重置跳跃次数 ──
+    if ctrl.grounded {
+        ctrl.jumps_remaining = ctrl.max_jumps;
+    }
+
+    // ── 4. 摩擦 / 阻力 ──
     let friction = if ctrl.grounded {
         GROUND_FRICTION
     } else {
