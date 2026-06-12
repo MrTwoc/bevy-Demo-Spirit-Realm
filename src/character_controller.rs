@@ -279,7 +279,7 @@ fn resolve_collisions(
     let min_x = (position.x - hw).floor() as i32;
     let max_x = (position.x + hw).floor() as i32;
     let min_y = position.y.floor() as i32;
-    let max_y = (position.y + h).floor() as i32;
+    let max_y = (position.y + h).ceil() as i32;
     let min_z = (position.z - hw).floor() as i32;
     let max_z = (position.z + hw).floor() as i32;
 
