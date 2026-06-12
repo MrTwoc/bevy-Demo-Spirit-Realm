@@ -187,6 +187,9 @@ fn extract_svo_data(
     // 没有脏节点时保留 node_data 为空 vec（ExtractResource 克隆只传空 vec）
     // prepare_gpu_resources 会跳过 upload
 
+    // ── 渲染距离：从 chunk_manager 常量（体素单位） ──
+    data.render_distance = crate::chunk_manager::RENDER_DISTANCE as f32 * crate::svo::config::SECTION_SIZE as f32;
+
     // ── 相机数据（始终更新） ──
     // 主世界直接查询 Camera — Extract 包装的 Query 不支持 .get_single()
     if let Some(transform) = camera_query.iter().next() {

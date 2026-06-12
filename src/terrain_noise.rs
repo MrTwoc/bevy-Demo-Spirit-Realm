@@ -470,7 +470,7 @@ pub fn get_terrain_noise() -> &'static TerrainNoise {
 /// 计算世界坐标 (world_x, world_z) 处的地表高度。
 ///
 /// 这是一个便捷函数，内部调用 `get_terrain_noise().sample_all().compute_base_height()`。
-/// 供 `terrain_bridge`、`tree_gen` 等模块使用。
+/// 供 `tree_gen` 等模块使用。
 ///
 /// 此函数是确定性的——相同的坐标总是返回相同的高度值。
 #[inline]

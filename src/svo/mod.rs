@@ -1,34 +1,47 @@
-//! SVO (Sparse Voxel Octree) 渲染系统
+//! SVO (Sparse Voxel Octree) 可见性剔除系统
 //!
-//! 参考 voxy-dev 架构：
-//! - Section: 32×32×32 体素区块 (对应原有 Chunk)
-//! - Node: 八叉树节点，扁平数组存储，16 字节/节点
-//! - NodeManager: CPU 端树结构管理
-//! - GPU Compute: 遍历八叉树生成 indirect draw calls
+//! 基于八叉树结构的 GPU 遍历管线，对已加载的区块进行视锥剔除和距离剔除。
+//! 体素数据通过 `VoxelSource` trait 从现有的 Chunk 路径读取（Plan A），
+//! 未来可切换为 GPU buffer 后端（Plan B）。
 //!
-//! 设计要点：
-//! 1. 位置编码: u64, (lvl:4) | (y:8) | (z:24) | (x:24) | (pad:4)
-//! 2. 节点类型: LEAF(有几何体) / INNER(有子节点) / EMPTY(无内容)
-//! 3. non-empty children: 8-bit mask, 表示 8 个 octant 是否有体素
-//! 4. 扁平数组存储，GPU 作为 SSBO 直接读取
+//! # 架构
+//!
+//! ```text
+//! svo_sync → NodeManager（八叉树构建，读 ChunkData）
+//!                 ↓
+//! gpu_traversal → Compute Shader（GPU 视锥/距离剔除）
+//!                 ↓
+//! visibility_bridge → 设置 Chunk 实体 Visibility（控制渲染开关）
+//! ```
+//!
+//! # Plan A vs Plan B
+//!
+//! - **Plan A（当前）**：VoxelSource → ChunkData（内存读取）
+//! - **Plan B（未来）**：VoxelSource → GPU voxel buffer
+//!   切换只需实现新的 VoxelSource，NodeManager 保持完全不变。
+//!
+//! # 模块清单
+//!
+//! | 模块 | 职责 |
+//! |------|------|
+//! | `node_store` | 扁平节点存储（u64 × 4 per node） |
+//! | `node_manager` | 八叉树构建/管理 |
+//! | `voxel_source` | 体素数据源抽象（trait + ChunkData 适配器） |
+//! | `svo_sync` | 同步 LoadedChunks → SVO top-level 节点 |
+//! | `gpu_traversal` | GPU Compute Shader 遍历管线 |
+//! | `visibility_bridge` | CPU 端可见性设置（备选路径） |
+//! | `hierarchical_bitset` | 高效位集（NodeStore 底层） |
 
 mod hierarchical_bitset;
 mod node_store;
 mod node_manager;
-mod section;
-mod section_tracker;
-mod render_distance;
-mod terrain_bridge;
+pub mod voxel_source;
+mod svo_sync;
 mod gpu_traversal;
 mod visibility_bridge;
-mod batch_renderer;
 
 pub use node_manager::*;
-pub use section::*;
-pub use section_tracker::*;
-pub use render_distance::*;
 pub use gpu_traversal::SvoRenderQueue;
-pub use batch_renderer::*;
 
 use bevy::prelude::*;
 
@@ -37,25 +50,18 @@ pub struct SvoPlugin;
 
 impl Plugin for SvoPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<SectionTracker>();
         app.init_resource::<NodeManager>();
-        app.init_resource::<RenderDistanceController>();
+        app.init_resource::<svo_sync::SvoSyncController>();
 
-        // 设置 section 创建回调 (自动填充地形数据)
-        let mut tracker = app.world_mut().resource_mut::<SectionTracker>();
-        tracker.on_create_section = Some(terrain_bridge::make_section_filler());
+        // SVO 同步：根据玩家位置管理八叉树节点
+        app.add_systems(Update, svo_sync::sync_svo_with_loaded_chunks);
 
-        app.add_systems(Update, render_distance::process_render_distance);
-
-        // 启用 SVO 可见性系统
+        // 可见性系统：用 SVO 剔除结果控制 Chunk 实体 Visibility
         app.init_resource::<visibility_bridge::SvoVisibilityState>();
         app.add_systems(Update, visibility_bridge::apply_svo_visibility);
 
-        // 注册 GPU 遍历插件
+        // GPU 遍历管线
         app.add_plugins(gpu_traversal::SvoGpuTraversalPlugin);
-
-        // 注册批量渲染插件
-        app.add_plugins(batch_renderer::BatchRendererPlugin);
     }
 }
 
@@ -84,12 +90,6 @@ pub mod config {
 
     /// Top-level section 边长 (LOD=4: 32<<4 = 512 体素)
     pub const TOP_LEVEL_SIZE: u32 = SECTION_SIZE << MAX_LOD;
-
-    /// 二级缓存最大 section 数
-    pub const SECONDARY_CACHE_SIZE: usize = 4096;
-
-    /// Top-level LRU 缓存大小
-    pub const TOP_LEVEL_CACHE_SIZE: usize = 1024;
 }
 
 /// 位置编码函数
@@ -133,7 +133,6 @@ pub fn make_child_pos(parent_pos: u64, child_idx: u32) -> u64 {
     let z = decode_z(parent_pos);
 
     let child_lvl = lvl - 1;
-    let half = 1i32 << (child_lvl); // 父节点的一半大小
     let bit_x = (child_idx & 1) as i32;
     let bit_y = ((child_idx >> 1) & 1) as i32;
     let bit_z = ((child_idx >> 2) & 1) as i32;

@@ -10,7 +10,12 @@
 ### 渲染
 - 使用 Bevy Mesh 路径（路径 A），Indirect Draw 代码（路径 B）已于 2026-05-30 全部移除
 - 路径 B 残留文件已删除：`src/voxel_render/`、`src/gpu_meshing.rs`、`voxel_indirect.wgsl`、`voxel_cull.wgsl`、`voxel_meshing.wgsl`
-- SVO 剔除系统（`gpu_traversal.rs`、`visibility_bridge.rs`）保留，驱动 Bevy PBR 渲染
+- SVO 剔除系统已重构为 Plan A：体素数据源从独立的 Section/SectionTracker 切换到 ChunkData（通过 `VoxelSource` trait 抽象）
+- 删除模块：`terrain_bridge.rs`（重复地形生成）、`section.rs` / `section_tracker.rs`（独立 section 缓存）、`batch_renderer.rs`（空壳）、`render_distance.rs`（替代为 svo_sync.rs）
+- 新增模块：`voxel_source.rs`（VoxelSource trait + ChunkVoxelSource 适配器）、`svo_sync.rs`（SVO 同步系统）
+- `NodeManager` 所有体素查询已改为 `&dyn VoxelSource` 参数，为 Plan B（GPU buffer 后端）预留扩展点
+- SVO 八叉树构建时从 LoadedChunks.entries 读取 ChunkData，不再独立生成地形
+- SVO 模块清单（8 个文件）：node_store, node_manager, voxel_source, svo_sync, gpu_traversal, visibility_bridge, hierarchical_bitset, mod
 - 固体方块使用 Opaque 材质，水方块使用 Blend 材质
 - 共享空 Mesh（SharedEmptyMesh）用于零几何体/空气区块
 
@@ -51,7 +56,7 @@
 
 ### 地形生成
 - 公式：`surface = base + (2^coarse - 1) * amplitude + detail * detail_amp`（指数+细节层）
-- 核心函数：`compute_surface_height()` in chunk.rs，被 fill_terrain / get_surface_height / terrain_bridge 共享
+- 核心函数：`compute_surface_height()` in chunk.rs，被 fill_terrain / get_surface_height 共享
 - 粗轮廓：Fbm<Simplex> 5 octaves, freq=0.003, seed=12345
 - 细节层：Fbm<Simplex> 3 octaves, freq=0.02, seed=12346
 - 常量：TERRAIN_BASE_HEIGHT=96, TERRAIN_AMPLITUDE=180.0, TERRAIN_DETAIL_AMP=20.0, WATER_LEVEL=80
