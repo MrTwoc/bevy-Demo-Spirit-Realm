@@ -21,9 +21,9 @@ const JUMP_VELOCITY: f32 = 10.6;
 /// 空中跳跃初速度（m/s），比地面跳跃更高以实现二段跳总高度 5 米。
 const AIR_JUMP_VELOCITY: f32 = 13.0;
 /// 行走速度（m/s）。
-const WALK_SPEED: f32 = 4.317;
+const WALK_SPEED: f32 = 6.317;
 /// 冲刺速度（m/s）。
-const SPRINT_SPEED: f32 = 5.612;
+const SPRINT_SPEED: f32 = 10.612;
 /// 终端下落速度（m/s），防止无限加速。
 const TERMINAL_VELOCITY: f32 = -50.0;
 /// 地面摩擦系数（每帧速度衰减）。
