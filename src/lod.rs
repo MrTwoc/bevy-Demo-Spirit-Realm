@@ -14,7 +14,8 @@
 use std::collections::HashMap;
 
 use crate::async_mesh::{SubMeshData, UvLookupTable, MeshVertex};
-use crate::chunk::{BlockId, CHUNK_SIZE, ChunkCoord, ChunkData, ChunkNeighbors, should_cull_face};
+use crate::chunk::{BlockId, CHUNK_SIZE, ChunkCoord, ChunkData, ChunkNeighbors, should_cull_face, AIR};
+use crate::face::{Face, FACES, face_quad_lod};
 use bevy::prelude::Resource;
 
 // ============================================================================
@@ -85,16 +86,6 @@ impl LodLevel {
         }
     }
 
-    #[inline]
-    #[allow(dead_code)]
-    fn min_threshold(self) -> f32 {
-        match self {
-            LodLevel::Lod0 => 0.0,
-            LodLevel::Lod1 => 9.0,
-            LodLevel::Lod2 => 17.0,
-            LodLevel::Lod3 => 25.0,
-        }
-    }
 }
 
 // ============================================================================
@@ -184,35 +175,6 @@ impl LodManager {
         }
     }
 
-    pub fn update(
-        &mut self,
-        player_chunk: ChunkCoord,
-        loaded: &super::chunk_manager::LoadedChunks,
-    ) -> Vec<(ChunkCoord, LodLevel)> {
-        let mut to_rebuild = Vec::new();
-
-        for (coord, _) in &loaded.entries {
-            let dist_sq = Self::chunk_distance_sq(*coord, player_chunk);
-            let new_lod = LodLevel::from_chunk_distance_sq(dist_sq);
-
-            // 获取或创建 LOD 条目
-            let entry = self.chunk_lods
-                .entry(*coord)
-                .or_insert_with(|| LodEntry::new(new_lod));
-            
-            // 全量检查：直接切换（忽略帧延迟）
-            // 用于初始化或玩家传送等场景，此时玩家已稳定在新位置
-            if new_lod != entry.current {
-                entry.current = new_lod;
-                entry.pending = new_lod;
-                entry.stable_frames = LOD_SWITCH_DELAY_FRAMES;
-                to_rebuild.push((*coord, new_lod));
-            }
-        }
-
-        to_rebuild
-    }
-
     /// 增量 LOD 更新：实现帧延迟判断。
     ///
     /// 对每个已加载的区块，计算其建议 LOD 级别，然后通过 `LodEntry::update`
@@ -271,13 +233,6 @@ impl LodManager {
         self.chunk_lods.remove(coord);
     }
 
-    fn chunk_distance(&self, a: ChunkCoord, b: ChunkCoord) -> f32 {
-        let dx = (a.cx - b.cx) as f32;
-        let dy = (a.cy - b.cy) as f32;
-        let dz = (a.cz - b.cz) as f32;
-        (dx * dx + dy * dy + dz * dz).sqrt()
-    }
-
     /// 区块间距离的平方（整数运算，避免 sqrt）。
     #[inline]
     fn chunk_distance_sq(a: ChunkCoord, b: ChunkCoord) -> i32 {
@@ -297,25 +252,6 @@ impl Default for LodManager {
 // ============================================================================
 // LOD 降采样网格生成
 // ============================================================================
-
-const FACES_LOD: [(FaceLod, [i32; 3], usize); 6] = [
-    (FaceLod::Right, [1, 0, 0], 2),
-    (FaceLod::Left, [-1, 0, 0], 2),
-    (FaceLod::Top, [0, 1, 0], 0),
-    (FaceLod::Bottom, [0, -1, 0], 1),
-    (FaceLod::Front, [0, 0, 1], 2),
-    (FaceLod::Back, [0, 0, -1], 2),
-];
-
-#[derive(Clone, Copy)]
-enum FaceLod {
-    Top,
-    Bottom,
-    Right,
-    Left,
-    Front,
-    Back,
-}
 
 /// 预计算的降采样主导方块网格。
 ///
@@ -397,7 +333,7 @@ pub fn generate_lod_mesh_separated(
     let step_f = step as f32;
     let sample_size = lod.sampling_size();
 
-    if matches!(chunk, ChunkData::Empty | ChunkData::Uniform(0)) {
+    if matches!(chunk, ChunkData::Empty | ChunkData::Uniform(AIR)) {
         return (SubMeshData::new(), None);
     }
 
@@ -421,7 +357,7 @@ pub fn generate_lod_mesh_separated(
                 let block_id = dominant_grid.get(sx, sy, sz);
 
                 // LOD 级别只跳过空气方块，水方块同样参与降采样
-                if block_id == 0 {
+                if block_id == AIR {
                     continue;
                 }
 
@@ -429,7 +365,7 @@ pub fn generate_lod_mesh_separated(
                 let y = sy * step;
                 let z = sz * step;
 
-                for (face_index, (face, offset, uv_idx)) in FACES_LOD.iter().cloned().enumerate() {
+                for (face_index, (face, offset, uv_idx)) in FACES.iter().cloned().enumerate() {
                     if !is_face_visible_lod_fast(
                         x, y, z,
                         block_id,
@@ -489,7 +425,7 @@ fn sample_dominant_block(
         for dz in 0..step {
             for dx in 0..step {
                 let id = chunk.get(base_x + dx, base_y + dy, base_z + dz);
-                if id != 0 {
+                if id != AIR {
                     return id;
                 }
             }
@@ -570,7 +506,7 @@ fn sample_dominant_block_from_neighbors(
                     let z = base_z + dz;
                     if x < CHUNK_SIZE && y < CHUNK_SIZE && z < CHUNK_SIZE {
                         let id = data.get(x, y, z);
-                        if id != 0 {
+                        if id != AIR {
                             return Some(id);
                         }
                     }
@@ -581,90 +517,3 @@ fn sample_dominant_block_from_neighbors(
     None
 }
 
-/// LOD 面四边形生成（顶点归一化版）。
-///
-/// 顶点坐标除以 `step_f`，使模型空间尺寸与 LOD0 一致（均为 1x1）。
-/// 世界空间放大由 `Transform::scale` 通过 GPU 矩阵完成。
-fn face_quad_lod(
-    x: usize,
-    y: usize,
-    z: usize,
-    face: FaceLod,
-    uv: (f32, f32, f32, f32),
-    step_f: f32,
-) -> ([[f32; 3]; 4], [[f32; 2]; 4], [f32; 3]) {
-    let x_f = x as f32 / step_f;
-    let y_f = y as f32 / step_f;
-    let z_f = z as f32 / step_f;
-
-    let (verts, normal) = match face {
-        FaceLod::Top => (
-            [
-                [x_f, y_f + 1.0, z_f],
-                [x_f + 1.0, y_f + 1.0, z_f],
-                [x_f + 1.0, y_f + 1.0, z_f + 1.0],
-                [x_f, y_f + 1.0, z_f + 1.0],
-            ],
-            [0.0, 1.0, 0.0],
-        ),
-        FaceLod::Bottom => (
-            [
-                [x_f, y_f, z_f + 1.0],
-                [x_f + 1.0, y_f, z_f + 1.0],
-                [x_f + 1.0, y_f, z_f],
-                [x_f, y_f, z_f],
-            ],
-            [0.0, -1.0, 0.0],
-        ),
-        FaceLod::Right => (
-            [
-                [x_f + 1.0, y_f, z_f],
-                [x_f + 1.0, y_f, z_f + 1.0],
-                [x_f + 1.0, y_f + 1.0, z_f + 1.0],
-                [x_f + 1.0, y_f + 1.0, z_f],
-            ],
-            [1.0, 0.0, 0.0],
-        ),
-        FaceLod::Left => (
-            [
-                [x_f, y_f, z_f + 1.0],
-                [x_f, y_f, z_f],
-                [x_f, y_f + 1.0, z_f],
-                [x_f, y_f + 1.0, z_f + 1.0],
-            ],
-            [-1.0, 0.0, 0.0],
-        ),
-        FaceLod::Front => (
-            [
-                [x_f + 1.0, y_f, z_f + 1.0],
-                [x_f, y_f, z_f + 1.0],
-                [x_f, y_f + 1.0, z_f + 1.0],
-                [x_f + 1.0, y_f + 1.0, z_f + 1.0],
-            ],
-            [0.0, 0.0, 1.0],
-        ),
-        FaceLod::Back => (
-            [
-                [x_f, y_f, z_f],
-                [x_f + 1.0, y_f, z_f],
-                [x_f + 1.0, y_f + 1.0, z_f],
-                [x_f, y_f + 1.0, z_f],
-            ],
-            [0.0, 0.0, -1.0],
-        ),
-    };
-
-    let u_min = uv.0;
-    let u_max = uv.1;
-    let v_min = uv.2;
-    let v_max = uv.3;
-
-    let face_uvs = [
-        [u_min, v_max],
-        [u_max, v_max],
-        [u_max, v_min],
-        [u_min, v_min],
-    ];
-
-    (verts, face_uvs, normal)
-}

@@ -8,8 +8,8 @@
 //! data0 (u32):
 //!   bits 0-9:   x (10 bits, 0-1023)
 //!   bits 10-19: y (10 bits, 0-1023)
-//!   bits 20-29: z (10 bits, 0-1023)
-//!   bits 30-31: 法线方向 (2 bits, 6 个方向)
+//!   bits 20-28: z (9 bits, 0-511)
+//!   bits 29-31: 法线方向 (3 bits, 6 个方向)
 //!
 //! data1 (u32):
 //!   bits 0-7:   u (8 bits, 0-255)
@@ -99,8 +99,8 @@ impl CompactVertex {
     ) -> Self {
         let data0 = (x as u32 & 0x3FF)
             | ((y as u32 & 0x3FF) << 10)
-            | ((z as u32 & 0x3FF) << 20)
-            | ((normal as u32 & 0x3) << 30);
+            | ((z as u32 & 0x1FF) << 20)
+            | ((normal as u32 & 0x7) << 29);
 
         let data1 = (u as u32)
             | ((v as u32) << 8)
@@ -146,19 +146,21 @@ impl CompactVertex {
     /// 获取 Z 坐标
     #[inline]
     pub fn z(&self) -> u16 {
-        ((self.data0 >> 20) & 0x3FF) as u16
+        ((self.data0 >> 20) & 0x1FF) as u16
     }
 
     /// 获取法线方向
     #[inline]
     pub fn normal_direction(&self) -> NormalDirection {
-        let dir = (self.data0 >> 30) & 0x3;
+        let dir = (self.data0 >> 29) & 0x7;
         match dir {
             0 => NormalDirection::Right,
             1 => NormalDirection::Left,
             2 => NormalDirection::Up,
             3 => NormalDirection::Down,
-            _ => unreachable!(),
+            4 => NormalDirection::Front,
+            5 => NormalDirection::Back,
+            _ => NormalDirection::Right, // 安全回退
         }
     }
 
@@ -281,6 +283,19 @@ mod tests {
         assert_eq!(vertex.z(), 300);
         assert_eq!(vertex.normal_direction(), NormalDirection::Up);
         assert_eq!(vertex.model_id(), 42);
+
+        // 验证所有 6 个法线方向都能正确编码/解码
+        for dir in [
+            NormalDirection::Right,
+            NormalDirection::Left,
+            NormalDirection::Up,
+            NormalDirection::Down,
+            NormalDirection::Front,
+            NormalDirection::Back,
+        ] {
+            let v = CompactVertex::new(10, 20, 30, dir, 0, 0, 0);
+            assert_eq!(v.normal_direction(), dir, "Failed for {:?}", dir);
+        }
     }
 
     #[test]
@@ -326,5 +341,11 @@ mod tests {
         assert!((pos[1] - 200.0 / 32.0).abs() < 0.01);
         assert!((pos[2] - 300.0 / 32.0).abs() < 0.01);
         assert_eq!(norm, [0.0, 1.0, 0.0]);
+
+        // 验证 Front/Back 方向的往返正确性
+        let front = CompactVertex::new(50, 50, 50, NormalDirection::Front, 0, 0, 0);
+        assert_eq!(front.normal(), [0.0, 0.0, 1.0]);
+        let back = CompactVertex::new(50, 50, 50, NormalDirection::Back, 0, 0, 0);
+        assert_eq!(back.normal(), [0.0, 0.0, -1.0]);
     }
 }

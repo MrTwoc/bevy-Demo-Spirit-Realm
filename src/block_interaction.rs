@@ -17,7 +17,7 @@
 use bevy::prelude::*;
 use std::sync::Arc;
 
-use crate::chunk::{BlockId, BlockPos, CHUNK_SIZE, ChunkComponent, ChunkCoord, ChunkData};
+use crate::chunk::{BlockId, BlockPos, CHUNK_SIZE, ChunkComponent, ChunkCoord, ChunkData, AIR, GRASS};
 use crate::chunk_changes::{DataChangedFlag, NeighborChangedFlag};
 use crate::chunk_dirty::{ChunkAtlasHandle, ChunkCoordComponent, ChunkMeshHandle, DirtyChunk};
 use crate::chunk_manager::{
@@ -26,61 +26,38 @@ use crate::chunk_manager::{
 use crate::raycast::RayHitState;
 
 /// The block type to place when right-clicking.
-/// Default: grass (1). Can be changed later with a hotbar system.
-const PLACE_BLOCK_ID: BlockId = 1;
+/// Default: grass. Can be changed later with a hotbar system.
+const PLACE_BLOCK_ID: BlockId = GRASS;
 
-/// 计算方块修改在区块边界时需要标记脏的邻居坐标列表。
-fn boundary_neighbor_coords(
+/// 遍历方块修改在区块边界时需要标记脏的邻居坐标。
+///
+/// 使用闭包回调替代 Vec 分配，避免每次方块交互时的堆分配。
+/// 最多产生 6 个邻居坐标（当方块位于区块角落时）。
+fn for_boundary_neighbors(
     coord: ChunkCoord,
     local_pos: (usize, usize, usize),
-) -> Vec<ChunkCoord> {
+    mut f: impl FnMut(ChunkCoord),
+) {
     let (lx, ly, lz) = local_pos;
-    let mut neighbors = Vec::new();
 
     if lx == 0 {
-        neighbors.push(ChunkCoord {
-            cx: coord.cx - 1,
-            cy: coord.cy,
-            cz: coord.cz,
-        });
+        f(ChunkCoord { cx: coord.cx - 1, cy: coord.cy, cz: coord.cz });
     }
     if lx == CHUNK_SIZE - 1 {
-        neighbors.push(ChunkCoord {
-            cx: coord.cx + 1,
-            cy: coord.cy,
-            cz: coord.cz,
-        });
+        f(ChunkCoord { cx: coord.cx + 1, cy: coord.cy, cz: coord.cz });
     }
     if ly == 0 {
-        neighbors.push(ChunkCoord {
-            cx: coord.cx,
-            cy: coord.cy - 1,
-            cz: coord.cz,
-        });
+        f(ChunkCoord { cx: coord.cx, cy: coord.cy - 1, cz: coord.cz });
     }
     if ly == CHUNK_SIZE - 1 {
-        neighbors.push(ChunkCoord {
-            cx: coord.cx,
-            cy: coord.cy + 1,
-            cz: coord.cz,
-        });
+        f(ChunkCoord { cx: coord.cx, cy: coord.cy + 1, cz: coord.cz });
     }
     if lz == 0 {
-        neighbors.push(ChunkCoord {
-            cx: coord.cx,
-            cy: coord.cy,
-            cz: coord.cz - 1,
-        });
+        f(ChunkCoord { cx: coord.cx, cy: coord.cy, cz: coord.cz - 1 });
     }
     if lz == CHUNK_SIZE - 1 {
-        neighbors.push(ChunkCoord {
-            cx: coord.cx,
-            cy: coord.cy,
-            cz: coord.cz + 1,
-        });
+        f(ChunkCoord { cx: coord.cx, cy: coord.cy, cz: coord.cz + 1 });
     }
-
-    neighbors
 }
 
 /// Handles left-click (destroy) and right-click (place) block interactions.
@@ -158,7 +135,7 @@ fn destroy_block(
     if let Some(entry) = loaded.entries.get_mut(&coord) {
         // Set to air in LoadedChunks copy
         // Arc::make_mut 使 entry.data 唯一化（若引用计数 >1 则按需克隆）
-        Arc::make_mut(&mut entry.data).set(lx, ly, lz, 0);
+        Arc::make_mut(&mut entry.data).set(lx, ly, lz, AIR);
 
         // 同步更新 ECS ChunkComponent：用 Arc::clone 替换引用（O(1)）
         // 此时 entry.data 引用计数为 1，克隆仅增加计数，无深拷贝
@@ -174,13 +151,13 @@ fn destroy_block(
     }
 
     // 标记边界邻居为脏（附带邻居变更标记）
-    for nc in boundary_neighbor_coords(coord, (lx, ly, lz)) {
+    for_boundary_neighbors(coord, (lx, ly, lz), |nc| {
         if let Some(neighbor_entry) = loaded.entries.get(&nc) {
             commands
                 .entity(neighbor_entry.entity)
                 .insert((DirtyChunk, NeighborChangedFlag));
         }
-    }
+    });
 }
 
 /// Places a block adjacent to the hit face.
@@ -218,7 +195,7 @@ fn place_block(
     if let Some(entry) = loaded.entries.get_mut(&coord) {
         // Only place if the target position is currently air
         // entry.data.get() 通过 Arc 的 Deref 自动解引用到 &ChunkData
-        if entry.data.get(lx, ly, lz) == 0 {
+        if entry.data.get(lx, ly, lz) == AIR {
             // 更新 LoadedChunks 副本（Arc::make_mut 处理引用计数）
             Arc::make_mut(&mut entry.data).set(lx, ly, lz, PLACE_BLOCK_ID);
 
@@ -236,7 +213,7 @@ fn place_block(
         }
     } else {
         // 目标区块不存在（被全空气跳过优化跳过），按需创建
-        let mut chunk = ChunkData::filled(0);
+        let mut chunk = ChunkData::filled(AIR);
         chunk.set(lx, ly, lz, PLACE_BLOCK_ID);
 
         // 使用 Arc 共享数据：实体组件用 ChunkComponent(Arc::clone)，Entry 用所有权转移
@@ -283,11 +260,11 @@ fn place_block(
     }
 
     // 标记边界邻居为脏（附带邻居变更标记）
-    for nc in boundary_neighbor_coords(coord, (lx, ly, lz)) {
+    for_boundary_neighbors(coord, (lx, ly, lz), |nc| {
         if let Some(neighbor_entry) = loaded.entries.get(&nc) {
             commands
                 .entity(neighbor_entry.entity)
                 .insert((DirtyChunk, NeighborChangedFlag));
         }
-    }
+    });
 }

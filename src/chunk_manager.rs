@@ -45,6 +45,7 @@ use crate::chunk_changes::{LodChangedFlag, NeighborChangedFlag};
 use crate::chunk_dirty::{
     ChunkAtlasHandle, ChunkCoordComponent, ChunkMeshHandle, DirtyChunk, is_air_chunk,
 };
+use crate::face::NEIGHBOR_OFFSETS;
 use crate::hud::CachedTriangleCount;
 use crate::lod::{LodLevel, LodManager};
 use crate::player::Player;
@@ -175,16 +176,6 @@ pub struct SharedEmptyMesh {
     pub handle: Handle<Mesh>,
 }
 
-/// 6 个方向的偏移量
-const NEIGHBOR_OFFSETS: [(i32, i32, i32); 6] = [
-    (1, 0, 0),
-    (-1, 0, 0),
-    (0, 1, 0),
-    (0, -1, 0),
-    (0, 0, 1),
-    (0, 0, -1),
-];
-
 /// 分帧加载队列构建状态
 struct LoadQueueBuildState {
     center: ChunkCoord,
@@ -241,7 +232,7 @@ fn get_offset_table(radius: i32) -> &'static [OffsetEntry] {
     })
 }
 
-fn collect_neighbors(coord: ChunkCoord, loaded: &LoadedChunks) -> ChunkNeighbors {
+pub fn collect_neighbors(coord: ChunkCoord, loaded: &LoadedChunks) -> ChunkNeighbors {
     let mut neighbors = ChunkNeighbors::empty();
 
     for (i, (dx, dy, dz)) in NEIGHBOR_OFFSETS.iter().enumerate() {

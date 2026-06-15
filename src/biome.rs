@@ -23,26 +23,11 @@
 
 use crate::terrain_noise::{NoiseSample, SEA_LEVEL, TerrainType};
 
-// ══════════════════════════════════════════════════════════════════════════════
-// 方块 ID
-// ══════════════════════════════════════════════════════════════════════════════
-
-// 现有方块
-pub const AIR: u8 = 0;
-pub const GRASS: u8 = 1;
-pub const STONE: u8 = 2;
-pub const DIRT: u8 = 3;
-pub const SAND: u8 = 4;
-pub const WATER: u8 = 5;
-pub const TREE_TRUNK: u8 = 6;
-pub const TREE_LEAVES: u8 = 7;
-
-// S2 新增方块
-pub const SANDSTONE: u8 = 8;   // 沙石（沙漠地下层）
-pub const SNOW_GRASS: u8 = 9;  // 雪地草（寒冷群系地表）
-pub const GRAVEL: u8 = 10;     // 砂砾（河床/山脚）
-pub const ROCK: u8 = 11;       // 岩石变体（山脉裸露）
-pub const MUD: u8 = 12;        // 泥土变体（河岸/湿地）
+// Re-export 方块 ID 常量（规范定义在 types.rs）
+pub use crate::types::{
+    AIR, GRASS, STONE, DIRT, SAND, WATER,
+    TREE_TRUNK, TREE_LEAVES, SANDSTONE, SNOW_GRASS, GRAVEL, ROCK, MUD,
+};
 
 // ══════════════════════════════════════════════════════════════════════════════
 // BiomeType

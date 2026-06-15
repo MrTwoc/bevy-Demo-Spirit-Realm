@@ -17,9 +17,9 @@ use bevy::prelude::*;
 use std::sync::Arc;
 
 use crate::async_mesh::{AsyncMeshManager, MeshTask};
-use crate::chunk::{ChunkComponent, ChunkCoord, ChunkData, ChunkNeighbors};
+use crate::chunk::{ChunkComponent, ChunkCoord, ChunkData, AIR};
 use crate::chunk_changes::clear_change_markers;
-use crate::chunk_manager::LoadedChunks;
+use crate::chunk_manager::{LoadedChunks, collect_neighbors};
 use crate::hud::CachedTriangleCount;
 use crate::lod::LodManager;
 use crate::resource_pack::VoxelMaterial;
@@ -52,41 +52,9 @@ pub fn mark_chunk_dirty(commands: &mut Commands, entity: Entity) {
 pub fn is_air_chunk(chunk: &ChunkData) -> bool {
     match chunk {
         ChunkData::Empty => true,
-        ChunkData::Uniform(id) => *id == 0,
+        ChunkData::Uniform(id) => *id == AIR,
         ChunkData::Paletted(data) => data.is_empty(),
     }
-}
-
-/// 6 个方向的偏移量，与 chunk.rs 中 FACES 顺序一致：[+X, -X, +Y, -Y, +Z, -Z]
-const NEIGHBOR_OFFSETS: [(i32, i32, i32); 6] = [
-    (1, 0, 0),  // +X (Right)
-    (-1, 0, 0), // -X (Left)
-    (0, 1, 0),  // +Y (Top)
-    (0, -1, 0), // -Y (Bottom)
-    (0, 0, 1),  // +Z (Front)
-    (0, 0, -1), // -Z (Back)
-];
-
-/// 从已加载区块中收集指定坐标的 6 个邻居数据。
-///
-/// 使用 `Arc::clone(&entry.data)` 复制 `Arc<ChunkData>` 引用（O(1)），
-/// 避免展开为 32KB 的 `Vec<BlockId>` 和堆内存分配。
-fn collect_neighbors(coord: ChunkCoord, loaded: &LoadedChunks) -> ChunkNeighbors {
-    let mut neighbors = ChunkNeighbors::empty();
-
-    for (i, (dx, dy, dz)) in NEIGHBOR_OFFSETS.iter().enumerate() {
-        let neighbor_coord = ChunkCoord {
-            cx: coord.cx + dx,
-            cy: coord.cy + dy,
-            cz: coord.cz + dz,
-        };
-
-        if let Some(entry) = loaded.entries.get(&neighbor_coord) {
-            neighbors.neighbor_data[i] = Some(Arc::clone(&entry.data));
-        }
-    }
-
-    neighbors
 }
 
 /// 检测脏块并提交异步网格重建任务。

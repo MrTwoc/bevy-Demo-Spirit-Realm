@@ -54,6 +54,20 @@
 - 性能相关 PR 需包含量化收益分析
 - 不执行 cargo check，由用户手动验证
 
+### 模块重构（2026-06-15）
+- 新增 `face.rs`：统一 Face 枚举、FACES 常量、NEIGHBOR_OFFSETS、face_quad、face_quad_lod
+- 新增 `types.rs`：CHUNK_SIZE、CHUNK_VOLUME、BlockId、ChunkCoord、BlockPos
+- chunk.rs re-export types.rs 和 face.rs 的核心类型，保持外部模块兼容
+- 已删除死代码：generate_chunk_mesh、spawn_chunk_entity、deprecated to_vec()、FaceAsync/FaceLod 重复枚举、is_face_visible_async、LodManager::update/chunk_distance/min_threshold
+- CompactVertex 法线编码从 2 bit 修复为 3 bit（z 从 10 bit 缩减到 9 bit）
+- 新增 `terrain_gen.rs`：从 chunk.rs 提取地形生成函数，chunk.rs 从 ~910 行缩减到 ~445 行
+- boundary_neighbor_coords 改为 for_boundary_neighbors（闭包回调，零分配）
+- collect_neighbors 统一到 chunk_manager.rs（pub），chunk_dirty.rs 删除重复
+- fill_terrain 洞穴缓存 HashMap 复用（每列 clear()，消除 1024 次分配）
+- 方块 ID 常量（AIR/WATER/GRASS 等）规范定义在 types.rs，biome.rs 和 chunk.rs re-export
+- 全代码库消除 20+ 处硬编码魔法数字，统一使用命名常量
+- 删除死文件 fps_overlay.rs、死方法 ChunkData::flatten()
+
 ### 地形生成
 - 公式：`surface = base + (2^coarse - 1) * amplitude + detail * detail_amp`（指数+细节层）
 - 核心函数：`compute_surface_height()` in chunk.rs，被 fill_terrain / get_surface_height 共享

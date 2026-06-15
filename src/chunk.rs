@@ -5,9 +5,7 @@
 //! - Uniform: 2 字节（全同一种方块）
 //! - Paletted: ~0.5-32KB（调色板压缩 + 位打包，32³=32768体素）
 
-use bevy::{
-    asset::RenderAssetUsages, mesh::Indices, prelude::*, render::render_resource::PrimitiveTopology,
-};
+use bevy::prelude::*;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::Arc;
@@ -21,17 +19,10 @@ pub use crate::terrain_noise::{
 // 向后兼容别名：tree_gen 等模块仍在使用 WATER_LEVEL
 pub const WATER_LEVEL: i32 = SEA_LEVEL;
 
-use crate::biome;
-use crate::chunk_dirty::ChunkMeshHandle;
-use crate::resource_pack::{ResourcePackManager, VoxelMaterial};
-
-/// Size of one dimension of a chunk (32³ blocks per chunk).
-pub const CHUNK_SIZE: usize = 32;
-/// Total number of voxels in a chunk (32³ = 32768).
-const CHUNK_VOLUME: usize = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
-
-/// A single block type identifier.
-pub type BlockId = u8;
+// 从 types.rs 和 face.rs re-export 核心类型，保持外部模块兼容
+pub use crate::types::{CHUNK_SIZE, CHUNK_VOLUME, BlockId, ChunkCoord, BlockPos};
+pub use crate::types::{AIR, GRASS, STONE, DIRT, SAND, WATER};
+pub use crate::face::{Face, FACES};
 
 /// 世界类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -69,7 +60,7 @@ pub fn is_block_solid(block_id: BlockId) -> bool {
 #[inline]
 pub fn should_cull_face(current_id: BlockId, neighbor_id: BlockId) -> bool {
     // 相同类型的非空气方块：内部面完全剔除（水体相邻面不再渲染）
-    if neighbor_id == current_id && neighbor_id != 0 {
+    if neighbor_id == current_id && neighbor_id != AIR {
         return true;
     }
     // 实体方块完全遮挡相邻面
@@ -159,9 +150,9 @@ pub struct PalettedChunkData {
 
 impl PalettedChunkData {
     pub fn new() -> Self {
-        let palette = vec![0];
+        let palette = vec![AIR];
         let mut reverse_palette = HashMap::new();
-        reverse_palette.insert(0, 0);
+        reverse_palette.insert(AIR, 0);
 
         let bits_per_index = bits_for_palette(palette.len());
 
@@ -203,7 +194,7 @@ impl PalettedChunkData {
 
     pub fn get(&self, x: usize, y: usize, z: usize) -> BlockId {
         if x >= CHUNK_SIZE || y >= CHUNK_SIZE || z >= CHUNK_SIZE {
-            return 0;
+            return AIR;
         }
         let idx = z * CHUNK_SIZE * CHUNK_SIZE + y * CHUNK_SIZE + x;
         let palette_index = read_packed(&self.packed, idx, self.bits_per_index) as usize;
@@ -261,10 +252,10 @@ impl PalettedChunkData {
     }
 
     pub fn is_empty(&self) -> bool {
-        if self.palette.len() == 1 && self.palette[0] == 0 {
+        if self.palette.len() == 1 && self.palette[0] == AIR {
             return true;
         }
-        if let Some(&air_index) = self.reverse_palette.get(&0) {
+        if let Some(&air_index) = self.reverse_palette.get(&AIR) {
             for i in 0..CHUNK_VOLUME {
                 if read_packed(&self.packed, i, self.bits_per_index) != air_index {
                     return false;
@@ -289,46 +280,6 @@ impl PalettedChunkData {
     }
 }
 
-/// Face direction on a block.
-#[derive(Clone, Copy)]
-pub enum Face {
-    Top,
-    Bottom,
-    Right,
-    Left,
-    Front,
-    Back,
-}
-
-impl Face {
-    pub fn to_face_name(&self) -> &'static str {
-        match self {
-            Face::Top => "top",
-            Face::Bottom => "bottom",
-            _ => "side",
-        }
-    }
-
-    pub const fn face_index(&self) -> usize {
-        match self {
-            Face::Top => 0,
-            Face::Bottom => 1,
-            _ => 2,
-        }
-    }
-}
-
-/// All 6 faces of a block in order: +X, -X, +Y, -Y, +Z, -Z
-const FACES: [(Face, [i32; 3]); 6] = [
-    (Face::Right, [1, 0, 0]),
-    (Face::Left, [-1, 0, 0]),
-    (Face::Top, [0, 1, 0]),
-    (Face::Bottom, [0, -1, 0]),
-    (Face::Front, [0, 0, 1]),
-    (Face::Back, [0, 0, -1]),
-];
-
-const FACE_UV_INDICES: [usize; 6] = [2, 2, 0, 1, 2, 2];
 
 /// 6 个方向的邻居区块数据，用于跨区块面剔除。
 ///
@@ -375,13 +326,9 @@ impl ChunkData {
         Self::Uniform(block_id)
     }
 
-    fn flatten(x: usize, y: usize, z: usize) -> usize {
-        z * CHUNK_SIZE * CHUNK_SIZE + y * CHUNK_SIZE + x
-    }
-
     pub fn get(&self, x: usize, y: usize, z: usize) -> BlockId {
         match self {
-            ChunkData::Empty => 0,
+            ChunkData::Empty => AIR,
             ChunkData::Uniform(id) => *id,
             ChunkData::Paletted(data) => data.get(x, y, z),
         }
@@ -399,7 +346,7 @@ impl ChunkData {
             ChunkData::Uniform(current_id) => {
                 if *current_id != id {
                     let mut data = PalettedChunkData::new();
-                    if *current_id != 0 {
+                    if *current_id != AIR {
                         let palette_index = data.add_or_get_palette_index(*current_id);
                         data.fill_all(palette_index);
                     }
@@ -410,15 +357,6 @@ impl ChunkData {
             ChunkData::Paletted(data) => {
                 data.set(x, y, z, id);
             }
-        }
-    }
-
-    #[deprecated = "展开 32KB ChunkData 为 Vec<BlockId>，纯性能损耗。仅在废弃的 GPU meshing 路径中使用。"]
-    pub fn to_vec(&self) -> Vec<BlockId> {
-        match self {
-            ChunkData::Empty => vec![0; CHUNK_VOLUME],
-            ChunkData::Uniform(id) => vec![*id; CHUNK_VOLUME],
-            ChunkData::Paletted(data) => data.to_blocks(),
         }
     }
 
@@ -499,412 +437,6 @@ impl std::ops::Deref for ChunkComponent {
     }
 }
 
-/// Generates a face-culled mesh for the chunk.
-pub fn generate_chunk_mesh(
-    chunk: &Chunk,
-    resource_pack: &ResourcePackManager,
-    neighbors: &ChunkNeighbors,
-) -> (Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<[f32; 3]>, Vec<u32>) {
-    if matches!(chunk, ChunkData::Empty | ChunkData::Uniform(0)) {
-        return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-    }
+// 地形生成函数已移至 terrain_gen.rs，通过 re-export 保持外部模块兼容
+pub use crate::terrain_gen::{fill_terrain, fill_flat_terrain, fill_menger_sponge, get_surface_height};
 
-    let mut positions = Vec::with_capacity(48000);
-    let mut uvs = Vec::with_capacity(48000);
-    let mut normals = Vec::with_capacity(48000);
-    let mut indices = Vec::with_capacity(72000);
-
-    for z in 0..CHUNK_SIZE {
-        for y in 0..CHUNK_SIZE {
-            for x in 0..CHUNK_SIZE {
-                let block_id = chunk.get(x, y, z);
-                if block_id == 0 {
-                    continue;
-                }
-
-                for (face_index, (face, offset)) in FACES.iter().cloned().enumerate() {
-                    if !chunk.is_face_visible(x, y, z, &offset, face_index, neighbors) {
-                        continue;
-                    }
-
-                    let base_index = positions.len() as u32;
-                    let uv_idx = FACE_UV_INDICES[face_index];
-
-                    let uv = resource_pack.get_block_uv_by_index(block_id, uv_idx);
-
-                    let (face_verts, face_uvs, face_normal) = face_quad(x, y, z, face, uv);
-                    positions.extend(face_verts);
-                    uvs.extend(face_uvs);
-                    normals.extend([face_normal; 4]);
-                    indices.extend([
-                        base_index,
-                        base_index + 2,
-                        base_index + 1,
-                        base_index,
-                        base_index + 3,
-                        base_index + 2,
-                    ]);
-                }
-            }
-        }
-    }
-
-    (positions, uvs, normals, indices)
-}
-
-/// Returns the 4 vertices, UVs, and normal for a single face.
-fn face_quad(
-    x: usize,
-    y: usize,
-    z: usize,
-    face: Face,
-    uv: (f32, f32, f32, f32),
-) -> ([[f32; 3]; 4], [[f32; 2]; 4], [f32; 3]) {
-    let (verts, normal) = match face {
-        Face::Top => (
-            [
-                [x as f32, y as f32 + 1.0, z as f32],
-                [x as f32 + 1.0, y as f32 + 1.0, z as f32],
-                [x as f32 + 1.0, y as f32 + 1.0, z as f32 + 1.0],
-                [x as f32, y as f32 + 1.0, z as f32 + 1.0],
-            ],
-            [0.0, 1.0, 0.0],
-        ),
-        Face::Bottom => (
-            [
-                [x as f32, y as f32, z as f32 + 1.0],
-                [x as f32 + 1.0, y as f32, z as f32 + 1.0],
-                [x as f32 + 1.0, y as f32, z as f32],
-                [x as f32, y as f32, z as f32],
-            ],
-            [0.0, -1.0, 0.0],
-        ),
-        Face::Right => (
-            [
-                [x as f32 + 1.0, y as f32, z as f32],
-                [x as f32 + 1.0, y as f32, z as f32 + 1.0],
-                [x as f32 + 1.0, y as f32 + 1.0, z as f32 + 1.0],
-                [x as f32 + 1.0, y as f32 + 1.0, z as f32],
-            ],
-            [1.0, 0.0, 0.0],
-        ),
-        Face::Left => (
-            [
-                [x as f32, y as f32, z as f32 + 1.0],
-                [x as f32, y as f32, z as f32],
-                [x as f32, y as f32 + 1.0, z as f32],
-                [x as f32, y as f32 + 1.0, z as f32 + 1.0],
-            ],
-            [-1.0, 0.0, 0.0],
-        ),
-        Face::Front => (
-            [
-                [x as f32 + 1.0, y as f32, z as f32 + 1.0],
-                [x as f32, y as f32, z as f32 + 1.0],
-                [x as f32, y as f32 + 1.0, z as f32 + 1.0],
-                [x as f32 + 1.0, y as f32 + 1.0, z as f32 + 1.0],
-            ],
-            [0.0, 0.0, 1.0],
-        ),
-        Face::Back => (
-            [
-                [x as f32, y as f32, z as f32],
-                [x as f32 + 1.0, y as f32, z as f32],
-                [x as f32 + 1.0, y as f32 + 1.0, z as f32],
-                [x as f32, y as f32 + 1.0, z as f32],
-            ],
-            [0.0, 0.0, -1.0],
-        ),
-    };
-
-    let u_min = uv.0;
-    let u_max = uv.1;
-    let v_min = uv.2;
-    let v_max = uv.3;
-
-    let face_uvs = [
-        [u_min, v_max],
-        [u_max, v_max],
-        [u_max, v_min],
-        [u_min, v_min],
-    ];
-
-    (verts, face_uvs, normal)
-}
-
-/// Chunk coordinates in chunk space.
-#[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct ChunkCoord {
-    pub cx: i32,
-    pub cy: i32,
-    pub cz: i32,
-}
-
-impl ChunkCoord {
-    pub fn from_world(world_pos: Vec3) -> Self {
-        Self {
-            cx: (world_pos.x / CHUNK_SIZE as f32).floor() as i32,
-            cy: (world_pos.y / CHUNK_SIZE as f32).floor() as i32,
-            cz: (world_pos.z / CHUNK_SIZE as f32).floor() as i32,
-        }
-    }
-
-    pub fn to_world_origin(self) -> Vec3 {
-        Vec3::new(
-            self.cx as f32 * CHUNK_SIZE as f32,
-            self.cy as f32 * CHUNK_SIZE as f32,
-            self.cz as f32 * CHUNK_SIZE as f32,
-        )
-    }
-}
-
-/// Block position in world space.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct BlockPos {
-    pub x: i32,
-    pub y: i32,
-    pub z: i32,
-}
-
-impl BlockPos {
-    pub fn from_world(world_pos: Vec3) -> Self {
-        Self {
-            x: world_pos.x.floor() as i32,
-            y: world_pos.y.floor() as i32,
-            z: world_pos.z.floor() as i32,
-        }
-    }
-
-    pub fn to_chunk_coord(self) -> ChunkCoord {
-        ChunkCoord {
-            cx: self.x.div_euclid(CHUNK_SIZE as i32),
-            cy: self.y.div_euclid(CHUNK_SIZE as i32),
-            cz: self.z.div_euclid(CHUNK_SIZE as i32),
-        }
-    }
-
-    pub fn to_local(self) -> (usize, usize, usize) {
-        (
-            self.x.rem_euclid(CHUNK_SIZE as i32) as usize,
-            self.y.rem_euclid(CHUNK_SIZE as i32) as usize,
-            self.z.rem_euclid(CHUNK_SIZE as i32) as usize,
-        )
-    }
-}
-
-// ============================================================================
-// Terrain generation — 多层噪声系统（常量和函数由 terrain_noise.rs 提供）
-// ============================================================================
-
-/// 获取世界坐标 (world_x, world_z) 处的**地表高度**。
-///
-/// 使用 5 层噪声系统（`terrain_noise::compute_surface_height`）计算，
-/// 确保在任何位置（跨越区块边界）计算的地表高度一致。
-///
-/// 此函数是确定性的——相同的 (world_x, world_z) 总是返回相同的高度值。
-/// 这使得树木生成可以在不依赖邻近区块数据的情况下正确计算树木位置。
-pub fn get_surface_height(world_x: f64, world_z: f64, world_type: WorldType) -> i32 {
-    match world_type {
-        WorldType::Flat => TERRAIN_BASE_HEIGHT,
-        WorldType::Void | WorldType::MengerSponge => i32::MIN,
-        WorldType::Noise => compute_surface_height(world_x, world_z),
-    }
-}
-
-/// 使用 5 层噪声系统 + 生物群系填充区块地形。
-///
-/// # 算法
-///
-/// 1. 采样 5 个噪声层（大陆性、侵蚀、山脊、温度、植被）
-/// 2. 通过 `NoiseSample::compute_base_height()` 计算地表高度
-/// 3. 通过 `get_biome()` 判定生物群系
-/// 4. 根据群系选择地表/地下方块
-/// 5. 海平面以下的地表凹陷处填充水(5)
-pub fn fill_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
-    let noise = get_terrain_noise();
-
-    for z in 0..CHUNK_SIZE {
-        for x in 0..CHUNK_SIZE {
-            let world_x = coord.cx as f64 * CHUNK_SIZE as f64 + x as f64;
-            let world_z = coord.cz as f64 * CHUNK_SIZE as f64 + z as f64;
-
-            let sample = noise.sample_all(world_x, world_z);
-            let surface_height = sample.compute_base_height() as i32;
-            let biome = biome::get_biome(&sample, surface_height);
-
-            // ── 洞穴检测缓存（2×2×2 空间降采样）──
-            // is_cave() 每次调用执行 2 次 3D Simplex 噪声采样，是本函数最大热点。
-            // 将邻近体素（2×2×2 格内）的洞穴查询结果缓存，减少约 8 倍的噪声调用。
-            // 深度因子（depth_factor）在 2 格范围内变化约 0.0086，影响可忽略。
-            const CAVE_CACHE_GRID: i32 = 2;
-            let mut cave_cache: std::collections::HashMap<(i32, i32, i32), bool> =
-                std::collections::HashMap::with_capacity(32);
-
-            for y in 0..CHUNK_SIZE {
-                let world_y = coord.cy as i32 * CHUNK_SIZE as i32 + y as i32;
-
-                if world_y > TERRAIN_MAX_Y || world_y < TERRAIN_MIN_Y {
-                    continue;
-                }
-
-                // ── 地表以上 ──
-                if world_y > surface_height {
-                    if world_y <= SEA_LEVEL && surface_height < SEA_LEVEL {
-                        chunk.set(x, y, z, 5); // water
-                    }
-                    continue;
-                }
-
-                // ── 地表及以下 ──
-                let depth = surface_height - world_y;
-
-                // 洞穴检测（地表以下 5 格以下），使用 2×2×2 缓存降采样
-                let sx = ((world_x as i32) / CAVE_CACHE_GRID) * CAVE_CACHE_GRID + CAVE_CACHE_GRID / 2;
-                let sy = (world_y / CAVE_CACHE_GRID) * CAVE_CACHE_GRID + CAVE_CACHE_GRID / 2;
-                let sz = ((world_z as i32) / CAVE_CACHE_GRID) * CAVE_CACHE_GRID + CAVE_CACHE_GRID / 2;
-                let cache_key = (sx, sy, sz);
-
-                let is_cave_result = *cave_cache.entry(cache_key).or_insert_with(|| {
-                    noise.is_cave(world_x, world_y as f64, world_z, depth)
-                });
-
-                if depth > 5 && is_cave_result {
-                    continue; // 挖空
-                }
-
-                let block_id = if depth == 0 {
-                    biome.surface_block(world_y)
-                } else {
-                    biome.subsurface_block(depth)
-                };
-                chunk.set(x, y, z, block_id);
-            }
-        }
-    }
-}
-
-/// 填充平台世界地形（超平坦，只有草方块和泥土）
-///
-/// 表面 Y=`TERRAIN_BASE_HEIGHT`(80) 为草方块(grass=1)，
-/// 下方 `DIRT_LAYER_DEPTH`(4) 层为泥土(dirt=3)，
-/// 不生成石头和水（与噪声世界截然不同）。
-pub fn fill_flat_terrain(chunk: &mut Chunk, coord: &ChunkCoord) {
-    for z in 0..CHUNK_SIZE {
-        for x in 0..CHUNK_SIZE {
-            for y in 0..CHUNK_SIZE {
-                let world_y = coord.cy as i32 * CHUNK_SIZE as i32 + y as i32;
-
-                if world_y == TERRAIN_BASE_HEIGHT {
-                    chunk.set(x, y, z, 1); // grass
-                } else if world_y > TERRAIN_BASE_HEIGHT - DIRT_LAYER_DEPTH
-                    && world_y < TERRAIN_BASE_HEIGHT
-                {
-                    chunk.set(x, y, z, 3); // dirt
-                }
-                // else: air（默认就是 0）
-            }
-        }
-    }
-}
-
-/// 使用 Menger Sponge（门格海绵）分形算法填充区块。
-///
-/// 门格海绵规则：对于体素的世界坐标 (wx, wy, wz)，在每个递归层级上，
-/// 将坐标除以 3 并检查余数：如果至少有 2 个坐标的余数为 1，则该体素为空洞；
-/// 否则保持为实体。
-///
-/// 使用 4 次递归迭代，实体方块为石头(2)。海绵中心位于世界原点。
-pub fn fill_menger_sponge(chunk: &mut Chunk, coord: &ChunkCoord) {
-    const SPONGE_ITERATIONS: u32 = 4;
-    const AIR: u8 = 0;
-    const STONE: u8 = 2;
-
-    for z in 0..CHUNK_SIZE {
-        for y in 0..CHUNK_SIZE {
-            for x in 0..CHUNK_SIZE {
-                let wx = coord.cx as i32 * CHUNK_SIZE as i32 + x as i32;
-                let wy = coord.cy as i32 * CHUNK_SIZE as i32 + y as i32;
-                let wz = coord.cz as i32 * CHUNK_SIZE as i32 + z as i32;
-
-                // 使用正坐标计算分形（取绝对值，保持对称性）
-                let mut cx = wx.unsigned_abs();
-                let mut cy = wy.unsigned_abs();
-                let mut cz = wz.unsigned_abs();
-
-                let mut solid = true;
-                for _ in 0..SPONGE_ITERATIONS {
-                    let rx = cx % 3;
-                    let ry = cy % 3;
-                    let rz = cz % 3;
-
-                    // 如果至少有 2 个坐标在当前层级的数字为 1，则此处为空洞
-                    let ones = (rx == 1) as u8 + (ry == 1) as u8 + (rz == 1) as u8;
-                    if ones >= 2 {
-                        solid = false;
-                        break;
-                    }
-
-                    cx /= 3;
-                    cy /= 3;
-                    cz /= 3;
-                }
-
-                chunk.set(x, y, z, if solid { STONE } else { AIR });
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Bevy spawn systems
-// ---------------------------------------------------------------------------
-
-/// Spawns a single chunk entity with texture-mapped mesh.
-pub fn spawn_chunk_entity(
-    commands: &mut Commands,
-    materials: &mut Assets<VoxelMaterial>,
-    meshes: &mut Assets<Mesh>,
-    chunk: Chunk,
-    position: Vec3,
-    resource_pack: &ResourcePackManager,
-    array_texture: &Handle<Image>,
-    neighbors: &ChunkNeighbors,
-) -> (Entity, Handle<Mesh>, Handle<VoxelMaterial>) {
-    let (positions, uvs, normals, indices) = generate_chunk_mesh(&chunk, resource_pack, neighbors);
-
-    let mesh_handle = meshes.add(
-        Mesh::new(
-            PrimitiveTopology::TriangleList,
-            RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
-        )
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-        .with_inserted_indices(Indices::U32(indices)),
-    );
-
-    let mat_handle = materials.add(VoxelMaterial {
-        array_texture: array_texture.clone(),
-        alpha_mode: if chunk.contains_block(5) {
-            AlphaMode::Blend
-        } else {
-            AlphaMode::Opaque
-        },
-    });
-
-    let entity = commands
-        .spawn((
-            ChunkComponent(Arc::new(chunk)),
-            Transform::from_translation(position),
-            Visibility::default(),
-            Mesh3d(mesh_handle.clone()),
-            MeshMaterial3d(mat_handle.clone()),
-            ChunkMeshHandle {
-                mesh: mesh_handle.clone(),
-                material: mat_handle.clone(),
-            },
-        ))
-        .id();
-
-    (entity, mesh_handle, mat_handle)
-}

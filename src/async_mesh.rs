@@ -27,10 +27,12 @@ use std::sync::{Arc, mpsc};
 use std::thread;
 
 use crate::chunk::{
-    BlockId, CHUNK_SIZE, ChunkCoord, ChunkData, ChunkNeighbors, fill_terrain, fill_flat_terrain,
-    fill_menger_sponge, should_cull_face, WorldType,
+    BlockId, CHUNK_SIZE, ChunkCoord, ChunkData, ChunkNeighbors,
+    fill_terrain, fill_flat_terrain, fill_menger_sponge, should_cull_face, WorldType,
+    AIR, WATER,
 };
 use crate::chunk_dirty::is_air_chunk;
+use crate::face::{FACES, face_quad};
 use crate::lod::{LodLevel, generate_lod_mesh_separated};
 use crate::tree_gen::{TreeConfig, TreeNoise, generate_trees_in_chunk};
 
@@ -492,26 +494,6 @@ impl AsyncMeshManager {
 // 异步网格生成函数（在工作线程中执行）
 // ---------------------------------------------------------------------------
 
-/// 面方向定义
-const FACES_ASYNC: [(FaceAsync, [i32; 3], usize); 6] = [
-    (FaceAsync::Right, [1, 0, 0], 2),
-    (FaceAsync::Left, [-1, 0, 0], 2),
-    (FaceAsync::Top, [0, 1, 0], 0),
-    (FaceAsync::Bottom, [0, -1, 0], 1),
-    (FaceAsync::Front, [0, 0, 1], 2),
-    (FaceAsync::Back, [0, 0, -1], 2),
-];
-
-#[derive(Clone, Copy)]
-enum FaceAsync {
-    Top,
-    Bottom,
-    Right,
-    Left,
-    Front,
-    Back,
-}
-
 // count_visible_faces 已移除：两遍扫描合并为 generate_solid_mesh 中的单遍。
 
 /// 分离 Mesh 生成：水方块和固体方块分开处理。
@@ -528,7 +510,7 @@ pub fn generate_chunk_mesh_separated(
     let solid = generate_solid_mesh(chunk, uv_table, neighbors);
 
     // 2. 生成水方块的 Mesh（使用 Greedy Mesh）
-    let water = if chunk.contains_block(5) {
+    let water = if chunk.contains_block(WATER) {
         let water_result =
             crate::greedy_mesh::generate_greedy_mesh(chunk, neighbors, |block_id, face_name| {
                 let face_index = face_name_to_index(face_name);
@@ -561,7 +543,7 @@ pub fn generate_chunk_mesh_separated(
 /// 判断方块是否可跳过（空气或水，水由 greedy_mesh 处理）。
 #[inline]
 fn is_skippable(block_id: BlockId) -> bool {
-    block_id == 0 || block_id == 5
+    block_id == AIR || block_id == WATER
 }
 
 /// 生成固体方块的 Mesh（水方块被跳过）。
@@ -585,7 +567,7 @@ fn generate_solid_mesh(
 
     // Uniform 固体区块（如石头深入层）所有面被自身遮挡，直接返回
     if let ChunkData::Uniform(id) = chunk {
-        if *id != 0 && *id != 5 {
+        if *id != AIR && *id != WATER {
             return SubMeshData::new();
         }
     }
@@ -618,7 +600,7 @@ fn generate_solid_mesh(
                 }
 
                 for (face_index, (face, offset, uv_idx)) in
-                    FACES_ASYNC.iter().cloned().enumerate()
+                    FACES.iter().cloned().enumerate()
                 {
                     if !is_face_visible_fast(
                         chunk, x, y, z, block_id, &offset, face_index, neighbors,
@@ -629,7 +611,7 @@ fn generate_solid_mesh(
                     let base_index = vertices.len() as u32;
                     let uv = uv_table.get_uv(block_id, uv_idx);
 
-                    let (face_verts, face_uvs, face_normal) = face_quad_async(x, y, z, face, uv);
+                    let (face_verts, face_uvs, face_normal) = face_quad(x, y, z, face, uv);
                     // AoS 布局：单次 push 写入 3 个字段
                     vertices.push(MeshVertex {
                         position: face_verts[0],
@@ -675,43 +657,9 @@ fn generate_solid_mesh(
     }
 }
 
-/// 异步版本的面可见性检查。
-fn is_face_visible_async(
-    chunk: &ChunkData,
-    x: usize,
-    y: usize,
-    z: usize,
-    face: &[i32; 3],
-    face_index: usize,
-    neighbors: &ChunkNeighbors,
-) -> bool {
-    let nx = x as i32 + face[0];
-    let ny = y as i32 + face[1];
-    let nz = z as i32 + face[2];
-
-    let neighbor_id = if nx >= 0
-        && ny >= 0
-        && nz >= 0
-        && nx < CHUNK_SIZE as i32
-        && ny < CHUNK_SIZE as i32
-        && nz < CHUNK_SIZE as i32
-    {
-        chunk.get(nx as usize, ny as usize, nz as usize)
-    } else {
-        let neighbor_x = nx.rem_euclid(CHUNK_SIZE as i32) as usize;
-        let neighbor_y = ny.rem_euclid(CHUNK_SIZE as i32) as usize;
-        let neighbor_z = nz.rem_euclid(CHUNK_SIZE as i32) as usize;
-        neighbors.get_neighbor_block(face_index, neighbor_x, neighbor_y, neighbor_z)
-    };
-
-    let current_id = chunk.get(x, y, z);
-
-    !should_cull_face(current_id, neighbor_id)
-}
-
 /// 面可见性检查（快速版本）。
 ///
-/// 与 `is_face_visible_async` 的区别：
+/// 直接接收 `current_id` 作为参数，避免内部重复调用 `chunk.get(x, y, z)`。
 /// - 直接接收 `current_id` 作为参数，避免内部重复调用 `chunk.get(x, y, z)`
 /// - 调用方在块迭代循环中已获取 `block_id`，可直接传入
 ///
@@ -749,82 +697,3 @@ fn is_face_visible_fast(
     !should_cull_face(current_id, neighbor_id)
 }
 
-/// 异步版本的面四边形生成。
-fn face_quad_async(
-    x: usize,
-    y: usize,
-    z: usize,
-    face: FaceAsync,
-    uv: (f32, f32, f32, f32),
-) -> ([[f32; 3]; 4], [[f32; 2]; 4], [f32; 3]) {
-    let (verts, normal) = match face {
-        FaceAsync::Top => (
-            [
-                [x as f32, y as f32 + 1.0, z as f32],
-                [x as f32 + 1.0, y as f32 + 1.0, z as f32],
-                [x as f32 + 1.0, y as f32 + 1.0, z as f32 + 1.0],
-                [x as f32, y as f32 + 1.0, z as f32 + 1.0],
-            ],
-            [0.0, 1.0, 0.0],
-        ),
-        FaceAsync::Bottom => (
-            [
-                [x as f32, y as f32, z as f32 + 1.0],
-                [x as f32 + 1.0, y as f32, z as f32 + 1.0],
-                [x as f32 + 1.0, y as f32, z as f32],
-                [x as f32, y as f32, z as f32],
-            ],
-            [0.0, -1.0, 0.0],
-        ),
-        FaceAsync::Right => (
-            [
-                [x as f32 + 1.0, y as f32, z as f32],
-                [x as f32 + 1.0, y as f32, z as f32 + 1.0],
-                [x as f32 + 1.0, y as f32 + 1.0, z as f32 + 1.0],
-                [x as f32 + 1.0, y as f32 + 1.0, z as f32],
-            ],
-            [1.0, 0.0, 0.0],
-        ),
-        FaceAsync::Left => (
-            [
-                [x as f32, y as f32, z as f32 + 1.0],
-                [x as f32, y as f32, z as f32],
-                [x as f32, y as f32 + 1.0, z as f32],
-                [x as f32, y as f32 + 1.0, z as f32 + 1.0],
-            ],
-            [-1.0, 0.0, 0.0],
-        ),
-        FaceAsync::Front => (
-            [
-                [x as f32 + 1.0, y as f32, z as f32 + 1.0],
-                [x as f32, y as f32, z as f32 + 1.0],
-                [x as f32, y as f32 + 1.0, z as f32 + 1.0],
-                [x as f32 + 1.0, y as f32 + 1.0, z as f32 + 1.0],
-            ],
-            [0.0, 0.0, 1.0],
-        ),
-        FaceAsync::Back => (
-            [
-                [x as f32, y as f32, z as f32],
-                [x as f32 + 1.0, y as f32, z as f32],
-                [x as f32 + 1.0, y as f32 + 1.0, z as f32],
-                [x as f32, y as f32 + 1.0, z as f32],
-            ],
-            [0.0, 0.0, -1.0],
-        ),
-    };
-
-    let u_min = uv.0;
-    let u_max = uv.1;
-    let v_min = uv.2;
-    let v_max = uv.3;
-
-    let face_uvs = [
-        [u_min, v_max],
-        [u_max, v_max],
-        [u_max, v_min],
-        [u_min, v_min],
-    ];
-
-    (verts, face_uvs, normal)
-}

@@ -31,6 +31,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::OnceLock;
 
+use crate::types::{AIR, WATER};
+
 /// 方块纹理映射
 #[derive(Debug, Clone, Deserialize)]
 pub struct BlockTextures {
@@ -81,7 +83,7 @@ impl BlockPropertiesTable {
     pub fn from_definitions(definitions: &HashMap<u8, BlockDefinition>) -> Self {
         let mut table = Self::default();
         // 空气默认非实心
-        table.solid[0] = false;
+        table.solid[AIR as usize] = false;
         for def in definitions.values() {
             table.solid[def.id as usize] = def.solid;
             table.transparent[def.id as usize] = def.transparent;
@@ -120,7 +122,7 @@ pub fn is_block_solid_from_table(block_id: u8) -> bool {
         Some(table) => table.is_solid(block_id),
         None => {
             // 回退：空气和水非实心，其余实心
-            !matches!(block_id, 0 | 5)
+            !matches!(block_id, AIR | WATER)
         }
     }
 }
