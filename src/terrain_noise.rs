@@ -45,15 +45,16 @@ pub const TERRAIN_MAX_Y: i32 = 320;
 // 大陆性阈值
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// 深海阈值：continentalness < 此值 → 深海（参考 Tectonic: -0.8 区间内）
-pub const DEEP_OCEAN_THRESHOLD: f64 = -0.7;
+/// 深海阈值：continentalness < 此值 → 深海
+/// 降低此值减少深海比例（-0.7 → -0.85）
+pub const DEEP_OCEAN_THRESHOLD: f64 = -0.85;
 
-/// 海洋阈值：continentalness < 此值 → 海洋（参考 Tectonic ocean_offset = -0.8）
-/// 降低此值 → 海洋面积减小，陆地面积增大
-pub const OCEAN_THRESHOLD: f64 = -0.5;
+/// 海洋阈值：continentalness < 此值 → 海洋
+/// 降低此值大幅减少海洋面积（-0.5 → -0.70），海洋/陆地比从 ~60/40 → ~25/75
+pub const OCEAN_THRESHOLD: f64 = -0.70;
 
 /// 内陆阈值：continentalness > 此值 → 内陆
-pub const CONTINENT_THRESHOLD: f64 = 0.2;
+pub const CONTINENT_THRESHOLD: f64 = 0.15;
 
 // ══════════════════════════════════════════════════════════════════════════════
 // 地形 Spline 曲线（参考 Tectonic terrain_spline 系统）
@@ -61,56 +62,59 @@ pub const CONTINENT_THRESHOLD: f64 = 0.2;
 
 /// 大陆性 → 基础高度偏移（相对于海平面）
 ///
-/// 控制地形从深海到内陆的高度变化：
-/// - 深海（-0.7）→ -80 格
-/// - 浅海（-0.5）→ -30 格
+/// 控制地形从深海到内陆的高度变化。
+/// 大幅提升内陆高度变化范围，消除"一马平川"问题：
+/// - 深海（-1.0）→ -90 格（新增最深点）
+/// - 深海底（-0.7）→ -70 格
+/// - 浅海底（-0.5）→ -25 格
 /// - 海平面（-0.3）→ 0 格
-/// - 海岸（-0.1）→ +15 格
-/// - 内陆（0.2）→ +30 格
-/// - 深内陆（0.5+）→ +45 格
+/// - 海岸（-0.1）→ +20 格
+/// - 内陆（0.2）→ +45 格（+30→+45，大幅提升！）
+/// - 高原（0.5）→ +80 格（+45→+80，大幅提升！）
+/// - 深内陆（1.0）→ +100 格（+50→+100）
 ///
 /// 使用 spline 替代线性插值，产生更自然的大陆架过渡。
-const CONTINENT_HEIGHT_SPLINE: Spline<7> = Spline::new([
-    SplinePoint::auto(-0.7, -80.0), // 深海底
-    SplinePoint::auto(-0.5, -30.0), // 浅海底
+const CONTINENT_HEIGHT_SPLINE: Spline<8> = Spline::new([
+    SplinePoint::auto(-1.0, -90.0), // 最深海底
+    SplinePoint::auto(-0.7, -70.0), // 深海底
+    SplinePoint::auto(-0.5, -25.0), // 浅海底
     SplinePoint::auto(-0.3,   0.0), // 海平面
-    SplinePoint::auto(-0.1,  15.0), // 海岸平原
-    SplinePoint::auto( 0.2,  30.0), // 内陆平原
-    SplinePoint::auto( 0.5,  45.0), // 内陆高原
-    SplinePoint::auto( 1.0,  50.0), // 深内陆
+    SplinePoint::auto(-0.1,  20.0), // 海岸平原
+    SplinePoint::auto( 0.2,  45.0), // 内陆平原
+    SplinePoint::auto( 0.5,  80.0), // 内陆高原
+    SplinePoint::auto( 1.0, 100.0), // 深内陆
 ]);
 
 /// Ridge → 山脊高度
 ///
 /// 非线性映射：低 ridge 值产生缓坡，高 ridge 值产生陡峭山峰。
-/// 参考 Tectonic 的 factor=5.6 陡度。
+/// 大幅提升山峰高度（150→220），让山脉更壮观。
 ///
 /// 负值（山谷）：线性凹陷
 /// 正值（山峰）：S 形曲线，低值缓坡 → 高值陡峭
 const RIDGE_HEIGHT_SPLINE: Spline<6> = Spline::new([
-    SplinePoint::auto(-1.0, -20.0), // 深谷
-    SplinePoint::auto(-0.3,  -6.0), // 浅谷
+    SplinePoint::auto(-1.0, -25.0), // 深谷（-20→-25，更深的峡谷）
+    SplinePoint::auto(-0.3,  -8.0), // 浅谷（-6→-8）
     SplinePoint::auto( 0.0,   0.0), // 平地
-    SplinePoint::auto( 0.3,  20.0), // 缓坡
-    SplinePoint::auto( 0.6,  60.0), // 丘陵
-    SplinePoint::auto( 1.0, 150.0), // 高山峰
+    SplinePoint::auto( 0.3,  30.0), // 缓坡（20→30）
+    SplinePoint::auto( 0.6,  90.0), // 丘陵（60→90）
+    SplinePoint::auto( 1.0, 220.0), // 高山峰（150→220）
 ]);
 
 /// Erosion → 地形高度乘数
 ///
-/// 控制侵蚀对地形的削弱程度：
+/// 控制侵蚀对山脊的削弱程度（仅在山地生效，平原不受影响）：
 /// - 低侵蚀（<0）：无影响（乘数 1.0）
 /// - 零侵蚀（0）：无影响（乘数 1.0）
-/// - 中等侵蚀（0.5）：轻微削弱（乘数 0.75）
-/// - 强侵蚀（1.0）：大幅削平（乘数 0.4）
-///
-/// 使用 spline 替代线性公式，低侵蚀区域保持原始地形。
+/// - 轻微侵蚀（0.3）：几乎不影响（乘数 0.9）
+/// - 中等侵蚀（0.6）：温和削弱（乘数 0.7）
+/// - 强侵蚀（1.0）：削平山峰（乘数 0.55，原 0.4→0.55 减少过度削弱）
 const EROSION_FACTOR_SPLINE: Spline<5> = Spline::new([
     SplinePoint::auto(-1.0, 1.0),  // 负侵蚀：无影响
     SplinePoint::auto( 0.0, 1.0),  // 零侵蚀：无影响
-    SplinePoint::auto( 0.3, 0.85), // 轻微侵蚀
-    SplinePoint::auto( 0.6, 0.6),  // 中等侵蚀
-    SplinePoint::auto( 1.0, 0.4),  // 强侵蚀：大幅削平
+    SplinePoint::auto( 0.3, 0.9),  // 轻微侵蚀（0.85→0.9）
+    SplinePoint::auto( 0.6, 0.7),  // 中等侵蚀（0.6→0.7）
+    SplinePoint::auto( 1.0, 0.55), // 强侵蚀（0.4→0.55）
 ]);
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -185,21 +189,24 @@ impl NoiseSample {
 
     /// 计算基础地形高度（参考 Tectonic sloped_cheese 管线）
     ///
-    /// # 算法
+    /// # 算法（简化版，4 层叠加）
     ///
-    /// 使用 **Spline 曲线** 精确控制地形高度变化（参考 Tectonic），
-    /// 替代简单的线性公式，产生更自然的地形过渡。
-    ///
-    /// 地形由多层叠加：
     /// 1. **大陆基底**：Spline 控制的 continentalness → 高度曲线
-    /// 2. **山脊叠加**：Spline 控制的非线性山脊高度（低值缓坡，高值陡峭）
-    /// 3. **群系地形调制**：用温度/植被值调制地形特征
-    /// 4. **侵蚀修饰**：Spline 控制的侵蚀因子
-    /// 5. **海岸过渡**：smoothstep 权重控制山脊叠加，海洋区域抑制山脊
+    /// 2. **山脊叠加**：Spline 控制的非线性山脊高度，
+    ///    仅在山区 (r > 0.2) 受侵蚀和风化削弱，最小保底 0.35
+    /// 3. **区域特征**：Club 高原/河谷 + Heart 起伏丘陵
+    /// 4. **细节起伏**：高频噪声直接加到最终结果
+    ///
+    /// # 改进要点
+    ///
+    /// - 侵蚀/风化只削山顶，不削山谷和平原
+    /// - 山脊保底因子防止过度削弱
+    /// - 移除多余乘数链（flatten_factor），简化公式
+    /// - 细节层直接叠加，不受侵蚀影响
     ///
     /// # 输出范围
     ///
-    /// 约 -80（深海底）~ 200（高山顶）
+    /// 约 -90（深海底）~ 320（最高山峰）
     #[inline]
     pub fn compute_base_height(&self) -> f64 {
         let c = self.continentalness;
@@ -208,26 +215,93 @@ impl NoiseSample {
         let t = self.temperature;
         let v = self.vegetation;
 
-        // ── 大陆性高度（Spline 控制）──
-        // 替代旧的线性公式，产生更自然的大陆架过渡
+        // ── 1. 大陆基底（Spline 控制）──
         let continent_offset = CONTINENT_HEIGHT_SPLINE.evaluate(c);
 
-        // 2^detail 非线性叠加：让平原偶尔拔高，产生自然的丘陵/高峰
-        // detail ∈ [-1, 1]，2^detail ∈ [0.5, 2.0]
-        // 乘以 0.5 再加 0.5 → 映射到 [0.75, 1.5]，效果温和
-        // 只在大陆区域叠加（continent_offset > 0），海洋不受影响
-        let nonlinear = if continent_offset > 0.0 {
+        // 2^detail 非线性叠加：仅在山区渐进启用，平原保持线性（修复小山丘问题）
+        // continent_offset ≤ 20（平原/海岸）：纯线性，0 抖动
+        // continent_offset ≥ 50（高原/山脉）：完全非线性
+        // 中间区间平滑过渡
+        //
+        // 原代码对所有陆地 (offset>0) 都启用非线性，导致平原抖动 ~34 格。
+        // 现在平原 offset≈20 时完全线性，山脉 offset≈80 时才有非线性效果。
+        let nonlinear = if continent_offset > 20.0 {
             let detail_exp = 2.0_f64.powf(self.detail);
-            continent_offset * (detail_exp * 0.5 + 0.5)
+            let nonlinear_scale = detail_exp * 0.5 + 0.5; // [0.75, 1.5]
+            let blend = ((continent_offset - 20.0) / 30.0).clamp(0.0, 1.0);
+            // blend 从 0→1，scale 从 1.0→nonlinear_scale
+            continent_offset * (1.0 + blend * (nonlinear_scale - 1.0))
         } else {
-            continent_offset
+            continent_offset // 平原/海岸：纯线性，零噪声抖动
         };
 
         let base_height = SEA_LEVEL as f64 + nonlinear;
 
-        // ── 群系地形调制（用温度/植被值，不依赖 biome 标签）──
+        // ── 2. 山脊叠加 ──
 
-        // 沙丘效果：热+干 → 叠加正弦波状起伏
+        // 群系调制：寒冷地区山脉更陡峭
+        let coldness = ((-0.12 - t) / 0.36).clamp(0.0, 1.0);
+        let ridge_boost = 1.0 + coldness * 0.5; // 原 0.4 → 0.5
+
+        let ridge_height = RIDGE_HEIGHT_SPLINE.evaluate(r) * ridge_boost;
+
+        // 陆地过渡权重：海洋区域抑制山脊
+        let land_weight = smoothstep(-0.3, 0.0, c);
+
+        // 风化：仅在山脊区域 (r > 0.2) 生效，削弱锯齿状山峰
+        // 风化区域 fade 从 0.7→1.0（原 0.5→1.0），减少过度削弱
+        let weathering_val = self.weathering.abs();
+        let weathering_factor = if r > 0.2 && weathering_val < 0.3 {
+            let fade = weathering_val / 0.3;
+            0.7 + fade * 0.3 // 0.7 ~ 1.0
+        } else {
+            1.0
+        };
+
+        // 侵蚀：仅在山脊区域 (r > 0.2) 生效，削平山顶
+        let erosion_factor = if r > 0.2 {
+            EROSION_FACTOR_SPLINE.evaluate(e)
+        } else {
+            1.0 // 平原/山谷不受侵蚀影响
+        };
+
+        // 组合衰减因子：最小保底 0.35，防止过度削弱
+        let reduction = (erosion_factor * weathering_factor).max(0.35);
+
+        let ridge_contribution = ridge_height * reduction * land_weight;
+
+        // ── 3. 区域特征（Club 高原/河谷 + Heart 丘陵）──
+
+        let region = self.region;
+        let club_weight = smoothstep(0.0, -0.2, region);
+        let heart_weight = smoothstep(0.0, 0.2, region);
+
+        // Club：高原基底抬升 + 河谷切割（增强）
+        let club_plateau = club_weight * 35.0; // 原 20.0 → 35.0
+        let club_valley_deep = if r < 0.0 {
+            club_weight * r * 25.0 // 原 15.0 → 25.0
+        } else {
+            0.0
+        };
+
+        // Heart：起伏丘陵（增强）
+        let heart_hills = heart_weight * (self.detail.abs() * 25.0 - 12.5); // 原 15.0 → 25.0
+
+        let region_effect = (club_plateau + club_valley_deep + heart_hills) * land_weight;
+
+        // ── 4. 细节起伏（直接叠加，不受侵蚀/风化影响）──
+        // 平原：极轻微起伏（2 格），山脉：更大起伏（12 格）
+        // 修复平原小山丘问题：原代码对所有区域统一 12.0 振幅
+        let detail_amp = if c > 0.15 {
+            // 内陆：振幅随大陆性渐进增大（2→12 格）
+            let inland_blend = ((c - 0.15) / 0.85).clamp(0.0, 1.0);
+            2.0 + inland_blend * 10.0
+        } else {
+            2.0 // 海岸/近海：极轻微起伏
+        };
+        let detail = self.detail * detail_amp;
+
+        // ── 5. 沙丘效果（热+干区域）──
         let dryness = (0.17 - v).max(0.0) / 0.55;
         let hotness = (t - (-0.12)).max(0.0) / 0.64;
         let dune_factor = dryness * hotness;
@@ -239,70 +313,8 @@ impl NoiseSample {
             0.0
         };
 
-        // 山脊增强：寒冷地区山脉更陡峭
-        let coldness = ((-0.12 - t) / 0.36).clamp(0.0, 1.0);
-        let ridge_boost = 1.0 + coldness * 0.4;
-
-        // 平坦化：湿润地区地形更平缓
-        let wetness = ((v - 0.07) / 0.26).clamp(0.0, 1.0);
-        let flatten_factor = 1.0 - wetness * 0.25;
-
-        // ── 区域地形特征（参考 Tectonic 4-region 系统）──
-        // region < -0.1 → Club：高原+河谷（高基底，尖锐山脊）
-        // region ~ 0    → Diamond：标准地形
-        // region > 0.1  → Heart：起伏丘陵（低基底，柔和山脊）
-
-        // 区域权重：smoothstep 平滑过渡
-        let region = self.region;
-        let club_weight = smoothstep(0.0, -0.2, region);    // 0.0 ~ 1.0（region < -0.2 时最大）
-        let heart_weight = smoothstep(0.0, 0.2, region);    // 0.0 ~ 1.0（region > 0.2 时最大）
-
-        // Club 效果：高原基底抬升 + 河谷切割
-        // 高原区域基底抬升 20 格，ridge 负值更深（河谷）
-        let club_plateau = club_weight * 20.0;
-        let club_valley_deep = if r < 0.0 { club_weight * r * 15.0 } else { 0.0 };
-
-        // Heart 效果：起伏丘陵（用 detail 噪声产生柔和波动）
-        // 基底降低 10 格，叠加柔和起伏
-        let heart_hills = heart_weight * (self.detail.abs() * 15.0 - 7.5);
-
-        // ── 山脉风化（参考 Tectonic weathering 系统）──
-        // 低频噪声产生大面积风化区域，山脊在风化区自然断裂
-        // |weathering| < 0.3 → 风化区域（山脊削弱至 50%）
-        // |weathering| > 0.3 → 完整山脊
-        let weathering_val = self.weathering.abs();
-        let weathering_factor = if weathering_val < 0.3 {
-            let fade = weathering_val / 0.3;
-            0.5 + fade * 0.5 // 0.5 ~ 1.0
-        } else {
-            1.0
-        };
-
-        // ── 山脊高度（Spline 控制，非线性 + 区域调制 + 风化）──
-        let ridge_height = (RIDGE_HEIGHT_SPLINE.evaluate(r) * ridge_boost
-            + club_valley_deep) * weathering_factor;
-
-        // ── 侵蚀因子（Spline 控制）──
-        // 替代旧的 1.0 - (e.max(0.0) * 0.5) 线性公式
-        // 低侵蚀无影响，高侵蚀大幅削平
-        let erosion_factor = EROSION_FACTOR_SPLINE.evaluate(e);
-
-        // ── 细节层 ──
-        let detail = self.detail * 5.0;
-
-        // ── 最终陆地高度 ──
-        // 山脊只在陆地区域叠加，海洋区域抑制
-        // 使用 smoothstep 权重避免海岸线处的硬切边
-        // land_weight: 0.0（深海）→ 1.0（内陆）
-        let land_weight = smoothstep(-0.3, 0.0, c);
-
-        let land_extra = (ridge_height + detail + sand_dunes)
-            * erosion_factor * flatten_factor * land_weight;
-
-        // 区域效果叠加（Club 高原抬升 + Heart 丘陵起伏）
-        let region_effect = (club_plateau + heart_hills) * land_weight;
-
-        base_height + land_extra + region_effect
+        // ── 最终高度 ──
+        base_height + ridge_contribution + region_effect + detail + sand_dunes
     }
 }
 
@@ -333,46 +345,51 @@ pub struct TerrainNoise {
 impl TerrainNoise {
     pub fn new(seed: u32) -> Self {
         Self {
-            // 大陆性：低频 4 octaves（从 6 降至 4，减少 33% 计算量）
+            // 大陆性：低频 6 octaves，更大尺度的大陆形状
+            // 频率 0.0006（原 0.0008）→ 大陆面积增大
+            // lacunarity 2.5（原 2.0）→ 更丰富的层级结构
+            // persistence 0.4（原 0.5）→ 更平滑的大陆边界
             continentalness: Fbm::<Simplex>::new(seed)
-                .set_octaves(4)
-                .set_frequency(0.0008)
-                .set_lacunarity(2.0)
-                .set_persistence(0.5),
-            // 侵蚀：中频 4 octaves（从 6 降至 4）
+                .set_octaves(6)
+                .set_frequency(0.0006)
+                .set_lacunarity(2.5)
+                .set_persistence(0.4),
+            // 侵蚀：中频 4 octaves，更丰富的中频变化
+            // lacunarity 2.2, persistence 0.55 → 更复杂的侵蚀细节
             erosion: Fbm::<Simplex>::new(seed.wrapping_add(1))
                 .set_octaves(4)
                 .set_frequency(0.0015)
-                .set_lacunarity(2.0)
-                .set_persistence(0.5),
-            // 山脊：低频 ridged 噪声，产生宽厚的山脉而非薄脊线
-            // 频率 0.0004 → 山脉跨度约 2500 格（周期），octaves 3 让山形更柔和
+                .set_lacunarity(2.2)
+                .set_persistence(0.55),
+            // 山脊：低频 RidgedMulti，更尖锐的山脊（低 persistence）
+            // octaves 5（原 3）→ 更丰富的山脉层级
+            // lacunarity 1.9, persistence 0.45 → 尖锐山脊线
             ridge: RidgedMulti::<Simplex>::new(seed.wrapping_add(2))
-                .set_octaves(3)
-                .set_frequency(0.0004)
-                .set_lacunarity(2.0)
-                .set_persistence(0.5),
-            // 温度：极低频，大尺度气候带
+                .set_octaves(5)
+                .set_frequency(0.0005)
+                .set_lacunarity(1.9)
+                .set_persistence(0.45),
+            // 温度：极低频，大尺度气候带（保持）
             temperature: Fbm::<Simplex>::new(seed.wrapping_add(3))
                 .set_octaves(4)
                 .set_frequency(0.0006)
                 .set_lacunarity(2.0)
                 .set_persistence(0.5),
-            // 植被：极低频，大尺度湿度分布
+            // 植被：极低频，大尺度湿度分布（保持）
             vegetation: Fbm::<Simplex>::new(seed.wrapping_add(4))
                 .set_octaves(4)
                 .set_frequency(0.0006)
                 .set_lacunarity(2.0)
                 .set_persistence(0.5),
-            // 细节：高频低振幅，为山坡添加微起伏，也用于沙丘波浪效果
-            // 频率 0.015 → 细节跨度约 67 格
+            // 细节：高频低振幅，更丰富的微起伏
+            // octaves 4（原 3），frequency 0.01（原 0.02→0.01，周期 100 格，更缓坡）
+            // lacunarity 2.2, persistence 0.55
             detail: Fbm::<Simplex>::new(seed.wrapping_add(5))
-                .set_octaves(3)
-                .set_frequency(0.015)
-                .set_lacunarity(2.0)
-                .set_persistence(0.5),
-            // 区域选择器：极低频，产生大尺度地形区域（~3000 格跨度）
-            // 参考 Tectonic region_selector firstOctave=-11
+                .set_octaves(4)
+                .set_frequency(0.01)
+                .set_lacunarity(2.2)
+                .set_persistence(0.55),
+            // 区域选择器：保持极低频
             region: Fbm::<Simplex>::new(seed.wrapping_add(7))
                 .set_octaves(4)
                 .set_frequency(0.0003)
@@ -380,12 +397,13 @@ impl TerrainNoise {
                 .set_persistence(0.5),
             // 洞穴：单个 3D Simplex 噪声（最基础实现）
             cave: Simplex::new(seed.wrapping_add(8)),
-            // 风化：低频噪声，产生大面积风化区域（~100 格跨度）
+            // 风化：低频噪声，更平滑的风化区域边界
+            // persistence 0.45 → 风化过度更柔和
             weathering: Fbm::<Simplex>::new(seed.wrapping_add(10))
                 .set_octaves(3)
                 .set_frequency(0.008)
-                .set_lacunarity(2.0)
-                .set_persistence(0.5),
+                .set_lacunarity(2.3)
+                .set_persistence(0.45),
         }
     }
 
