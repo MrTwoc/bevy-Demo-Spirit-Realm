@@ -29,6 +29,12 @@ fn fragment(
     var color = textureSampleLevel(
         voxel_array_texture, voxel_array_texture_sampler, sample_uv, i32(layer), 0.0
     );
+    // Alpha Test（Cutout）：丢弃透明片元，解决树叶等镂空方块的黑色透明问题。
+    // 与 AlphaMode::Blend 不同，alpha test 在 opaque pass 中执行，无需深度排序，
+    // 且是阴影映射、SSAO 等高级渲染技术的正确性前提。
+    if (color.a < 0.1) {
+        discard;
+    }
 #else
     var color = vec4<f32>(1.0, 0.0, 1.0, 1.0); // missing texture magenta
 #endif

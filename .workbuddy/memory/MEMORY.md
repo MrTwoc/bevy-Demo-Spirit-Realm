@@ -17,6 +17,7 @@
 - SVO 八叉树构建时从 LoadedChunks.entries 读取 ChunkData，不再独立生成地形
 - SVO 模块清单（8 个文件）：node_store, node_manager, voxel_source, svo_sync, gpu_traversal, visibility_bridge, hierarchical_bitset, mod
 - 固体方块使用 Opaque 材质，水方块使用 Blend 材质
+- 镂空方块（树叶等）使用 Alpha Test（`discard`），在 `voxel.wgsl` 中 `color.a < 0.1` 时丢弃片元
 - 共享空 Mesh（SharedEmptyMesh）用于零几何体/空气区块
 
 ### LOD
